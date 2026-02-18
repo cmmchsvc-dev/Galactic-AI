@@ -419,7 +419,10 @@ body::after{content:"";position:fixed;inset:0;background:linear-gradient(rgba(18
             <div class="msg bot"><div class="bubble">⬡ Galactic AI online. How can I help?</div></div>
             <div id="stream-bubble"></div>
           </div>
+          <div id="chat-attach-bar" style="display:none;padding:4px 16px 0;border-top:1px solid var(--border);background:var(--bg2)"></div>
           <div id="chat-input-row" style="display:flex;gap:8px;padding:12px 16px;border-top:1px solid var(--border);flex-shrink:0;background:var(--bg2)">
+            <input type="file" id="chat-file-input" multiple accept=".txt,.md,.py,.js,.ts,.json,.yaml,.yml,.xml,.html,.css,.csv,.log,.toml,.ini,.cfg,.sh,.ps1,.bat,.rs,.go,.java,.c,.cpp,.h,.hpp,.rb,.php,.sql,.r,.swift,.kt,.dart,.env,.conf,.properties" style="display:none" onchange="handleFileAttach(this)">
+            <button id="attach-btn" onclick="document.getElementById('chat-file-input').click()" title="Attach files" style="padding:10px 12px;background:var(--bg3);border:1px solid var(--border);border-radius:10px;color:var(--dim);cursor:pointer;font-size:1.1em;transition:border .2s,color .2s" onmouseover="this.style.borderColor='var(--cyan)';this.style.color='var(--cyan)'" onmouseout="this.style.borderColor='var(--border)';this.style.color='var(--dim)'">📎</button>
             <textarea id="chat-input-main" placeholder="Message Byte... (Enter to send, Shift+Enter for newline)" style="flex:1;background:var(--bg3);border:1px solid var(--border);border-radius:10px;padding:10px 14px;color:var(--text);font-family:var(--font);font-size:0.9em;resize:none;height:44px;max-height:200px;overflow-y:auto;outline:none;transition:border .2s" onkeydown="handleKeyMain(event)" oninput="autoResize(this)"></textarea>
             <button id="send-btn-main" onclick="sendChatMain()" style="padding:10px 22px;background:linear-gradient(135deg,var(--cyan),var(--pink));border:none;border-radius:10px;color:#000;font-weight:700;cursor:pointer;font-size:0.9em">Send ▶</button>
           </div>
@@ -837,19 +840,82 @@ function appendUserMsg(text) {
   if (autoScroll) log.scrollTop = 99999;
 }
 
+// ─── File Attachment State ───
+let pendingFiles = [];
+
+function handleFileAttach(input) {
+  for (const f of input.files) {
+    if (f.size > 5 * 1024 * 1024) { appendBotMsg('[File too large] ' + f.name + ' exceeds 5 MB limit.'); continue; }
+    pendingFiles.push(f);
+  }
+  input.value = '';
+  renderAttachBar();
+}
+
+function removeAttachment(idx) {
+  pendingFiles.splice(idx, 1);
+  renderAttachBar();
+}
+
+function renderAttachBar() {
+  const bar = document.getElementById('chat-attach-bar');
+  if (!pendingFiles.length) { bar.style.display = 'none'; bar.innerHTML = ''; return; }
+  bar.style.display = 'flex';
+  bar.style.flexWrap = 'wrap';
+  bar.style.gap = '6px';
+  bar.style.alignItems = 'center';
+  bar.innerHTML = pendingFiles.map((f, i) =>
+    '<span style="display:inline-flex;align-items:center;gap:4px;padding:3px 10px;background:var(--bg3);border:1px solid var(--border);border-radius:8px;font-size:0.78em;color:var(--cyan)">' +
+    '📄 ' + escHtml(f.name) + ' <span style="font-size:0.75em;color:var(--dim)">(' + (f.size < 1024 ? f.size + 'B' : (f.size/1024).toFixed(1) + 'KB') + ')</span>' +
+    '<span onclick="removeAttachment(' + i + ')" style="cursor:pointer;color:var(--red);margin-left:4px;font-weight:700" title="Remove">&times;</span></span>'
+  ).join('');
+}
+
+// ─── Drag & Drop ───
+(function initDragDrop() {
+  const wrap = document.getElementById('tab-chat');
+  if (!wrap) return;
+  let dragCounter = 0;
+  wrap.addEventListener('dragenter', function(e) { e.preventDefault(); dragCounter++; wrap.style.outline = '2px dashed var(--cyan)'; });
+  wrap.addEventListener('dragleave', function(e) { e.preventDefault(); dragCounter--; if (dragCounter <= 0) { dragCounter = 0; wrap.style.outline = ''; } });
+  wrap.addEventListener('dragover', function(e) { e.preventDefault(); });
+  wrap.addEventListener('drop', function(e) {
+    e.preventDefault(); dragCounter = 0; wrap.style.outline = '';
+    if (e.dataTransfer.files.length) {
+      for (const f of e.dataTransfer.files) {
+        if (f.size > 5 * 1024 * 1024) { appendBotMsg('[File too large] ' + f.name + ' exceeds 5 MB limit.'); continue; }
+        pendingFiles.push(f);
+      }
+      renderAttachBar();
+    }
+  });
+})();
+
 async function sendChatMain() {
   const inp = document.getElementById('chat-input-main');
   const msg = inp.value.trim();
-  if (!msg) return;
+  if (!msg && !pendingFiles.length) return;
+  const filesToSend = [...pendingFiles];
+  pendingFiles = [];
+  renderAttachBar();
   inp.value = ''; inp.style.height = '44px';
-  appendUserMsg(msg);
+  const displayMsg = msg + (filesToSend.length ? '\n📎 ' + filesToSend.map(f => f.name).join(', ') : '');
+  appendUserMsg(displayMsg);
   document.getElementById('send-btn-main').disabled = true;
   document.getElementById('send-btn-main').textContent = '...';
   const stream = document.getElementById('stream-bubble');
   stream.style.display = 'block'; stream.textContent = '';
   httpChatPending = true;
   try {
-    const r = await fetch('/api/chat', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({message: msg})});
+    let r;
+    if (filesToSend.length) {
+      const fd = new FormData();
+      fd.append('message', msg);
+      for (const f of filesToSend) fd.append('files', f);
+      r = await fetch('/api/chat', {method:'POST', body: fd});
+    } else {
+      r = await fetch('/api/chat', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({message: msg})});
+    }
     const d = await r.json();
     stream.style.display = 'none'; stream.textContent = '';
     appendBotMsg(d.response || d.error || 'No response');
@@ -872,6 +938,8 @@ function autoResize(el) {
 function clearChat() {
   const log = document.getElementById('chat-log');
   log.innerHTML = '<div class="msg bot"><div class="bubble">⬡ Galactic AI online. Context cleared.</div></div><div id="stream-bubble" style="display:none"></div>';
+  pendingFiles = [];
+  renderAttachBar();
 }
 
 // Quick Tool
@@ -1310,14 +1378,56 @@ function sendChat() { sendChatMain(); }
         return web.json_response(status)
 
     async def handle_chat(self, request):
-        """POST /api/chat — send message to the AI and get response."""
+        """POST /api/chat — send message to the AI and get response.
+        Accepts JSON body OR multipart/form-data with file attachments.
+        """
         try:
-            data = await request.json()
-            user_msg = data.get('message', '')
-            if not user_msg:
+            user_msg = ''
+            file_context = ''
+
+            content_type = request.content_type or ''
+            if 'multipart/form-data' in content_type:
+                # File upload mode
+                reader = await request.multipart()
+                while True:
+                    part = await reader.next()
+                    if part is None:
+                        break
+                    if part.name == 'message':
+                        user_msg = (await part.text()).strip()
+                    elif part.name == 'files':
+                        filename = part.filename or 'unnamed'
+                        raw = await part.read(chunk_size=5 * 1024 * 1024)
+                        try:
+                            text = raw.decode('utf-8', errors='replace')
+                        except Exception:
+                            text = '[Binary file — could not decode]'
+                        # Truncate extremely large files to avoid blowing up context
+                        if len(text) > 100000:
+                            text = text[:100000] + '\n\n... [truncated — file exceeds 100K characters]'
+                        file_context += f"\n\n[Attached file: {filename}]\n---\n{text}\n---\n"
+            else:
+                # Standard JSON mode
+                data = await request.json()
+                user_msg = data.get('message', '').strip()
+
+            # Build final message with file contents prepended
+            full_msg = user_msg
+            if file_context:
+                full_msg = file_context.strip() + ('\n\n' + user_msg if user_msg else '')
+
+            if not full_msg:
                 return web.json_response({'error': 'No message'}, status=400)
-            await self.core.log(f"[Web] User: {user_msg}", priority=2)
-            response = await self.core.gateway.speak(user_msg)
+
+            # Log a clean version (don't dump entire files into terminal)
+            if file_context:
+                file_count = file_context.count('[Attached file:')
+                log_msg = f"[Web] User: {user_msg or '(no text)'} [+{file_count} file(s) attached]"
+            else:
+                log_msg = f"[Web] User: {user_msg}"
+            await self.core.log(log_msg, priority=2)
+
+            response = await self.core.gateway.speak(full_msg)
             await self.core.log(f"[Core] Byte: {response}", priority=2)
             return web.json_response({'response': response})
         except Exception as e:
