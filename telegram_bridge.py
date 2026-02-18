@@ -1,0 +1,526 @@
+# Galactic AI - Telegram Bridge
+import asyncio
+import httpx
+import json
+import os
+import traceback
+import time
+
+class TelegramBridge:
+    """The high-frequency command deck for Galactic AI."""
+    def __init__(self, core):
+        self.core = core
+        self.config = core.config.get('telegram', {})
+        self.bot_token = self.config.get('bot_token')
+        self.api_url = f"https://api.telegram.org/bot{self.bot_token}"
+        self.offset = 0
+        self.client = httpx.AsyncClient(timeout=60.0)
+        self.start_time = time.time()
+        self.thinking_level = "LOW"
+        self.verbose = False
+        
+    async def set_commands(self):
+        commands = [
+            {"command": "status", "description": "🛰️ System Telemetry"},
+            {"command": "model", "description": "🧠 Shift Brain"},
+            {"command": "models", "description": "⚙️ Model Config (Primary/Fallback)"},
+            {"command": "browser", "description": "📺 Launch Optics"},
+            {"command": "screenshot", "description": "📸 Snap Optics"},
+            {"command": "cli", "description": "🦾 Shell Command"},
+            {"command": "compact", "description": "🧹 Compact Context"},
+            {"command": "leads", "description": "🎯 New Leads"},
+            {"command": "help", "description": "📖 Interactive Menu"}
+        ]
+        try:
+            await self.client.post(f"{self.api_url}/setMyCommands", json={"commands": commands})
+        except: pass
+
+    async def send_message(self, chat_id, text, reply_markup=None):
+        try:
+            payload = {"chat_id": chat_id, "text": text, "parse_mode": "Markdown"}
+            if reply_markup: payload["reply_markup"] = reply_markup
+            await self.client.post(f"{self.api_url}/sendMessage", json=payload)
+        except: pass
+
+    async def send_photo(self, chat_id, photo_path, caption=None):
+        try:
+            url = f"{self.api_url}/sendPhoto"
+            with open(photo_path, "rb") as photo:
+                files = {"photo": photo}
+                data = {"chat_id": chat_id}
+                if caption: data["caption"] = caption
+                await self.client.post(url, data=data, files=files)
+        except Exception as e:
+            await self.core.log(f"Telegram Photo Error: {e}", priority=1)
+
+    async def send_typing(self, chat_id):
+        try:
+            await self.client.post(f"{self.api_url}/sendChatAction", json={"chat_id": chat_id, "action": "typing"})
+        except: pass
+
+    async def get_help_page(self, page):
+        if page == "1":
+            text = "🌌 **Commands (1/5) - System** 🛰️\n• `/status` - Vitals\n• `/model` - Brain\n• `/uptime` - Engine"
+            buttons = [[{"text": "Next ➡️", "callback_data": "help_2"}]]
+        elif page == "2":
+            text = "🌌 **Commands (2/5) - Session** 🧹\n• `/reset` - Clear\n• `/compact` - Aura Imprint\n• `/stop` - Shutdown"
+            buttons = [[{"text": "⬅️ Back", "callback_data": "help_1"}, {"text": "Next ➡️", "callback_data": "help_3"}]]
+        elif page == "3":
+            text = "🌌 **Commands (3/5) - Cognitive** 🧠\n• `/think` - Reasoning\n• `/verbose` - Log Feed\n• `/identity` - Swap"
+            buttons = [[{"text": "⬅️ Back", "callback_data": "help_2"}, {"text": "Next ➡️", "callback_data": "help_4"}]]
+        elif page == "4":
+            text = "🌌 **Commands (4/5) - Mechanical** 🦾\n• `/browser` - YouTube\n• `/screenshot` - Snap\n• `/cli [cmd]` - Shell"
+            buttons = [[{"text": "⬅️ Back", "callback_data": "help_3"}, {"text": "Next ➡️", "callback_data": "help_5"}]]
+        else:
+            text = "🌌 **Commands (5/5) - Automation** 🎯\n• `/sniper` - Leads\n• `/watchdog` - Emails\n• `/leads` - Recap"
+            buttons = [[{"text": "⬅️ Back", "callback_data": "help_4"}, {"text": "Start 🔄", "callback_data": "help_1"}]]
+        return text, {"inline_keyboard": buttons}
+
+    def _get_live_ollama_menu_entries(self):
+        """Return live Ollama model list from OllamaManager, falling back to static defaults."""
+        defaults = [
+            ("Qwen3 30B 🤖", "qwen3:30b"),
+            ("Qwen3 8B ⚡️", "qwen3:8b"),
+            ("Qwen3 Coder 30B 🦾", "qwen3-coder:30b")
+        ]
+        try:
+            mgr = getattr(self.core, 'ollama_manager', None)
+            if mgr and mgr.discovered_models:
+                return [(f"{m} 🤖", m) for m in mgr.discovered_models[:10]]
+        except Exception:
+            pass
+        return defaults
+
+    async def get_think_menu(self):
+        text = f"🧠 **Cognitive Control**\nCurrent: `{self.thinking_level}`\nChoose reasoning depth:"
+        buttons = [[{"text": "Low (Fast) ⚡️", "callback_data": "think_low"}, {"text": "High (Deep) 🧠", "callback_data": "think_high"}]]
+        return text, {"inline_keyboard": buttons}
+
+    async def get_model_menu(self, provider=None):
+        if not provider:
+            text = "🧠 **Brain Matrix: Select Provider**\nChoose a core cluster to explore:"
+            buttons = []
+            row = []
+            providers = self.core.config.get('providers', {})
+            for p_name in providers:
+                row.append({"text": f"{p_name.capitalize()}", "callback_data": f"prov_{p_name}"})
+                if len(row) == 2:
+                    buttons.append(row)
+                    row = []
+            if row: buttons.append(row)
+            return text, {"inline_keyboard": buttons}
+        
+        text = f"🧠 **{provider.capitalize()} Cluster**\nSelect a specific brain to activate:"
+        buttons = []
+        model_map = {
+            "anthropic": [
+                ("Claude Opus 4.6 👑 [LATEST]", "claude-opus-4-6"),
+                ("Claude Sonnet 4.5 🌟", "claude-sonnet-4-5"),
+                ("Claude 3.7 Sonnet ⚡️", "claude-3-7-sonnet-20250219"),
+                ("Claude 3.5 Sonnet 🚀", "claude-3-5-sonnet-20241022"),
+                ("Claude 3.5 Haiku 🏎️", "claude-3-5-haiku-20241022"),
+                ("Claude 3 Opus 🏛️", "claude-3-opus-20240229"),
+            ],
+            "google": [
+                ("Gemini 3 Flash ⚡️ [LATEST]", "gemini-3-flash-preview"),
+                ("Gemini 2.5 Flash 🏎️", "gemini-2.5-flash"),
+                ("Gemini 3 Pro 🧠 [LATEST]", "gemini-3-pro-preview"),
+                ("Gemini 2.5 Pro 🦾", "gemini-2.5-pro"),
+                ("Gemini 2.0 Flash", "gemini-2.0-flash"),
+            ],
+            "nvidia": [
+                ("DeepSeek V3.2 🚀 [TITAN]", "deepseek-ai/deepseek-v3.2"),
+                ("Qwen3 480B Coder 🦾 [TITAN]", "qwen/qwen3-coder-480b-a35b-instruct"),
+                ("Llama 3.3 70B 🏛️", "meta/llama-3.3-70b-instruct"),
+                ("Llama 3.1 405B 🏛️", "meta/llama-3.1-405b-instruct"),
+                ("Nemotron 340B 🛡️", "nvidia/nemotron-4-340b-instruct"),
+                ("GLM-5 🛰️", "z-ai/glm5"),
+                ("Kimi K2.5 🌙", "moonshotai/kimi-k2.5"),
+                ("Mistral Large 2 🌊", "mistralai/mistral-large-2-instruct"),
+            ],
+            "xai": [
+                ("Grok 4 🧠 [LATEST]", "grok-4"),
+                ("Grok 4 Fast ⚡️", "grok-4-fast"),
+                ("Grok 3 🌌", "grok-3"),
+                ("Grok 3 Mini 🎯", "grok-3-mini"),
+            ],
+            "ollama": self._get_live_ollama_menu_entries()
+        }
+
+        models = model_map.get(provider, [])
+        row = []
+        for label, m_id in models:
+            row.append({"text": label, "callback_data": f"mod_{provider}|{m_id}"})
+            if len(row) == 2:
+                buttons.append(row)
+                row = []
+        if row: buttons.append(row)
+        buttons.append([{"text": "⬅️ Back to Providers", "callback_data": "mod_back"}])
+        return text, {"inline_keyboard": buttons}
+
+    async def get_models_config_menu(self, config_type=None, provider=None):
+        """Model configuration menu with primary/fallback settings."""
+        if not config_type:
+            # Main menu - show current config
+            mm = self.core.model_manager
+            current = mm.get_current_model()
+            mode_indicator = "🟢" if current['mode'] == 'primary' else "🟡"
+            
+            text = (
+                f"⚙️ **Model Configuration**\n\n"
+                f"{mode_indicator} **Active:** {current['provider']}/{current['model']} ({current['mode']})\n\n"
+                f"🎯 **Primary:** {mm.primary_provider}/{mm.primary_model}\n"
+                f"🔄 **Fallback:** {mm.fallback_provider}/{mm.fallback_model}\n\n"
+                f"**Auto-Fallback:** {'✅ Enabled' if mm.auto_fallback_enabled else '❌ Disabled'}\n"
+                f"**Error Threshold:** {mm.error_threshold}\n"
+                f"**Recovery Time:** {mm.recovery_time}s\n\n"
+                f"Choose what to configure:"
+            )
+            
+            buttons = [
+                [{"text": "🎯 Set Primary Model", "callback_data": "cfg_primary"}],
+                [{"text": "🔄 Set Fallback Model", "callback_data": "cfg_fallback"}],
+                [{"text": "🔄 Switch to Primary", "callback_data": "cfg_switch_primary"}],
+                [{"text": "🟡 Switch to Fallback", "callback_data": "cfg_switch_fallback"}],
+                [{"text": "⚙️ Toggle Auto-Fallback", "callback_data": "cfg_toggle_auto"}]
+            ]
+            return text, {"inline_keyboard": buttons}
+        
+        elif config_type == "provider":
+            # Select provider for primary/fallback
+            text = f"⚙️ **Select Provider for {provider.upper()}**"
+            buttons = []
+            row = []
+            providers = self.core.config.get('providers', {})
+            for p_name in providers:
+                row.append({"text": f"{p_name.capitalize()}", "callback_data": f"cfg_{provider}_prov_{p_name}"})
+                if len(row) == 2:
+                    buttons.append(row)
+                    row = []
+            if row: buttons.append(row)
+            buttons.append([{"text": "⬅️ Back", "callback_data": "cfg_back"}])
+            return text, {"inline_keyboard": buttons}
+        
+        elif config_type == "model":
+            # Select specific model for primary/fallback
+            setting_type = provider.split("_")[0]  # 'primary' or 'fallback'
+            provider_name = provider.split("_")[-1]
+            
+            text = f"⚙️ **Select Model from {provider_name.capitalize()}**\nSetting as **{setting_type.upper()}** model"
+            
+            model_map = {
+                "anthropic": [
+                    ("Opus 4.6 👑", "claude-3-opus-20250321"),
+                    ("Sonnet 3.7 ⚡️", "claude-3-7-sonnet-20250219"),
+                    ("Sonnet 3.5 🚀", "claude-3-5-sonnet-20241022"),
+                    ("Haiku 3.5 🏎️", "claude-3-5-haiku-20241022")
+                ],
+                "google": [
+                    ("Gemini 3 Flash ⚡️", "gemini-3-flash-preview"),
+                    ("Gemini 2.5 Flash 🏎️", "gemini-2.5-flash"),
+                    ("Gemini 3 Pro 🧠", "gemini-3-pro-preview"),
+                    ("Gemini 2.5 Pro 🦾", "gemini-2.5-pro")
+                ],
+                "nvidia": [
+                    ("DeepSeek V3 🚀", "deepseek-ai/deepseek-v3.2"),
+                    ("Qwen 480B 🦾", "qwen/qwen3-coder-480b-a35b-instruct"),
+                    ("Llama 3.1 405B 🏛️", "meta/llama-3.1-405b-instruct")
+                ],
+                "xai": [
+                    ("Grok 4 🧠", "grok-4"),
+                    ("Grok 4 Fast ⚡️", "grok-4-fast")
+                ],
+                "ollama": self._get_live_ollama_menu_entries()
+            }
+            
+            models = model_map.get(provider_name, [])
+            buttons = []
+            row = []
+            for label, m_id in models:
+                row.append({"text": label, "callback_data": f"cfg_{setting_type}_set_{provider_name}|{m_id}"})
+                if len(row) == 2:
+                    buttons.append(row)
+                    row = []
+            if row: buttons.append(row)
+            buttons.append([{"text": "⬅️ Back", "callback_data": f"cfg_{setting_type}"}])
+            return text, {"inline_keyboard": buttons}
+
+    async def process_callback(self, chat_id, callback_query):
+        data = callback_query.get("data", "")
+        await self.client.post(f"{self.api_url}/answerCallbackQuery", json={"callback_query_id": callback_query["id"]})
+        message_id = callback_query["message"]["message_id"]
+
+        if data.startswith("help_"):
+            page = data.split("_")[1]
+            text, markup = await self.get_help_page(page)
+            await self.client.post(f"{self.api_url}/editMessageText", json={"chat_id": chat_id, "message_id": message_id, "text": text, "reply_markup": markup, "parse_mode": "Markdown"})
+        elif data.startswith("prov_"):
+            provider = data.split("_")[1]
+            text, markup = await self.get_model_menu(provider=provider)
+            await self.client.post(f"{self.api_url}/editMessageText", json={"chat_id": chat_id, "message_id": message_id, "text": text, "reply_markup": markup, "parse_mode": "Markdown"})
+        elif data == "mod_back":
+            text, markup = await self.get_model_menu()
+            await self.client.post(f"{self.api_url}/editMessageText", json={"chat_id": chat_id, "message_id": message_id, "text": text, "reply_markup": markup, "parse_mode": "Markdown"})
+        elif data.startswith("think_"):
+            level = data.split("_")[1].upper()
+            self.thinking_level = level
+            text, markup = await self.get_think_menu()
+            await self.client.post(f"{self.api_url}/editMessageText", json={"chat_id": chat_id, "message_id": message_id, "text": f"✅ Thinking: `{level}`\n\n{text}", "reply_markup": markup, "parse_mode": "Markdown"})
+        elif data.startswith("mod_"):
+            provider, model = data.split("_")[1].split("|")
+            self.core.gateway.llm.provider = provider
+            self.core.gateway.llm.model = model
+            if provider == "google":
+                self.core.gateway.llm.api_key = self.core.config['providers']['google']['apiKey']
+            elif provider == "anthropic":
+                self.core.gateway.llm.api_key = self.core.config['providers']['anthropic']['apiKey']
+            elif provider == "nvidia":
+                keys = self.core.config['providers']['nvidia']['keys']
+                if "glm" in model: 
+                    self.core.gateway.llm.api_key = keys['glm']
+                elif "deepseek" in model: 
+                    self.core.gateway.llm.api_key = keys['deepseek']
+                elif "kimi" in model: 
+                    self.core.gateway.llm.api_key = keys['kimi']
+                elif "qwen" in model: 
+                    self.core.gateway.llm.api_key = keys['qwen']
+                elif "step" in model: 
+                    self.core.gateway.llm.api_key = keys['stepfun']
+                else:
+                    # Fallback for meta/llama, nvidia/nemotron, and other NVIDIA models
+                    # Use deepseek key as default (all nvapi- keys work for NVIDIA API Catalog)
+                    self.core.gateway.llm.api_key = keys['deepseek']
+            elif provider == "xai":
+                self.core.gateway.llm.api_key = self.core.config['providers']['xai']['apiKey']
+            elif provider == "ollama":
+                self.core.gateway.llm.api_key = "NONE"  # Ollama doesn't need an API key (local)
+            await self.send_message(chat_id, f"✅ **Shifted to {provider.capitalize()}:** `{model}`")
+            text, markup = await self.get_model_menu()
+            await self.client.post(f"{self.api_url}/editMessageText", json={"chat_id": chat_id, "message_id": message_id, "text": text, "reply_markup": markup, "parse_mode": "Markdown"})
+        elif data.startswith("cfg_"):
+            # Model configuration callbacks
+            if data == "cfg_primary":
+                text, markup = await self.get_models_config_menu(config_type="provider", provider="primary")
+                await self.client.post(f"{self.api_url}/editMessageText", json={"chat_id": chat_id, "message_id": message_id, "text": text, "reply_markup": markup, "parse_mode": "Markdown"})
+            elif data == "cfg_fallback":
+                text, markup = await self.get_models_config_menu(config_type="provider", provider="fallback")
+                await self.client.post(f"{self.api_url}/editMessageText", json={"chat_id": chat_id, "message_id": message_id, "text": text, "reply_markup": markup, "parse_mode": "Markdown"})
+            elif data.startswith("cfg_primary_prov_") or data.startswith("cfg_fallback_prov_"):
+                parts = data.split("_")
+                setting_type = parts[1]  # 'primary' or 'fallback'
+                provider_name = parts[3]
+                text, markup = await self.get_models_config_menu(config_type="model", provider=f"{setting_type}_prov_{provider_name}")
+                await self.client.post(f"{self.api_url}/editMessageText", json={"chat_id": chat_id, "message_id": message_id, "text": text, "reply_markup": markup, "parse_mode": "Markdown"})
+            elif data.startswith("cfg_primary_set_") or data.startswith("cfg_fallback_set_"):
+                parts = data.split("_")
+                setting_type = parts[1]  # 'primary' or 'fallback'
+                provider_and_model = parts[3]  # 'provider|model'
+                provider_name, model_id = provider_and_model.split("|")
+                
+                if setting_type == "primary":
+                    await self.core.model_manager.set_primary(provider_name, model_id)
+                    await self.send_message(chat_id, f"✅ **Primary model set:** {provider_name}/{model_id}\nNow active!")
+                else:
+                    await self.core.model_manager.set_fallback(provider_name, model_id)
+                    await self.send_message(chat_id, f"✅ **Fallback model set:** {provider_name}/{model_id}")
+                
+                text, markup = await self.get_models_config_menu()
+                await self.client.post(f"{self.api_url}/editMessageText", json={"chat_id": chat_id, "message_id": message_id, "text": text, "reply_markup": markup, "parse_mode": "Markdown"})
+            elif data == "cfg_switch_primary":
+                await self.core.model_manager.switch_to_primary()
+                await self.send_message(chat_id, "✅ **Switched to PRIMARY model**")
+                text, markup = await self.get_models_config_menu()
+                await self.client.post(f"{self.api_url}/editMessageText", json={"chat_id": chat_id, "message_id": message_id, "text": text, "reply_markup": markup, "parse_mode": "Markdown"})
+            elif data == "cfg_switch_fallback":
+                await self.core.model_manager.switch_to_fallback(reason="Manual switch")
+                await self.send_message(chat_id, "✅ **Switched to FALLBACK model**")
+                text, markup = await self.get_models_config_menu()
+                await self.client.post(f"{self.api_url}/editMessageText", json={"chat_id": chat_id, "message_id": message_id, "text": text, "reply_markup": markup, "parse_mode": "Markdown"})
+            elif data == "cfg_toggle_auto":
+                self.core.model_manager.auto_fallback_enabled = not self.core.model_manager.auto_fallback_enabled
+                status = "enabled" if self.core.model_manager.auto_fallback_enabled else "disabled"
+                await self.send_message(chat_id, f"✅ **Auto-fallback {status}**")
+                text, markup = await self.get_models_config_menu()
+                await self.client.post(f"{self.api_url}/editMessageText", json={"chat_id": chat_id, "message_id": message_id, "text": text, "reply_markup": markup, "parse_mode": "Markdown"})
+            elif data == "cfg_back":
+                text, markup = await self.get_models_config_menu()
+                await self.client.post(f"{self.api_url}/editMessageText", json={"chat_id": chat_id, "message_id": message_id, "text": text, "reply_markup": markup, "parse_mode": "Markdown"})
+
+    async def process_command(self, chat_id, cmd_text):
+        parts = cmd_text.split()
+        cmd = parts[0].lower().split('@')[0]
+        
+        if cmd == '/status':
+            from datetime import datetime
+            uptime = int(time.time() - self.start_time)
+            plugins = ", ".join([p.name for p in self.core.plugins])
+            mems = len(self.core.memory.index.get('memories', []))
+            
+            # Get current timestamp with seconds
+            now = datetime.now().strftime("%H:%M:%S")
+            
+            # Get ACTUAL active model (what's really being used RIGHT NOW)
+            active_provider = self.core.gateway.llm.provider
+            active_model = self.core.gateway.llm.model
+            
+            # Get configured model info for comparison
+            configured_model = self.core.model_manager.get_current_model()
+            mode_indicator = "🟢" if configured_model['mode'] == 'primary' else "🟡"
+            
+            # Show if active model differs from configured
+            model_display = f"{active_provider}/{active_model}"
+            if (active_provider != configured_model['provider'] or 
+                active_model != configured_model['model']):
+                model_display += f" (Shifted from {configured_model['provider']}/{configured_model['model']})"
+            
+            report = (
+                f"🌌 **GALACTIC AI SYSTEM STATUS** 🚀\n"
+                f"⏰ **Time:** `{now}` | 🛸 **Version:** `v0.6.0-Alpha`\n"
+                f"━━━━━━━━━━━━━━━━━━━━━━━━\n"
+                f"{mode_indicator} **Model:** `{model_display}`\n"
+                f"🔄 **Configured Mode:** `{configured_model['mode'].upper()}`\n"
+                f"━━━━━━━━━━━━━━━━━━━━━━━━\n"
+                f"🧮 **Tokens:** `{self.core.gateway.total_tokens_in/1000:.1f}k in` / `{self.core.gateway.total_tokens_out/1000:.1f}k out`\n"
+                f"📚 **Context:** `{mems} imprints` | 🧵 **Session:** `galactic:main`\n"
+                f"━━━━━━━━━━━━━━━━━━━━━━━━\n"
+                f"🛰️ **Uptime:** `{uptime}s` | **PID:** `{os.getpid()}`\n"
+                f"⚙️ **Runtime:** `Direct AsyncIO` | **Think:** `{self.thinking_level}`\n"
+                f"🧩 **Plugins:** `{plugins}`\n"
+                f"━━━━━━━━━━━━━━━━━━━━━━━━\n"
+                f"✨ **Condition:** `Nominal` ⚡️"
+            )
+            await self.send_message(chat_id, report)
+
+        elif cmd == '/screenshot':
+            browser = next((p for p in self.core.plugins if p.name == "BrowserExecutor"), None)
+            if browser:
+                path = os.path.join(self.core.config['paths']['logs'], 'screenshot.png')
+                await browser.take_screenshot(path)
+                await self.send_photo(chat_id, path, caption="📸 **Optics Snapshot captured.**")
+            else:
+                await self.send_message(chat_id, "📺 Browser Optics not loaded.")
+
+        elif cmd == '/cli':
+            if len(parts) > 1:
+                command = " ".join(parts[1:])
+                shell = next((p for p in self.core.plugins if p.name == "ShellExecutor"), None)
+                if shell:
+                    output = await shell.execute(command)
+                    await self.send_message(chat_id, f"🦾 **Shell Output:**\n\n```\n{output[:3000]}\n```")
+            else:
+                await self.send_message(chat_id, "Usage: `/cli [powershell command]`")
+
+        elif cmd == '/compact':
+            await self.send_message(chat_id, "🧹 **Compacting Session...** Imprinting summary to Aura.")
+            history_file = self.core.gateway.history_file
+            if os.path.exists(history_file):
+                with open(history_file, 'r') as f:
+                    lines = f.readlines()[-20:]
+                summary = f"Recent Session Summary: {len(lines)} messages compacted."
+                await self.core.memory.imprint(summary, {"type": "session_summary"})
+                os.remove(history_file)
+                await self.send_message(chat_id, "✅ **Compact Complete.** Local memory indexed and chat history cleared.")
+
+        elif cmd == '/leads':
+            log_path = os.path.join(self.core.config['paths']['logs'], 'processed_emails.json')
+            lead_count = 0
+            if os.path.exists(log_path):
+                with open(log_path, 'r') as f:
+                    lead_count = len(json.load(f))
+            await self.send_message(chat_id, f"🎯 **Galactic Lead Recap**\n\n• **Email Leads:** `{lead_count}`\n• **Reddit Gigs:** `Scanning...`\n\nCheck `/status` for plugin health.")
+
+        elif cmd == '/think':
+            text, markup = await self.get_think_menu()
+            await self.send_message(chat_id, text, reply_markup=markup)
+        elif cmd == '/model':
+            text, markup = await self.get_model_menu()
+            await self.send_message(chat_id, text, reply_markup=markup)
+        elif cmd == '/models':
+            text, markup = await self.get_models_config_menu()
+            await self.send_message(chat_id, text, reply_markup=markup)
+        elif cmd == '/help':
+            text, markup = await self.get_help_page("1")
+            await self.send_message(chat_id, text, reply_markup=markup)
+        elif cmd == '/browser':
+            if hasattr(self.core, 'gateway'):
+                await self.core.gateway.speak("open youtube")
+
+    async def listen_loop(self):
+        await self.core.log("Telegram Bridge: Listening...", priority=1)
+        await self.set_commands()
+        while self.core.running:
+            try:
+                updates = await self.get_updates()
+                for update in updates:
+                    self.offset = update["update_id"] + 1
+                    if "callback_query" in update:
+                        await self.process_callback(update["callback_query"]["message"]["chat"]["id"], update["callback_query"])
+                    elif "message" in update:
+                        msg = update["message"]; chat_id = msg["chat"]["id"]; text = msg.get("text", "")
+                        if text.startswith('/'):
+                            await self.process_command(chat_id, text)
+                            continue
+                        await self.send_typing(chat_id)
+                        if hasattr(self.core, 'gateway'):
+                            asyncio.create_task(self.process_and_respond(chat_id, text))
+            except Exception as e:
+                await self.core.log(f"Bridge Loop Error: {e}", priority=1)
+            await asyncio.sleep(0.5)
+
+    async def get_updates(self):
+        try:
+            r = await self.client.get(f"{self.api_url}/getUpdates", params={"offset": self.offset, "timeout": 30})
+            return r.json().get("result", []) if r.json().get("ok") else []
+        except: return []
+
+    async def process_and_respond(self, chat_id, text):
+        typing_task = None
+        try:
+            typing_task = asyncio.create_task(self.keep_typing(chat_id))
+            response = await self.core.gateway.speak(text)
+        except Exception as e:
+            await self.core.log(f"Processing Error: {e}", priority=1)
+            response = f"🌌 **Byte Interference:** `{str(e)}`"
+        finally:
+            # ALWAYS cancel typing, even on errors
+            if typing_task and not typing_task.done():
+                typing_task.cancel()
+                try:
+                    await typing_task
+                except asyncio.CancelledError:
+                    pass
+                except Exception:
+                    pass  # Ignore any other errors during cleanup
+            # Relay to Web UI so Telegram conversations show up in the web chat log
+            try:
+                await self.core.relay.emit(2, "chat_from_telegram", {
+                    "user": str(chat_id),
+                    "data": text,
+                    "response": response,
+                })
+            except Exception:
+                pass  # Non-fatal — web UI might not be connected
+            # Send response
+            try:
+                await self.send_message(chat_id, response)
+            except Exception as e:
+                await self.core.log(f"Send Error: {e}", priority=1)
+
+    async def keep_typing(self, chat_id):
+        """Keep sending typing indicator every 4 seconds, with 5-minute safety timeout."""
+        max_duration = 300  # 5 minutes max (safety limit)
+        start_time = time.time()
+        try:
+            while True:
+                # Safety timeout check
+                if time.time() - start_time > max_duration:
+                    await self.core.log(f"Typing indicator timeout after {max_duration}s", priority=1)
+                    break
+                await self.send_typing(chat_id)
+                await asyncio.sleep(4)
+        except asyncio.CancelledError:
+            # Clean exit when cancelled (expected)
+            pass
+        except Exception as e:
+            # Log any unexpected errors but don't crash
+            await self.core.log(f"Typing indicator error: {e}", priority=1)

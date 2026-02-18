@@ -1,0 +1,77 @@
+# Galactic AI - Automation Suite
+# Configuration file -- edit this to set your API keys and preferences
+# Run the web UI at http://127.0.0.1:17789 for the graphical setup wizard
+
+aliases:
+  gemini-flash: google/gemini-2.5-flash
+  gemini-pro: google/gemini-2.5-pro
+  claude-sonnet: anthropic/claude-sonnet-4-5
+  claude-opus: anthropic/claude-opus-4-6
+  grok: xai/grok-4
+  deepseek: nvidia/deepseek-ai/deepseek-v3.2
+  llama: ollama/llama3.3:70b
+  qwen: ollama/qwen3:8b
+
+gateway:
+  provider: google          # google | anthropic | xai | nvidia | ollama
+  model: gemini-2.5-flash   # Model ID for selected provider
+  api_key: NONE             # Set via setup wizard or directly here
+
+models:
+  auto_fallback: true
+  error_threshold: 3
+  fallback_model: qwen3:8b
+  fallback_provider: ollama
+  primary_model: gemini-2.5-flash
+  primary_provider: google
+  recovery_time_seconds: 300
+  streaming: true
+  context_window_trim: true
+  smart_routing: false
+
+paths:
+  logs: ./logs
+  plugins: ./plugins
+  watch: ./watch
+  workspace: ./workspace
+
+providers:
+  anthropic:
+    apiKey: ""              # Get from https://console.anthropic.com/keys
+    baseUrl: https://api.anthropic.com/v1
+  google:
+    apiKey: ""              # Get from https://aistudio.google.com/apikey
+    baseUrl: https://generativelanguage.googleapis.com/v1beta
+  nvidia:
+    baseUrl: https://integrate.api.nvidia.com/v1
+    keys:
+      deepseek: ""          # Get from https://build.nvidia.com
+      glm: ""
+      kimi: ""
+      qwen: ""
+      stepfun: ""
+  ollama:
+    baseUrl: http://127.0.0.1:11434/v1   # Local Ollama server (https://ollama.com)
+  xai:
+    apiKey: ""              # Get from https://console.x.ai
+    baseUrl: https://api.x.ai/v1
+
+browser:
+  engine: chromium    # chromium | firefox | webkit
+  headless: false
+
+telegram:
+  bot_token: ""       # Optional: get from @BotFather on Telegram
+  admin_chat_id: ""   # Your Telegram user ID (message @userinfobot)
+
+system:
+  heartbeat_interval: 5
+  name: Galactic AI
+  port: 9999
+  version: 0.6.0-Alpha
+
+web:
+  enabled: true
+  host: 127.0.0.1
+  port: 17789
+  password_hash: ""   # Set via setup wizard, or generate: python -c "import hashlib; print(hashlib.sha256(b'yourpassword').hexdigest())"
