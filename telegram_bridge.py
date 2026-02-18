@@ -457,6 +457,11 @@ class TelegramBridge:
                         await self.process_callback(update["callback_query"]["message"]["chat"]["id"], update["callback_query"])
                     elif "message" in update:
                         msg = update["message"]; chat_id = msg["chat"]["id"]; text = msg.get("text", "")
+                        # Handle document/file attachments
+                        if "document" in msg and hasattr(self.core, 'gateway'):
+                            await self.send_typing(chat_id)
+                            asyncio.create_task(self._handle_document(chat_id, msg))
+                            continue
                         if text.startswith('/'):
                             await self.process_command(chat_id, text)
                             continue
@@ -501,6 +506,77 @@ class TelegramBridge:
             except Exception:
                 pass  # Non-fatal — web UI might not be connected
             # Send response
+            try:
+                await self.send_message(chat_id, response)
+            except Exception as e:
+                await self.core.log(f"Send Error: {e}", priority=1)
+
+    async def _handle_document(self, chat_id, msg):
+        """Download a Telegram document attachment, read its text, and send to the AI."""
+        typing_task = None
+        try:
+            typing_task = asyncio.create_task(self.keep_typing(chat_id))
+            doc = msg["document"]
+            file_name = doc.get("file_name", "unnamed")
+            file_size = doc.get("file_size", 0)
+            file_id = doc["file_id"]
+            caption = msg.get("caption", "")
+
+            # Reject large files (5 MB max)
+            if file_size > 5 * 1024 * 1024:
+                await self.send_message(chat_id, f"📎 **{file_name}** is too large ({file_size // 1024}KB). Max 5 MB.")
+                return
+
+            # Get file path from Telegram
+            r = await self.client.get(f"{self.api_url}/getFile", params={"file_id": file_id})
+            file_data = r.json()
+            if not file_data.get("ok"):
+                await self.send_message(chat_id, "❌ Couldn't retrieve file from Telegram.")
+                return
+            file_path = file_data["result"]["file_path"]
+
+            # Download file content
+            download_url = f"https://api.telegram.org/file/bot{self.bot_token}/{file_path}"
+            r = await self.client.get(download_url)
+            raw = r.content
+
+            # Decode as text
+            try:
+                text_content = raw.decode('utf-8', errors='replace')
+            except Exception:
+                text_content = '[Binary file — could not decode as text]'
+
+            # Truncate if huge
+            if len(text_content) > 100000:
+                text_content = text_content[:100000] + '\n\n... [truncated — file exceeds 100K characters]'
+
+            # Build message for the AI
+            full_msg = f"[Attached file: {file_name}]\n---\n{text_content}\n---"
+            if caption:
+                full_msg += f"\n\n{caption}"
+
+            await self.core.log(f"[Telegram] User sent file: {file_name} ({file_size} bytes)", priority=2)
+
+            response = await self.core.gateway.speak(full_msg)
+        except Exception as e:
+            await self.core.log(f"Document Error: {e}", priority=1)
+            response = f"🌌 **Byte Interference:** `{str(e)}`"
+        finally:
+            if typing_task and not typing_task.done():
+                typing_task.cancel()
+                try:
+                    await typing_task
+                except (asyncio.CancelledError, Exception):
+                    pass
+            # Relay to Web UI
+            try:
+                await self.core.relay.emit(2, "chat_from_telegram", {
+                    "user": str(chat_id),
+                    "data": f"📎 {msg.get('document', {}).get('file_name', 'file')}",
+                    "response": response,
+                })
+            except Exception:
+                pass
             try:
                 await self.send_message(chat_id, response)
             except Exception as e:
