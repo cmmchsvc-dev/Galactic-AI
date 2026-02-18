@@ -1,0 +1,24 @@
+# Never commit sensitive files
+config.yaml
+logs/
+__pycache__/
+*.pyc
+*.pyo
+.env
+*.key
+*.token
+workspace/
+watch/
+memory_*.json
+*.db
+*.sqlite
+
+# OS files
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# IDE
+.vscode/
+.idea/
+*.swp
