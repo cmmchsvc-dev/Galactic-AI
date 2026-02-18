@@ -1,22 +1,17 @@
-# Galactic AI - Automation Suite
-# Configuration file -- edit this to set your API keys and preferences
-# Run the web UI at http://127.0.0.1:17789 for the graphical setup wizard
-
 aliases:
-  gemini-flash: google/gemini-2.5-flash
-  gemini-pro: google/gemini-2.5-pro
-  claude-sonnet: anthropic/claude-sonnet-4-5
-  claude-opus: anthropic/claude-opus-4-6
-  grok: xai/grok-4
+  coder30: ollama/qwen3-coder:30b
   deepseek: nvidia/deepseek-ai/deepseek-v3.2
-  llama: ollama/llama3.3:70b
-  qwen: ollama/qwen3:8b
-
+  gemini: google/gemini-3-pro-preview
+  glm5: nvidia/z-ai/glm5
+  grok: xai/grok-4
+  pro: google/gemini-2.5-pro
+  q30: ollama/qwen3:30b
+  q8: ollama/qwen3:8b
+  qwen480: nvidia/qwen/qwen3-coder-480b-a35b-instruct
 gateway:
-  provider: google          # google | anthropic | xai | nvidia | ollama
-  model: gemini-2.5-flash   # Model ID for selected provider
-  api_key: NONE             # Set via setup wizard or directly here
-
+  api_key: AIzaSyC_kM2bTjauE5wGoQSGDf7oX-pJEgki8ZA
+  model: gemini-2.5-flash
+  provider: google
 models:
   auto_fallback: true
   error_threshold: 3
@@ -25,53 +20,55 @@ models:
   primary_model: gemini-2.5-flash
   primary_provider: google
   recovery_time_seconds: 300
-  streaming: true
-  context_window_trim: true
-  smart_routing: false
-
+  # New Galactic AI features:
+  streaming: true              # Stream Ollama responses in real-time to web UI
+  context_window_trim: true    # Auto-trim history when approaching Ollama context limit
+  smart_routing: false         # Set to true to enable task-based auto model routing
 paths:
   logs: ./logs
   plugins: ./plugins
   watch: ./watch
-  workspace: ./workspace
-
+  workspace: C:\Users\Chesley\.openclaw\workspace
 providers:
   anthropic:
-    apiKey: ""              # Get from https://console.anthropic.com/keys
+    apiKey: sk-ant-api03-yM-3Wq0PzM3_Xm90jYx_Wj50X_Xm90jYx_Wj50X_Xm90jYx_Wj50X_Xm90jYx_Wj50X-Xm90jYx
     baseUrl: https://api.anthropic.com/v1
   google:
-    apiKey: ""              # Get from https://aistudio.google.com/apikey
+    apiKey: AIzaSyC_kM2bTjauE5wGoQSGDf7oX-pJEgki8ZA
     baseUrl: https://generativelanguage.googleapis.com/v1beta
   nvidia:
     baseUrl: https://integrate.api.nvidia.com/v1
     keys:
-      deepseek: ""          # Get from https://build.nvidia.com
-      glm: ""
-      kimi: ""
-      qwen: ""
-      stepfun: ""
+      deepseek: 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
+      glm: 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
+      kimi: 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
+      qwen: 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
+      stepfun: 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
   ollama:
-    baseUrl: http://127.0.0.1:11434/v1   # Local Ollama server (https://ollama.com)
+    baseUrl: http://127.0.0.1:11434/v1
   xai:
-    apiKey: ""              # Get from https://console.x.ai
+    apiKey: ai-gsA3iv3aFBmJ4n37SCD4rEpnALmOMCNkrstHbWYEhdijVyy61J936nScejw60rvQDrjThKNCpbEads4N
     baseUrl: https://api.x.ai/v1
-
+# Browser engine configuration (Galactic Exclusive)
 browser:
   engine: chromium    # chromium | firefox | webkit
-  headless: false
+  headless: false     # Set to true for server/headless environments
 
-telegram:
-  bot_token: ""       # Optional: get from @BotFather on Telegram
-  admin_chat_id: ""   # Your Telegram user ID (message @userinfobot)
-
+shell_tasks:
+- command: adb devices
+  name: ADB Check
+- command: tasklist | findstr python
+  name: Watchdog Status
 system:
   heartbeat_interval: 5
   name: Galactic AI
   port: 9999
   version: 0.6.0-Alpha
-
+telegram:
+  admin_chat_id: 6790828435
+  bot_token: 8012002164:AAF6NQT-7JZ2951dAlR2Mvm1pCEbK1A7DBs
 web:
   enabled: true
   host: 127.0.0.1
+  password_hash: 16c13d49e42cd306faa482fe68cef34ed189d6b1cf62c8e035598d096e6e539d
   port: 17789
-  password_hash: ""   # Set via setup wizard, or generate: python -c "import hashlib; print(hashlib.sha256(b'yourpassword').hexdigest())"
