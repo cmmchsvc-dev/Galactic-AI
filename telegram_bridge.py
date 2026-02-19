@@ -556,17 +556,46 @@ class TelegramBridge:
             return r.json().get("result", []) if r.json().get("ok") else []
         except: return []
 
+    def _get_speak_timeout(self) -> float:
+        """Return the appropriate speak() timeout based on the active model provider.
+
+        Ollama (local inference) gets a much higher ceiling because:
+          - 30B models: 60-180s per LLM call
+          - Browser/Playwright tools: up to 30s per navigation
+          - ReAct loop: up to 50 turns
+        Cloud models keep the original fast timeout.
+        """
+        tg_cfg = self.core.config.get('telegram', {})
+        is_ollama = (
+            hasattr(self.core, 'gateway') and
+            self.core.gateway.llm.provider == 'ollama'
+        )
+        if is_ollama:
+            return float(tg_cfg.get('ollama_timeout_seconds', 600))
+        return float(tg_cfg.get('timeout_seconds', 120))
+
     async def process_and_respond(self, chat_id, text):
         typing_task = None
         try:
             typing_task = asyncio.create_task(self.keep_typing(chat_id))
             response = await asyncio.wait_for(
                 self.core.gateway.speak(text, chat_id=chat_id),
-                timeout=120.0  # 2-minute hard timeout — prevents permanent hang
+                timeout=self._get_speak_timeout()
             )
         except asyncio.TimeoutError:
-            await self.core.log(f"[Telegram] speak() timed out for chat {chat_id}", priority=1)
-            response = "⏱ Sorry, that took too long and I had to give up. Please try again — the AI provider may be slow right now."
+            provider = getattr(self.core.gateway.llm, 'provider', 'unknown')
+            model = getattr(self.core.gateway.llm, 'model', 'unknown')
+            t = self._get_speak_timeout()
+            await self.core.log(
+                f"[Telegram] speak() timed out after {t:.0f}s for chat {chat_id} "
+                f"(provider={provider}, model={model})",
+                priority=1
+            )
+            response = (
+                f"⏱ Timed out after {t:.0f}s using `{provider}/{model}`.\n\n"
+                f"The model or a browser tool is running very slowly. "
+                f"Try a simpler task, or switch to a faster model with /model."
+            )
         except Exception as e:
             await self.core.log(f"Processing Error: {e}", priority=1)
             response = f"🌌 **Byte Interference:** `{str(e)}`"
@@ -651,7 +680,7 @@ class TelegramBridge:
 
             response = await asyncio.wait_for(
                 self.core.gateway.speak(full_msg, chat_id=chat_id),
-                timeout=120.0
+                timeout=self._get_speak_timeout()
             )
         except asyncio.TimeoutError:
             await self.core.log(f"[Telegram] Document speak() timed out for chat {chat_id}", priority=1)
@@ -721,7 +750,7 @@ class TelegramBridge:
 
             response = await asyncio.wait_for(
                 self.core.gateway.speak(full_msg, chat_id=chat_id),
-                timeout=120.0
+                timeout=self._get_speak_timeout()
             )
         except asyncio.TimeoutError:
             await self.core.log(f"[Telegram] Photo speak() timed out for chat {chat_id}", priority=1)
@@ -820,7 +849,7 @@ class TelegramBridge:
             # ─── Step 2: Get AI response ───
             response = await asyncio.wait_for(
                 self.core.gateway.speak(full_msg, chat_id=chat_id),
-                timeout=120.0
+                timeout=self._get_speak_timeout()
             )
 
             # ─── Step 3: Voice in → Voice out (auto-TTS with male Byte voice) ───
@@ -874,8 +903,8 @@ class TelegramBridge:
                     await self.core.log(f"Send Error: {e}", priority=1)
 
     async def keep_typing(self, chat_id):
-        """Keep sending typing indicator every 4 seconds, with 3-minute safety timeout."""
-        max_duration = 180  # 3 minutes max — speak() has its own 2-min timeout
+        """Keep sending typing indicator every 4 seconds, scaled to the active model's timeout."""
+        max_duration = int(self._get_speak_timeout()) + 30  # always outlasts speak()
         start_time = time.time()
         try:
             while True:

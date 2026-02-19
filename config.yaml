@@ -28,6 +28,7 @@ models:
   streaming: true
   context_window_trim: true
   smart_routing: false
+  max_turns: 50                # Max ReAct tool-call iterations per response
   max_tokens: 0                # Override max output tokens (0 = provider default)
   context_window: 0            # Override context window size (0 = auto-detect)
 
@@ -92,6 +93,8 @@ browser:
 telegram:
   bot_token: ""       # Optional: get from @BotFather on Telegram
   admin_chat_id: ""   # Your Telegram user ID (message @userinfobot)
+  timeout_seconds: 120           # Cloud models (google, anthropic, openai, groq, etc.)
+  ollama_timeout_seconds: 600    # Local Ollama — 10 min covers 30B + multi-turn browser tasks
 
 elevenlabs:
   api_key: ""        # Optional: get from elevenlabs.io for premium TTS voices

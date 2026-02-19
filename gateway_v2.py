@@ -2252,7 +2252,7 @@ class GalacticGateway:
         messages = [{"role": "system", "content": system_prompt}] + self.history[-5:]
 
         # 2. ReAct Loop
-        max_turns = 30
+        max_turns = int(self.config.get('models', {}).get('max_turns', 50))
         turn_count = 0
         last_tool_call = None  # Track last (tool_name, json_args_str) to prevent duplicate calls
         # Tools that are legitimately called repeatedly with same args (snapshots, reads, etc.)
