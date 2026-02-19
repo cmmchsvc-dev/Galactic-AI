@@ -1922,10 +1922,10 @@ class GalacticGateway:
             return f"Error searching memory: {e}"
     
     async def tool_memory_imprint(self, args):
-        """Save information to long-term memory."""
+        """Save information to long-term memory and persist to MEMORY.md."""
         content = args.get('content')
         tags = args.get('tags', '')
-        
+
         try:
             if hasattr(self.core, 'memory'):
                 metadata = {
@@ -1933,6 +1933,28 @@ class GalacticGateway:
                     "tags": tags
                 }
                 await self.core.memory.imprint(content, metadata)
+
+                # Also write to MEMORY.md so it appears in every future system prompt
+                try:
+                    workspace = self.core.config.get('paths', {}).get('workspace', '')
+                    if workspace:
+                        memory_path = os.path.join(workspace, 'MEMORY.md')
+                        from datetime import datetime
+                        timestamp = datetime.now().strftime('%Y-%m-%d')
+                        tag_str = f" [{tags}]" if tags else ""
+                        entry = f"\n- {timestamp}{tag_str}: {content}"
+                        # Create file with header if it doesn't exist
+                        if not os.path.exists(memory_path):
+                            with open(memory_path, 'w', encoding='utf-8') as f:
+                                f.write("# Memory\n")
+                        with open(memory_path, 'a', encoding='utf-8') as f:
+                            f.write(entry)
+                        # Reload personality so next prompt includes this memory
+                        if hasattr(self, 'personality') and hasattr(self.personality, 'reload_memory'):
+                            self.personality.reload_memory()
+                except Exception:
+                    pass  # MEMORY.md write is best-effort; imprint already succeeded
+
                 return f"[MEMORY] Saved to long-term memory. Tags: {tags or 'none'}"
             else:
                 return "[ERR] Memory system not available."
