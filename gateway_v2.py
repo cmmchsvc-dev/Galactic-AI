@@ -2674,6 +2674,7 @@ class GalacticGateway:
         try:
             async with httpx.AsyncClient(timeout=120.0, verify=False) as client:
                 async with client.stream("POST", url, headers=headers, json=payload) as response:
+                    token_buf = []
                     async for line in response.aiter_lines():
                         if not line.startswith("data: "):
                             continue
@@ -2685,10 +2686,15 @@ class GalacticGateway:
                             delta = chunk.get('choices', [{}])[0].get('delta', {}).get('content', '')
                             if delta:
                                 full_response.append(delta)
-                                # Broadcast each token to the web UI for real-time streaming feel
-                                await self.core.relay.emit(3, "stream_chunk", delta)
+                                token_buf.append(delta)
+                                if len(token_buf) >= 8:
+                                    await self.core.relay.emit(3, "stream_chunk", "".join(token_buf))
+                                    token_buf = []
+                                    await asyncio.sleep(0)
                         except json.JSONDecodeError:
                             continue
+                    if token_buf:
+                        await self.core.relay.emit(3, "stream_chunk", "".join(token_buf))
             return "".join(full_response)
         except Exception as e:
             return f"[ERROR] {self.llm.provider} (streaming): {str(e)}"
@@ -2743,6 +2749,7 @@ class GalacticGateway:
             try:
                 async with httpx.AsyncClient(timeout=180.0, verify=False) as client:
                     async with client.stream("POST", url, headers=headers, json=payload) as response:
+                        token_buf = []
                         async for line in response.aiter_lines():
                             if not line.startswith("data: "):
                                 continue
@@ -2754,9 +2761,17 @@ class GalacticGateway:
                                 delta = chunk.get('choices', [{}])[0].get('delta', {}).get('content', '')
                                 if delta:
                                     full_response.append(delta)
-                                    await self.core.relay.emit(3, "stream_chunk", delta)
+                                    token_buf.append(delta)
+                                    # Batch emit every 8 tokens to reduce event loop pressure
+                                    if len(token_buf) >= 8:
+                                        await self.core.relay.emit(3, "stream_chunk", "".join(token_buf))
+                                        token_buf = []
+                                        await asyncio.sleep(0)  # yield to other tasks (typing, etc.)
                             except json.JSONDecodeError:
                                 continue
+                        # Flush remaining buffer
+                        if token_buf:
+                            await self.core.relay.emit(3, "stream_chunk", "".join(token_buf))
                 return "".join(full_response)
             except Exception as e:
                 return f"[ERROR] {provider} (streaming): {str(e)}"
