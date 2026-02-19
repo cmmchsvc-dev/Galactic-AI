@@ -1962,58 +1962,73 @@ class GalacticGateway:
             return f"Error saving to memory: {e}"
     
     async def tool_text_to_speech(self, args):
-        """Convert text to speech using ElevenLabs or fallback TTS."""
+        """Convert text to speech using ElevenLabs, edge-tts (free male), or gTTS fallback."""
         text = args.get('text')
-        voice = args.get('voice', 'Nova')
-        
+        # Voice options:
+        #   'Nova'  → ElevenLabs Rachel (female, premium)
+        #   'Byte'  → ElevenLabs Adam (male, premium)
+        #   'Guy'   → edge-tts en-US-GuyNeural (male, FREE, no key needed)
+        #   'Aria'  → edge-tts en-US-AriaNeural (female, FREE, no key needed)
+        #   'gtts'  → Google TTS (female, FREE, no key needed)
+        # Default pulled from config.yaml elevenlabs.voice, fallback to 'Guy'
+        cfg_voice = self.core.config.get('elevenlabs', {}).get('voice', 'Guy')
+        voice = args.get('voice', cfg_voice)
+
         try:
-            import hashlib
-            import os
-            
-            # Generate filename from text hash
-            text_hash = hashlib.md5(text.encode()).hexdigest()[:8]
-            output_path = os.path.join(self.config.get('paths', {}).get('logs', './logs'), f'tts_{text_hash}.mp3')
-            
-            # Try ElevenLabs first
-            try:
-                from elevenlabs import generate, save, voices
-                
-                # Get API key from config
-                api_key = self.core.config.get('elevenlabs', {}).get('api_key')
-                if not api_key:
-                    return "[ERR] ElevenLabs API key not configured. Add to config.yaml:\nelevenlabs:\n  api_key: your_key_here"
-                
-                # Voice mapping (you can customize these)
-                voice_map = {
-                    'Nova': '21m00Tcm4TlvDq8ikWAM',  # Rachel (clear, warm)
-                    'Byte': 'pNInz6obpgDQGcFmaJgB',  # Adam (tech-y)
-                    'Default': '21m00Tcm4TlvDq8ikWAM'
-                }
-                
-                voice_id = voice_map.get(voice, voice_map['Default'])
-                
-                # Generate speech
-                audio = generate(
-                    text=text,
-                    voice=voice_id,
-                    api_key=api_key
-                )
-                
-                # Save to file
-                save(audio, output_path)
-                
-                return f"[VOICE] Generated speech: {output_path}\nVoice: {voice}\nDuration: ~{len(text) // 15}s"
-                
-            except ImportError:
-                # Fallback: Use Google TTS (requires gtts) or just create placeholder
+            import hashlib as _hashlib
+
+            text_hash = _hashlib.md5(text.encode()).hexdigest()[:8]
+            logs_dir = self.config.get('paths', {}).get('logs', './logs')
+            os.makedirs(logs_dir, exist_ok=True)
+
+            # ── ElevenLabs (premium) ─────────────────────────────────────────
+            el_key = self.core.config.get('elevenlabs', {}).get('api_key', '')
+            if el_key and voice in ('Nova', 'Byte', 'Default'):
                 try:
-                    from gtts import gTTS
-                    tts = gTTS(text=text, lang='en', slow=False)
-                    tts.save(output_path)
-                    return f"[VOICE] Generated speech (gTTS): {output_path}"
-                except:
-                    return "[ERR] TTS not available. Install with: pip install elevenlabs (preferred) or pip install gtts (fallback)"
-                    
+                    from elevenlabs import generate, save
+                    voice_map = {
+                        'Nova':    '21m00Tcm4TlvDq8ikWAM',  # Rachel
+                        'Byte':    'pNInz6obpgDQGcFmaJgB',  # Adam
+                        'Default': '21m00Tcm4TlvDq8ikWAM',
+                    }
+                    output_path = os.path.join(logs_dir, f'tts_{text_hash}.mp3')
+                    audio = generate(text=text, voice=voice_map.get(voice, voice_map['Default']), api_key=el_key)
+                    save(audio, output_path)
+                    return f"[VOICE] Generated speech: {output_path}"
+                except Exception as e:
+                    pass  # Fall through to free options
+
+            # ── edge-tts (FREE — Microsoft neural voices, no key needed) ─────
+            # Voices: Guy = male, Aria = female, Jenny = female, Davis = male
+            edge_voice_map = {
+                'Guy':   'en-US-GuyNeural',    # Natural male voice
+                'Davis': 'en-US-DavisNeural',  # Expressive male voice
+                'Aria':  'en-US-AriaNeural',   # Natural female voice
+                'Jenny': 'en-US-JennyNeural',  # Friendly female voice
+                'Byte':  'en-US-GuyNeural',    # Byte defaults to Guy when no EL key
+                'Nova':  'en-US-AriaNeural',   # Nova defaults to Aria when no EL key
+            }
+            edge_voice_name = edge_voice_map.get(voice, 'en-US-GuyNeural')
+            try:
+                import edge_tts
+                output_path = os.path.join(logs_dir, f'tts_{text_hash}.mp3')
+                communicate = edge_tts.Communicate(text, edge_voice_name)
+                await communicate.save(output_path)
+                return f"[VOICE] Generated speech: {output_path}"
+            except ImportError:
+                pass  # edge-tts not installed, fall through to gTTS
+
+            # ── gTTS (FREE fallback — female only) ───────────────────────────
+            try:
+                from gtts import gTTS
+                output_path = os.path.join(logs_dir, f'tts_{text_hash}.mp3')
+                gTTS(text=text, lang='en', slow=False).save(output_path)
+                return f"[VOICE] Generated speech: {output_path}"
+            except ImportError:
+                pass
+
+            return "[ERR] No TTS engine available. Run: pip install edge-tts"
+
         except Exception as e:
             return f"Error generating speech: {e}"
 

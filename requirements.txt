@@ -17,6 +17,7 @@ anthropic>=0.34.0            # Anthropic Claude SDK
 google-generativeai>=0.8.0   # Google Gemini SDK
 
 # ─── Text-to-Speech ───────────────────────────────────────────────────────────
+edge-tts>=7.0.0              # FREE Microsoft neural voices — Guy (male), Aria (female), etc.
 elevenlabs>=1.9.0            # Premium TTS voices (optional, needs API key)
 gtts>=2.5.0                  # Free Google TTS fallback (no key needed)
 pygame>=2.5.0                # Audio playback for TTS output
