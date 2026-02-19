@@ -27,6 +27,7 @@ class GalacticPersonality:
         self.vibe = "Resourceful, non-conformist, curious, and chill."
         self.soul = self._default_soul()
         self.user_context = ""
+        self.memory_md = None  # Loaded per-mode below
 
         if self.mode in ('byte', 'files'):
             self._load_from_files_or_byte(persona_cfg)
@@ -42,6 +43,7 @@ class GalacticPersonality:
         identity_md = self._read_md('IDENTITY.md')
         soul_md = self._read_md('SOUL.md')
         user_md = self._read_md('USER.md')
+        self.memory_md = self._read_md('MEMORY.md')
 
         has_files = bool(identity_md or soul_md or user_md)
 
@@ -67,6 +69,7 @@ class GalacticPersonality:
         self.vibe = persona_cfg.get('vibe', 'Helpful and professional.')
         self.soul = persona_cfg.get('soul', 'Be helpful, accurate, and concise.')
         self.user_context = persona_cfg.get('user_context', '')
+        self.memory_md = self._read_md('MEMORY.md')
 
     def _load_generic(self):
         """Neutral assistant — no personality flavor."""
@@ -75,6 +78,7 @@ class GalacticPersonality:
         self.vibe = "Helpful, accurate, and professional."
         self.soul = "Be helpful, accurate, and concise. Focus on providing clear, correct answers."
         self.user_context = ""
+        self.memory_md = self._read_md('MEMORY.md')
 
     # ── File I/O ─────────────────────────────────────────────
 
@@ -130,4 +134,10 @@ class GalacticPersonality:
             parts.append(f"SOUL:\n{self.soul}")
         if self.user_context:
             parts.append(f"USER:\n{self.user_context}")
+        if self.memory_md:
+            parts.append(f"MEMORY (persistent — things you've learned across sessions):\n{self.memory_md}")
         return "\n\n".join(parts)
+
+    def reload_memory(self):
+        """Re-read MEMORY.md from disk. Call after imprinting new memories."""
+        self.memory_md = self._read_md('MEMORY.md')
