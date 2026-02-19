@@ -2293,7 +2293,11 @@ class GalacticGateway:
             # No tool call detected → this is the final answer
             # Use display_text (think-tags stripped) for the history and relay
             self.history.append({"role": "assistant", "content": display_text})
-            await self.core.relay.emit(2, "thought", display_text)
+            # Only emit "thought" to the web UI if this is a web chat request.
+            # Telegram calls are handled by process_and_respond which emits
+            # "chat_from_telegram" — emitting "thought" here too causes duplicates.
+            if not chat_id:
+                await self.core.relay.emit(2, "thought", display_text)
 
             self.total_tokens_out += len(display_text) // 4
 
@@ -2402,9 +2406,15 @@ class GalacticGateway:
             async with httpx.AsyncClient(timeout=60.0, verify=False) as client:
                 response = await client.post(url, json=payload)
                 data = response.json()
-                if 'candidates' not in data:
+                if 'candidates' not in data or not data['candidates']:
                     return f"[ERROR] Google API: {json.dumps(data)}"
-                return data['candidates'][0]['content']['parts'][0]['text']
+                candidate = data['candidates'][0]
+                # Gemini sometimes returns a candidate with finishReason but no content
+                # (e.g. safety filter, recitation, or empty response)
+                if 'content' not in candidate:
+                    reason = candidate.get('finishReason', 'UNKNOWN')
+                    return f"[ERROR] Google returned no content (finishReason: {reason}). Try rephrasing."
+                return candidate['content']['parts'][0]['text']
         except Exception as e:
             return f"[ERROR] Google: {str(e)}"
     
