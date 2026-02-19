@@ -2449,12 +2449,15 @@ class GalacticGateway:
             return "[ERROR] Anthropic API key not configured. Set providers.anthropic.apiKey in config.yaml"
 
         url = "https://api.anthropic.com/v1/messages"
-        # OAuth tokens (Claude Pro / Claude Code) use Bearer auth; API keys use x-api-key
+        # OAuth tokens (Claude Pro / Claude Code) require Bearer auth + special beta headers
         if api_key.startswith("sk-ant-oat"):
             headers = {
                 "Content-Type": "application/json",
                 "Authorization": f"Bearer {api_key}",
                 "anthropic-version": "2023-06-01",
+                "anthropic-beta": "claude-code-20250219,oauth-2025-04-20,fine-grained-tool-streaming-2025-05-14",
+                "x-app": "cli",
+                "user-agent": "claude-cli/2.1.2 (external, cli)",
             }
         else:
             headers = {
@@ -2502,12 +2505,15 @@ class GalacticGateway:
             return "[ERROR] Anthropic API key not configured. Set providers.anthropic.apiKey in config.yaml"
 
         url = "https://api.anthropic.com/v1/messages"
-        # OAuth tokens (Claude Pro / Claude Code) use Bearer auth; API keys use x-api-key
+        # OAuth tokens (Claude Pro / Claude Code) require Bearer auth + special beta headers
         if api_key.startswith("sk-ant-oat"):
             headers = {
                 "Content-Type": "application/json",
                 "Authorization": f"Bearer {api_key}",
                 "anthropic-version": "2023-06-01",
+                "anthropic-beta": "claude-code-20250219,oauth-2025-04-20,fine-grained-tool-streaming-2025-05-14",
+                "x-app": "cli",
+                "user-agent": "claude-cli/2.1.2 (external, cli)",
             }
         else:
             headers = {
