@@ -350,13 +350,15 @@ class GalacticGateway:
                 "fn": self.tool_browser_fill_form
             },
             "browser_extract": {
-                "description": "Extract data from the current page (scraping). Can extract text, attributes, tables, lists, etc.",
+                "description": "Extract text or an attribute from elements on the current page. Use selector (CSS) or ref (element ref from snapshot).",
                 "parameters": {
                     "type": "object",
                     "properties": {
-                        "config": {"type": "string", "description": "JSON extraction config: {key: {selector, attr, multiple}}"}
-                    },
-                    "required": ["config"]
+                        "selector": {"type": "string", "description": "CSS selector to target elements, e.g. 'a.post-title'"},
+                        "ref": {"type": "integer", "description": "Element ref number from browser_snapshot"},
+                        "attribute": {"type": "string", "description": "HTML attribute to extract, e.g. 'href', 'src', 'text'. Defaults to inner text."},
+                        "multiple": {"type": "boolean", "description": "If true, return all matching elements. Default false (first match only)."}
+                    }
                 },
                 "fn": self.tool_browser_extract
             },
@@ -1132,20 +1134,43 @@ class GalacticGateway:
             return f"[ERROR] Browser fill form: {e}"
     
     async def tool_browser_extract(self, args):
-        """Extract data from page."""
+        """Extract text or attribute from page elements by selector or ref."""
         import json as json_lib
-        config_str = args.get('config')
         try:
             browser_plugin = next((p for p in self.core.plugins if "BrowserExecutorPro" in p.__class__.__name__), None)
             if not browser_plugin:
                 return "[ERROR] BrowserExecutorPro plugin not loaded."
-            
-            config = json_lib.loads(config_str)
-            result = await browser_plugin.extract_data(config)
-            
-            if result['status'] == 'success':
-                data = result['data']
-                return f"[BROWSER] Extracted data:\n{json_lib.dumps(data, indent=2)}"
+
+            selector = args.get('selector')
+            ref = args.get('ref')
+            attribute = args.get('attribute', 'text')
+            multiple = args.get('multiple', False)
+
+            # Build selector from ref if needed
+            if not selector and ref is not None:
+                selector = f"[data-ref='{ref}']"
+
+            if not selector:
+                return "[ERROR] browser_extract requires 'selector' or 'ref'"
+
+            # Use JS to extract the data
+            if attribute == 'text':
+                js = f"""
+                    const els = Array.from(document.querySelectorAll({json_lib.dumps(selector)}));
+                    const results = els.map(e => e.innerText.trim()).filter(Boolean);
+                    JSON.stringify({'multiple': multiple} ? results : results[0] || null);
+                """.replace("{'multiple': multiple}", "true" if multiple else "false")
+            else:
+                js = f"""
+                    const els = Array.from(document.querySelectorAll({json_lib.dumps(selector)}));
+                    const results = els.map(e => e.getAttribute({json_lib.dumps(attribute)})).filter(Boolean);
+                    JSON.stringify({'multiple': multiple} ? results : results[0] || null);
+                """.replace("{'multiple': multiple}", "true" if multiple else "false")
+
+            result = await browser_plugin.execute_js(js)
+            if result.get('status') == 'success':
+                val = result.get('result', 'null')
+                return f"[BROWSER] Extracted ({attribute}): {val}"
             else:
                 return f"[ERROR] Extract failed: {result.get('message', 'Unknown error')}"
         except Exception as e:
@@ -2230,6 +2255,8 @@ class GalacticGateway:
         max_turns = 30
         turn_count = 0
         last_tool_call = None  # Track last (tool_name, json_args_str) to prevent duplicate calls
+        # Tools that are legitimately called repeatedly with same args (snapshots, reads, etc.)
+        _DUPLICATE_EXEMPT = {'browser_snapshot', 'web_search', 'read_file', 'memory_search'}
 
         for _ in range(max_turns):
             turn_count += 1
@@ -2244,8 +2271,9 @@ class GalacticGateway:
 
             if tool_name is not None:
                 # Duplicate-call guard (prevents infinite loops with stubborn models)
+                # Exempt tools that are legitimately called repeatedly (snapshots, searches, etc.)
                 call_sig = f"{tool_name}:{json.dumps(tool_args, sort_keys=True)}"
-                if call_sig == last_tool_call:
+                if call_sig == last_tool_call and tool_name not in _DUPLICATE_EXEMPT:
                     await self.core.log(
                         f"⚠️ Duplicate tool call detected ({tool_name}), forcing final answer.",
                         priority=2
