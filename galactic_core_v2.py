@@ -27,18 +27,23 @@ class GalacticRelay:
             priority, ts, raw_payload = await self.queue.get()
             payload = json.loads(raw_payload)
             payload["ts"] = ts
-            
+            encoded = (json.dumps(payload) + "\n").encode()
+
             # Broadcast to all connected adapters
             disconnected = []
             for client in self.core.clients:
                 try:
-                    client.write((json.dumps(payload) + "\n").encode())
-                    await client.drain()
-                except:
+                    client.write(encoded)
+                    # Timeout drain so a stalled web client can't block the event loop
+                    await asyncio.wait_for(client.drain(), timeout=2.0)
+                except (asyncio.TimeoutError, Exception):
                     disconnected.append(client)
-            
+
             for d in disconnected:
-                self.core.clients.remove(d)
+                try:
+                    self.core.clients.remove(d)
+                except ValueError:
+                    pass
             self.queue.task_done()
 
 class GalacticCore:
