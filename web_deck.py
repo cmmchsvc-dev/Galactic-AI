@@ -302,7 +302,8 @@ body::after{content:"";position:fixed;inset:0;background:linear-gradient(rgba(18
     <!-- Step 2: Additional API Keys -->
     <div id="sw-step-2" style="display:none;padding:28px 32px">
       <div style="font-size:0.7em;letter-spacing:3px;color:var(--cyan);margin-bottom:4px">STEP 2 OF 7 — ADDITIONAL PROVIDERS</div>
-      <div style="color:var(--dim);font-size:0.78em;margin-bottom:18px">Add more providers to unlock the full model grid. Keys entered here are saved but only used when you switch to that provider. All optional.</div>
+      <div style="color:var(--dim);font-size:0.78em;margin-bottom:8px">Add more providers to unlock the full model grid. Keys entered here are saved but only used when you switch to that provider. All optional.</div>
+      <div style="background:rgba(6,182,212,0.08);border:1px solid rgba(6,182,212,0.25);border-radius:8px;padding:8px 12px;margin-bottom:14px;font-size:0.78em;color:var(--cyan)">🎤 <strong>Voice messages (STT):</strong> Add an <strong>OpenAI</strong> or <strong>Groq</strong> key to enable Telegram voice transcription. Groq is free.</div>
       <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">
         <div id="sw-extra-google">
           <label style="font-size:0.75em;color:var(--dim);display:block;margin-bottom:4px">🌐 Google Gemini <a href="https://aistudio.google.com/apikey" target="_blank" style="color:var(--cyan)">[get key]</a></label>
