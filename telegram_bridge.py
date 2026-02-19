@@ -560,7 +560,13 @@ class TelegramBridge:
         typing_task = None
         try:
             typing_task = asyncio.create_task(self.keep_typing(chat_id))
-            response = await self.core.gateway.speak(text, chat_id=chat_id)
+            response = await asyncio.wait_for(
+                self.core.gateway.speak(text, chat_id=chat_id),
+                timeout=120.0  # 2-minute hard timeout — prevents permanent hang
+            )
+        except asyncio.TimeoutError:
+            await self.core.log(f"[Telegram] speak() timed out for chat {chat_id}", priority=1)
+            response = "⏱ Sorry, that took too long and I had to give up. Please try again — the AI provider may be slow right now."
         except Exception as e:
             await self.core.log(f"Processing Error: {e}", priority=1)
             response = f"🌌 **Byte Interference:** `{str(e)}`"
@@ -643,7 +649,13 @@ class TelegramBridge:
 
             await self.core.log(f"[Telegram] User sent file: {file_name} ({file_size} bytes)", priority=2)
 
-            response = await self.core.gateway.speak(full_msg, chat_id=chat_id)
+            response = await asyncio.wait_for(
+                self.core.gateway.speak(full_msg, chat_id=chat_id),
+                timeout=120.0
+            )
+        except asyncio.TimeoutError:
+            await self.core.log(f"[Telegram] Document speak() timed out for chat {chat_id}", priority=1)
+            response = "⏱ Took too long processing that file. Please try again."
         except Exception as e:
             await self.core.log(f"Document Error: {e}", priority=1)
             response = f"🌌 **Byte Interference:** `{str(e)}`"
@@ -707,7 +719,13 @@ class TelegramBridge:
                 full_msg += f"{caption}\n\n"
             full_msg += f"Analyze the image at path: {temp_file_path}"
 
-            response = await self.core.gateway.speak(full_msg, chat_id=chat_id)
+            response = await asyncio.wait_for(
+                self.core.gateway.speak(full_msg, chat_id=chat_id),
+                timeout=120.0
+            )
+        except asyncio.TimeoutError:
+            await self.core.log(f"[Telegram] Photo speak() timed out for chat {chat_id}", priority=1)
+            response = "⏱ Took too long analyzing that image. Please try again."
         except Exception as e:
             await self.core.log(f"Photo Error: {e}", priority=1)
             response = f"🌌 **Byte Interference (Photo):** `{str(e)}`"
@@ -800,7 +818,10 @@ class TelegramBridge:
                 full_msg += f"\n{caption}"
 
             # ─── Step 2: Get AI response ───
-            response = await self.core.gateway.speak(full_msg, chat_id=chat_id)
+            response = await asyncio.wait_for(
+                self.core.gateway.speak(full_msg, chat_id=chat_id),
+                timeout=120.0
+            )
 
             # ─── Step 3: Voice in → Voice out (auto-TTS with male Byte voice) ───
             if transcription and hasattr(self.core, 'gateway'):
@@ -820,6 +841,9 @@ class TelegramBridge:
                 except Exception as e:
                     await self.core.log(f"Auto-TTS voice reply error: {e}", priority=2)
 
+        except asyncio.TimeoutError:
+            await self.core.log(f"[Telegram] Audio speak() timed out for chat {chat_id}", priority=1)
+            response = "⏱ Took too long processing that voice message. Please try again."
         except Exception as e:
             await self.core.log(f"Audio Error: {e}", priority=1)
             response = f"🌌 **Byte Interference (Audio):** `{str(e)}`"
@@ -850,8 +874,8 @@ class TelegramBridge:
                     await self.core.log(f"Send Error: {e}", priority=1)
 
     async def keep_typing(self, chat_id):
-        """Keep sending typing indicator every 4 seconds, with 5-minute safety timeout."""
-        max_duration = 1200  # 20 minutes max (extended for complex tasks)
+        """Keep sending typing indicator every 4 seconds, with 3-minute safety timeout."""
+        max_duration = 180  # 3 minutes max — speak() has its own 2-min timeout
         start_time = time.time()
         try:
             while True:
