@@ -2449,11 +2449,19 @@ class GalacticGateway:
             return "[ERROR] Anthropic API key not configured. Set providers.anthropic.apiKey in config.yaml"
 
         url = "https://api.anthropic.com/v1/messages"
-        headers = {
-            "Content-Type": "application/json",
-            "x-api-key": api_key,
-            "anthropic-version": "2023-06-01",
-        }
+        # OAuth tokens (Claude Pro / Claude Code) use Bearer auth; API keys use x-api-key
+        if api_key.startswith("sk-ant-oat"):
+            headers = {
+                "Content-Type": "application/json",
+                "Authorization": f"Bearer {api_key}",
+                "anthropic-version": "2023-06-01",
+            }
+        else:
+            headers = {
+                "Content-Type": "application/json",
+                "x-api-key": api_key,
+                "anthropic-version": "2023-06-01",
+            }
 
         # Anthropic separates system prompt from messages
         payload = {
@@ -2494,11 +2502,19 @@ class GalacticGateway:
             return "[ERROR] Anthropic API key not configured. Set providers.anthropic.apiKey in config.yaml"
 
         url = "https://api.anthropic.com/v1/messages"
-        headers = {
-            "Content-Type": "application/json",
-            "x-api-key": api_key,
-            "anthropic-version": "2023-06-01",
-        }
+        # OAuth tokens (Claude Pro / Claude Code) use Bearer auth; API keys use x-api-key
+        if api_key.startswith("sk-ant-oat"):
+            headers = {
+                "Content-Type": "application/json",
+                "Authorization": f"Bearer {api_key}",
+                "anthropic-version": "2023-06-01",
+            }
+        else:
+            headers = {
+                "Content-Type": "application/json",
+                "x-api-key": api_key,
+                "anthropic-version": "2023-06-01",
+            }
 
         # Ensure messages alternate user/assistant (Anthropic requirement)
         # Merge consecutive same-role messages
