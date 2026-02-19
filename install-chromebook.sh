@@ -3,7 +3,7 @@
 # Requires: Linux (Crostini) enabled on Chromebook
 
 echo "╔═══════════════════════════════════════════════════════════╗"
-echo "║         Galactic AI v0.6.0 - Chromebook Setup            ║"
+echo "║         Galactic AI v0.7.2 - Chromebook Setup            ║"
 echo "╚═══════════════════════════════════════════════════════════╝"
 
 # Check Python

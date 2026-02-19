@@ -163,6 +163,17 @@ try {
     Remove-Item -Force        $tempZip   -ErrorAction SilentlyContinue
 }
 
+# ── Step 5b: Patch version in config.yaml ────────────────────────────────────
+# config.yaml is protected so your API keys are never touched, but the version
+# field must be updated so the splash screen and updater stay in sync.
+$configPath = "$InstallDir\config.yaml"
+$configRaw  = Get-Content $configPath -Raw
+$patched    = $configRaw -replace '(?m)^(\s*version:\s*)[0-9.]+', "`${1}$latestVersion"
+if ($patched -ne $configRaw) {
+    Set-Content -Path $configPath -Value $patched -NoNewline
+    Write-Host "  Version stamped    : v$latestVersion" -ForegroundColor Green
+}
+
 # ── Step 6: Update pip dependencies ───────────────────────────────────────────
 Write-Host "[6/6] Updating Python dependencies..." -ForegroundColor Yellow
 python -m pip install -r "$InstallDir\requirements.txt" --quiet --upgrade

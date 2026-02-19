@@ -171,6 +171,18 @@ echo "  Protected (untouched): $PROTECTED"
 # Make scripts executable
 chmod +x "$INSTALL_DIR/launch.sh" "$INSTALL_DIR/update.sh" 2>/dev/null || true
 
+# ── Step 5b: Patch version in config.yaml ────────────────────────────────────
+# config.yaml is protected so your API keys are never touched, but the version
+# field must be updated so the splash screen and updater stay in sync.
+if sed --version 2>/dev/null | grep -q 'GNU'; then
+    # GNU sed (Linux)
+    sed -i "s/^\(\s*version:\s*\)[0-9.]*/\1$LATEST_VERSION/" "$INSTALL_DIR/config.yaml"
+else
+    # BSD sed (macOS)
+    sed -i '' "s/^\([[:space:]]*version:[[:space:]]*\)[0-9.]*/\1$LATEST_VERSION/" "$INSTALL_DIR/config.yaml"
+fi
+echo "  Version stamped    : v$LATEST_VERSION"
+
 # ── Step 6: Update pip dependencies ───────────────────────────────────────────
 echo "[6/6] Updating Python dependencies..."
 if command -v python3 &>/dev/null; then PYTHON=python3; else PYTHON=python; fi
