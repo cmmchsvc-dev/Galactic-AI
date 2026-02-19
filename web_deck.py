@@ -44,6 +44,7 @@ class GalacticWebDeck:
         self.app.router.add_post('/api/model_overrides', self.handle_set_model_override)
         self.app.router.add_delete('/api/model_overrides', self.handle_delete_model_override)
         self.app.router.add_get('/api/history', self.handle_history)
+        self.app.router.add_get('/api/logs', self.handle_logs)
         
     async def handle_index(self, request):
         html = r"""<!DOCTYPE html>
@@ -1112,6 +1113,7 @@ document.getElementById('pw-input').addEventListener('keydown', e => { if (e.key
 // Init
 async function init() {
   await loadChatHistory();
+  await loadLogHistory();
   connectWS();
   await loadTools();
   await loadPlugins();
@@ -1182,11 +1184,24 @@ async function loadChatHistory() {
   try {
     const r = await fetch('/api/history?limit=50');
     const d = await r.json();
-    (d.messages || []).forEach(m => {
-      if (m.role === 'user') appendUserMsg(m.content);
-      else if (m.role === 'assistant') appendBotMsg(m.content);
-    });
+    const msgs = d.messages || [];
+    if (msgs.length > 0) {
+      // Clear the default welcome message before restoring history
+      document.getElementById('chat-log').innerHTML = '<div id="stream-bubble" style="display:none"></div>';
+      msgs.forEach(m => {
+        if (m.role === 'user') appendUserMsg(m.content);
+        else if (m.role === 'assistant') appendBotMsg(m.content);
+      });
+    }
   } catch(e) { console.error('loadChatHistory:', e); }
+}
+
+async function loadLogHistory() {
+  try {
+    const r = await fetch('/api/logs?limit=200');
+    const d = await r.json();
+    (d.logs || []).forEach(l => addLog(l));
+  } catch(e) { console.error('loadLogHistory:', e); }
 }
 
 function appendUserMsg(text) {
@@ -2517,6 +2532,21 @@ function sendChat() { sendChatMain(); }
             return web.json_response({'messages': entries})
         except Exception as e:
             return web.json_response({'messages': [], 'error': str(e)})
+
+    async def handle_logs(self, request):
+        """GET /api/logs — return last N system log lines for UI restore on page refresh."""
+        try:
+            limit = int(request.query.get('limit', '200'))
+            logs_dir = self.core.config.get('paths', {}).get('logs', './logs')
+            log_file = os.path.join(logs_dir, 'system_log.txt')
+            lines = []
+            if os.path.exists(log_file):
+                with open(log_file, 'r', encoding='utf-8') as f:
+                    lines = f.readlines()
+                lines = [l.rstrip('\n') for l in lines[-limit:]]
+            return web.json_response({'logs': lines})
+        except Exception as e:
+            return web.json_response({'logs': [], 'error': str(e)})
 
     async def handle_list_files(self, request):
         """List workspace files — auto-creates missing .md files with starter templates."""

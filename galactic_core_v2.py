@@ -138,6 +138,21 @@ class GalacticCore:
         timestamp = datetime.now().strftime("%H:%M:%S")
         log_entry = f"[{timestamp}] [Core] {message}"
         print(log_entry)
+        # Persist log to file so UI can restore on refresh
+        try:
+            logs_dir = self.config.get('paths', {}).get('logs', './logs')
+            os.makedirs(logs_dir, exist_ok=True)
+            log_file = os.path.join(logs_dir, 'system_log.txt')
+            with open(log_file, 'a', encoding='utf-8') as f:
+                f.write(log_entry + '\n')
+            # Keep file from growing unbounded — trim to last 500 lines
+            if os.path.getsize(log_file) > 200_000:
+                with open(log_file, 'r', encoding='utf-8') as f:
+                    lines = f.readlines()
+                with open(log_file, 'w', encoding='utf-8') as f:
+                    f.writelines(lines[-500:])
+        except Exception:
+            pass
         await self.relay.emit(priority, "log", log_entry)
 
     async def handle_client(self, reader, writer):
