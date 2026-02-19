@@ -34,6 +34,12 @@ class GalacticWebDeck:
         self.app.router.add_get('/api/plugins', self.handle_list_plugins)
         self.app.router.add_post('/api/switch_model', self.handle_switch_model)
         self.app.router.add_post('/api/browser_cmd', self.handle_browser_cmd)
+        # OpenClaw migration endpoints
+        self.app.router.add_get('/api/check_openclaw', self.handle_check_openclaw)
+        self.app.router.add_post('/api/migrate_openclaw', self.handle_migrate_openclaw)
+        # Model config endpoint (context window / max tokens)
+        self.app.router.add_post('/api/model_config', self.handle_model_config)
+        self.app.router.add_get('/api/history', self.handle_history)
         
     async def handle_index(self, request):
         html = r"""<!DOCTYPE html>
@@ -208,7 +214,7 @@ body::after{content:"";position:fixed;inset:0;background:linear-gradient(rgba(18
   <div class="login-box">
     <div style="font-size:2em;margin-bottom:8px">⬡</div>
     <h2>GALACTIC AI</h2>
-    <p>AUTOMATION SUITE v0.6.0</p>
+    <p>AUTOMATION SUITE v0.7.0</p>
     <input id="pw-input" type="password" placeholder="Enter passphrase" autocomplete="off">
     <button id="login-btn" onclick="doLogin()">ACCESS</button>
     <div id="login-err" style="display:none;color:var(--red);font-size:0.8em;margin-top:8px">Invalid passphrase</div>
@@ -227,7 +233,7 @@ body::after{content:"";position:fixed;inset:0;background:linear-gradient(rgba(18
 
 <!-- SETUP WIZARD -->
 <div id="setup-wizard" style="display:none;position:fixed;inset:0;background:rgba(5,6,10,0.98);z-index:9000;align-items:flex-start;justify-content:center;overflow-y:auto;padding:20px 0">
-  <div style="background:var(--bg2);border:1px solid var(--cyan);border-radius:20px;width:min(680px,96vw);margin:auto">
+  <div style="background:var(--bg2);border:1px solid var(--cyan);border-radius:20px;width:min(720px,96vw);margin:auto">
     <!-- Header -->
     <div style="padding:28px 32px 0;text-align:center">
       <div style="font-size:2.5em;margin-bottom:8px">⬡</div>
@@ -236,36 +242,43 @@ body::after{content:"";position:fixed;inset:0;background:linear-gradient(rgba(18
     </div>
     <!-- Progress bar -->
     <div style="margin:20px 32px 0;height:3px;background:var(--bg3);border-radius:2px">
-      <div id="sw-progress" style="height:100%;background:linear-gradient(90deg,var(--cyan),var(--pink));border-radius:2px;width:20%;transition:width .4s"></div>
+      <div id="sw-progress" style="height:100%;background:linear-gradient(90deg,var(--cyan),var(--pink));border-radius:2px;width:16.7%;transition:width .4s"></div>
     </div>
 
     <!-- Step 1: Primary Model Provider -->
     <div id="sw-step-1" style="padding:28px 32px">
-      <div style="font-size:0.7em;letter-spacing:3px;color:var(--cyan);margin-bottom:18px">STEP 1 OF 5 — PRIMARY AI PROVIDER</div>
+      <div style="font-size:0.7em;letter-spacing:3px;color:var(--cyan);margin-bottom:18px">STEP 1 OF 7 — PRIMARY AI PROVIDER</div>
       <div style="margin-bottom:18px">
         <label style="font-size:0.8em;color:var(--dim);display:block;margin-bottom:6px">Choose your primary AI provider:</label>
         <select id="sw-provider" onchange="swUpdateModelHint()" style="width:100%;padding:10px 14px;background:var(--bg3);border:1px solid var(--border);border-radius:8px;color:var(--text);font-size:0.9em">
-          <option value="google">🌐 Google Gemini (Best overall — free tier available)</option>
-          <option value="anthropic">🤖 Anthropic Claude (Best for reasoning & code)</option>
-          <option value="xai">⚡ xAI Grok (Fast &amp; capable)</option>
-          <option value="nvidia">🚀 NVIDIA AI (Large model access)</option>
-          <option value="ollama">🦙 Ollama Local (100% private, no API key needed)</option>
+          <option value="google">🌐 Google Gemini — Best overall, free tier available</option>
+          <option value="anthropic">🤖 Anthropic Claude — Best for reasoning &amp; code</option>
+          <option value="openai">🧠 OpenAI GPT — GPT-4o, GPT-4.1</option>
+          <option value="xai">⚡ xAI Grok — Fast &amp; capable</option>
+          <option value="groq">🚀 Groq — Ultra-fast free inference</option>
+          <option value="mistral">🇪🇺 Mistral AI — Codestral, Magistral</option>
+          <option value="cerebras">⚙️ Cerebras — Lightning fast Llama/Qwen</option>
+          <option value="openrouter">🔀 OpenRouter — 100+ models, one key</option>
+          <option value="huggingface">🤗 HuggingFace — Free tier, Llama/Qwen/DeepSeek</option>
+          <option value="kimi">🌙 Kimi / Moonshot — Kimi K2.5 coding model</option>
+          <option value="zai">🔷 ZAI / GLM — GLM-4.5, GLM-4.7</option>
+          <option value="minimax">🎵 MiniMax — M2 multimodal + TTS</option>
+          <option value="nvidia">🟢 NVIDIA AI — DeepSeek, Qwen 480B, Kimi</option>
+          <option value="ollama">🦙 Ollama Local — 100% private, no API key needed</option>
         </select>
       </div>
       <div style="margin-bottom:18px">
-        <label style="font-size:0.8em;color:var(--dim);display:block;margin-bottom:6px">Model ID <span style="color:var(--dim)">(leave blank for default)</span>:</label>
+        <label style="font-size:0.8em;color:var(--dim);display:block;margin-bottom:6px">Model ID <span style="color:var(--dim)">(leave blank for recommended default)</span>:</label>
         <input id="sw-model" type="text" placeholder="gemini-2.5-flash" style="width:100%;padding:10px 14px;background:var(--bg3);border:1px solid var(--border);border-radius:8px;color:var(--text);font-size:0.9em">
+        <div id="sw-model-hint" style="margin-top:5px;font-size:0.72em;color:var(--dim)"></div>
       </div>
-      <!-- Provider-specific fields -->
+      <!-- Standard API Key field -->
       <div id="sw-apikey-wrap" style="margin-bottom:18px">
-        <label style="font-size:0.8em;color:var(--dim);display:block;margin-bottom:6px">API Key for selected provider:</label>
+        <label style="font-size:0.8em;color:var(--dim);display:block;margin-bottom:6px">API Key:</label>
         <input id="sw-apikey" type="password" placeholder="Paste your API key here" style="width:100%;padding:10px 14px;background:var(--bg3);border:1px solid var(--border);border-radius:8px;color:var(--text);font-size:0.9em">
-        <div style="margin-top:6px;font-size:0.72em;color:var(--dim)">
-          Google: <a href="https://aistudio.google.com/apikey" target="_blank" style="color:var(--cyan)">aistudio.google.com/apikey</a> &nbsp;|&nbsp;
-          Anthropic: <a href="https://console.anthropic.com/keys" target="_blank" style="color:var(--cyan)">console.anthropic.com/keys</a> &nbsp;|&nbsp;
-          xAI: <a href="https://console.x.ai" target="_blank" style="color:var(--cyan)">console.x.ai</a>
-        </div>
+        <div id="sw-key-link" style="margin-top:6px;font-size:0.72em;color:var(--dim)"></div>
       </div>
+      <!-- Ollama URL field -->
       <div id="sw-ollama-wrap" style="display:none;margin-bottom:18px">
         <label style="font-size:0.8em;color:var(--dim);display:block;margin-bottom:6px">Ollama Server URL:</label>
         <input id="sw-ollama-url" type="text" placeholder="http://127.0.0.1:11434/v1" value="http://127.0.0.1:11434/v1" style="width:100%;padding:10px 14px;background:var(--bg3);border:1px solid var(--border);border-radius:8px;color:var(--text);font-size:0.9em">
@@ -273,11 +286,14 @@ body::after{content:"";position:fixed;inset:0;background:linear-gradient(rgba(18
           💡 Ollama must be running locally. Install from <a href="https://ollama.com" target="_blank" style="color:var(--cyan)">ollama.com</a> then run <code style="background:var(--bg3);padding:2px 6px;border-radius:3px">ollama pull qwen3:8b</code>
         </div>
       </div>
+      <!-- NVIDIA multi-key field -->
       <div id="sw-nvidia-wrap" style="display:none;margin-bottom:18px">
-        <label style="font-size:0.8em;color:var(--dim);display:block;margin-bottom:6px">NVIDIA AI Foundation API Keys <span style="color:var(--dim)">(get from <a href="https://build.nvidia.com" target="_blank" style="color:var(--cyan)">build.nvidia.com</a>)</span>:</label>
+        <label style="font-size:0.8em;color:var(--dim);display:block;margin-bottom:6px">NVIDIA AI Foundation API Keys — <a href="https://build.nvidia.com" target="_blank" style="color:var(--cyan)">build.nvidia.com</a></label>
         <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">
           <div><label style="font-size:0.72em;color:var(--dim)">DeepSeek key</label><input id="sw-nvidia-ds-key" type="password" placeholder="nvapi-..." style="width:100%;padding:8px 12px;background:var(--bg3);border:1px solid var(--border);border-radius:6px;color:var(--text);font-size:0.82em;margin-top:3px"></div>
           <div><label style="font-size:0.72em;color:var(--dim)">Qwen key</label><input id="sw-nvidia-qw-key" type="password" placeholder="nvapi-..." style="width:100%;padding:8px 12px;background:var(--bg3);border:1px solid var(--border);border-radius:6px;color:var(--text);font-size:0.82em;margin-top:3px"></div>
+          <div><label style="font-size:0.72em;color:var(--dim)">Kimi key</label><input id="sw-nvidia-kimi-key" type="password" placeholder="nvapi-..." style="width:100%;padding:8px 12px;background:var(--bg3);border:1px solid var(--border);border-radius:6px;color:var(--text);font-size:0.82em;margin-top:3px"></div>
+          <div><label style="font-size:0.72em;color:var(--dim)">GLM key</label><input id="sw-nvidia-glm-key" type="password" placeholder="nvapi-..." style="width:100%;padding:8px 12px;background:var(--bg3);border:1px solid var(--border);border-radius:6px;color:var(--text);font-size:0.82em;margin-top:3px"></div>
         </div>
       </div>
       <button onclick="swNextStep(1,2)" style="width:100%;padding:12px;background:linear-gradient(135deg,var(--cyan),var(--pink));border:none;border-radius:10px;color:#000;font-weight:700;cursor:pointer;font-size:0.95em">Next →</button>
@@ -285,22 +301,78 @@ body::after{content:"";position:fixed;inset:0;background:linear-gradient(rgba(18
 
     <!-- Step 2: Additional API Keys -->
     <div id="sw-step-2" style="display:none;padding:28px 32px">
-      <div style="font-size:0.7em;letter-spacing:3px;color:var(--cyan);margin-bottom:18px">STEP 2 OF 5 — ADDITIONAL API KEYS <span style="color:var(--dim)">(optional — add more providers)</span></div>
-      <div style="display:flex;flex-direction:column;gap:14px">
-        <div>
-          <label style="font-size:0.8em;color:var(--dim);display:block;margin-bottom:5px">🌐 Google Gemini API Key <a href="https://aistudio.google.com/apikey" target="_blank" style="color:var(--cyan);font-size:0.85em">[get key]</a></label>
-          <input id="sw-google-key" type="password" placeholder="AIzaSy..." style="width:100%;padding:9px 13px;background:var(--bg3);border:1px solid var(--border);border-radius:7px;color:var(--text);font-size:0.88em">
+      <div style="font-size:0.7em;letter-spacing:3px;color:var(--cyan);margin-bottom:4px">STEP 2 OF 7 — ADDITIONAL PROVIDERS</div>
+      <div style="color:var(--dim);font-size:0.78em;margin-bottom:18px">Add more providers to unlock the full model grid. Keys entered here are saved but only used when you switch to that provider. All optional.</div>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">
+        <div id="sw-extra-google">
+          <label style="font-size:0.75em;color:var(--dim);display:block;margin-bottom:4px">🌐 Google Gemini <a href="https://aistudio.google.com/apikey" target="_blank" style="color:var(--cyan)">[get key]</a></label>
+          <input id="sw-google-key" type="password" placeholder="AIzaSy..." style="width:100%;padding:8px 12px;background:var(--bg3);border:1px solid var(--border);border-radius:7px;color:var(--text);font-size:0.85em">
         </div>
-        <div>
-          <label style="font-size:0.8em;color:var(--dim);display:block;margin-bottom:5px">🤖 Anthropic Claude API Key <a href="https://console.anthropic.com/keys" target="_blank" style="color:var(--cyan);font-size:0.85em">[get key]</a></label>
-          <input id="sw-anthropic-key" type="password" placeholder="sk-ant-..." style="width:100%;padding:9px 13px;background:var(--bg3);border:1px solid var(--border);border-radius:7px;color:var(--text);font-size:0.88em">
+        <div id="sw-extra-anthropic">
+          <label style="font-size:0.75em;color:var(--dim);display:block;margin-bottom:4px">🤖 Anthropic Claude <a href="https://console.anthropic.com/keys" target="_blank" style="color:var(--cyan)">[get key]</a></label>
+          <input id="sw-anthropic-key" type="password" placeholder="sk-ant-..." style="width:100%;padding:8px 12px;background:var(--bg3);border:1px solid var(--border);border-radius:7px;color:var(--text);font-size:0.85em">
         </div>
-        <div>
-          <label style="font-size:0.8em;color:var(--dim);display:block;margin-bottom:5px">⚡ xAI Grok API Key <a href="https://console.x.ai" target="_blank" style="color:var(--cyan);font-size:0.85em">[get key]</a></label>
-          <input id="sw-xai-key" type="password" placeholder="xai-..." style="width:100%;padding:9px 13px;background:var(--bg3);border:1px solid var(--border);border-radius:7px;color:var(--text);font-size:0.88em">
+        <div id="sw-extra-openai">
+          <label style="font-size:0.75em;color:var(--dim);display:block;margin-bottom:4px">🧠 OpenAI <a href="https://platform.openai.com/api-keys" target="_blank" style="color:var(--cyan)">[get key]</a></label>
+          <input id="sw-openai-key" type="password" placeholder="sk-..." style="width:100%;padding:8px 12px;background:var(--bg3);border:1px solid var(--border);border-radius:7px;color:var(--text);font-size:0.85em">
+        </div>
+        <div id="sw-extra-xai">
+          <label style="font-size:0.75em;color:var(--dim);display:block;margin-bottom:4px">⚡ xAI Grok <a href="https://console.x.ai" target="_blank" style="color:var(--cyan)">[get key]</a></label>
+          <input id="sw-xai-key" type="password" placeholder="xai-..." style="width:100%;padding:8px 12px;background:var(--bg3);border:1px solid var(--border);border-radius:7px;color:var(--text);font-size:0.85em">
+        </div>
+        <div id="sw-extra-groq">
+          <label style="font-size:0.75em;color:var(--dim);display:block;margin-bottom:4px">🚀 Groq <a href="https://console.groq.com/keys" target="_blank" style="color:var(--cyan)">[get key]</a></label>
+          <input id="sw-groq-key" type="password" placeholder="gsk_..." style="width:100%;padding:8px 12px;background:var(--bg3);border:1px solid var(--border);border-radius:7px;color:var(--text);font-size:0.85em">
+        </div>
+        <div id="sw-extra-mistral">
+          <label style="font-size:0.75em;color:var(--dim);display:block;margin-bottom:4px">🇪🇺 Mistral <a href="https://console.mistral.ai/api-keys" target="_blank" style="color:var(--cyan)">[get key]</a></label>
+          <input id="sw-mistral-key" type="password" placeholder="..." style="width:100%;padding:8px 12px;background:var(--bg3);border:1px solid var(--border);border-radius:7px;color:var(--text);font-size:0.85em">
+        </div>
+        <div id="sw-extra-cerebras">
+          <label style="font-size:0.75em;color:var(--dim);display:block;margin-bottom:4px">⚙️ Cerebras <a href="https://cloud.cerebras.ai" target="_blank" style="color:var(--cyan)">[get key]</a></label>
+          <input id="sw-cerebras-key" type="password" placeholder="csk-..." style="width:100%;padding:8px 12px;background:var(--bg3);border:1px solid var(--border);border-radius:7px;color:var(--text);font-size:0.85em">
+        </div>
+        <div id="sw-extra-openrouter">
+          <label style="font-size:0.75em;color:var(--dim);display:block;margin-bottom:4px">🔀 OpenRouter <a href="https://openrouter.ai/keys" target="_blank" style="color:var(--cyan)">[get key]</a></label>
+          <input id="sw-openrouter-key" type="password" placeholder="sk-or-..." style="width:100%;padding:8px 12px;background:var(--bg3);border:1px solid var(--border);border-radius:7px;color:var(--text);font-size:0.85em">
+        </div>
+        <div id="sw-extra-huggingface">
+          <label style="font-size:0.75em;color:var(--dim);display:block;margin-bottom:4px">🤗 HuggingFace <a href="https://huggingface.co/settings/tokens" target="_blank" style="color:var(--cyan)">[get token]</a></label>
+          <input id="sw-huggingface-key" type="password" placeholder="hf_..." style="width:100%;padding:8px 12px;background:var(--bg3);border:1px solid var(--border);border-radius:7px;color:var(--text);font-size:0.85em">
+        </div>
+        <div id="sw-extra-kimi">
+          <label style="font-size:0.75em;color:var(--dim);display:block;margin-bottom:4px">🌙 Kimi / Moonshot <a href="https://platform.moonshot.cn/console/api-keys" target="_blank" style="color:var(--cyan)">[get key]</a></label>
+          <input id="sw-kimi-key" type="password" placeholder="Bearer token..." style="width:100%;padding:8px 12px;background:var(--bg3);border:1px solid var(--border);border-radius:7px;color:var(--text);font-size:0.85em">
+        </div>
+        <div id="sw-extra-zai">
+          <label style="font-size:0.75em;color:var(--dim);display:block;margin-bottom:4px">🔷 ZAI / GLM <a href="https://open.bigmodel.cn/usercenter/apikeys" target="_blank" style="color:var(--cyan)">[get key]</a></label>
+          <input id="sw-zai-key" type="password" placeholder="zai-..." style="width:100%;padding:8px 12px;background:var(--bg3);border:1px solid var(--border);border-radius:7px;color:var(--text);font-size:0.85em">
+        </div>
+        <div id="sw-extra-minimax">
+          <label style="font-size:0.75em;color:var(--dim);display:block;margin-bottom:4px">🎵 MiniMax <a href="https://platform.minimaxi.com/user-center/basic-information/interface-key" target="_blank" style="color:var(--cyan)">[get key]</a></label>
+          <input id="sw-minimax-key" type="password" placeholder="..." style="width:100%;padding:8px 12px;background:var(--bg3);border:1px solid var(--border);border-radius:7px;color:var(--text);font-size:0.85em">
         </div>
       </div>
-      <div style="display:flex;gap:10px;margin-top:22px">
+      <!-- TTS Section -->
+      <div style="margin-top:18px;padding:14px;background:rgba(0,243,255,0.04);border:1px solid rgba(0,243,255,0.15);border-radius:10px">
+        <div style="font-size:0.72em;letter-spacing:2px;color:var(--cyan);margin-bottom:10px">🔊 TEXT-TO-SPEECH (OPTIONAL)</div>
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px">
+          <div>
+            <label style="font-size:0.75em;color:var(--dim);display:block;margin-bottom:4px">ElevenLabs API Key <a href="https://elevenlabs.io" target="_blank" style="color:var(--cyan)">[get key]</a></label>
+            <input id="sw-elevenlabs-key" type="password" placeholder="xi_... (blank = free gTTS)" style="width:100%;padding:8px 12px;background:var(--bg3);border:1px solid var(--border);border-radius:7px;color:var(--text);font-size:0.85em">
+          </div>
+          <div>
+            <label style="font-size:0.75em;color:var(--dim);display:block;margin-bottom:4px">TTS Voice</label>
+            <select id="sw-elevenlabs-voice" style="width:100%;padding:8px 12px;background:var(--bg3);border:1px solid var(--border);border-radius:7px;color:var(--text);font-size:0.85em">
+              <option value="nova">Nova (Rachel) — warm female</option>
+              <option value="byte">Byte (Adam) — AI assistant male</option>
+              <option value="gtts">gTTS — free fallback (no key needed)</option>
+            </select>
+          </div>
+        </div>
+        <div style="margin-top:6px;font-size:0.72em;color:var(--dim)">💡 Leave blank to use free gTTS. ElevenLabs provides higher quality voices.</div>
+      </div>
+      <div style="display:flex;gap:10px;margin-top:20px">
         <button onclick="swNextStep(2,1)" style="flex:0.4;padding:11px;background:var(--bg3);border:1px solid var(--border);border-radius:10px;color:var(--text);cursor:pointer;font-size:0.9em">← Back</button>
         <button onclick="swNextStep(2,3)" style="flex:1;padding:11px;background:linear-gradient(135deg,var(--cyan),var(--pink));border:none;border-radius:10px;color:#000;font-weight:700;cursor:pointer;font-size:0.95em">Next →</button>
       </div>
@@ -308,7 +380,7 @@ body::after{content:"";position:fixed;inset:0;background:linear-gradient(rgba(18
 
     <!-- Step 3: Telegram (optional) -->
     <div id="sw-step-3" style="display:none;padding:28px 32px">
-      <div style="font-size:0.7em;letter-spacing:3px;color:var(--cyan);margin-bottom:4px">STEP 3 OF 5 — TELEGRAM BOT <span style="color:var(--dim)">(optional)</span></div>
+      <div style="font-size:0.7em;letter-spacing:3px;color:var(--cyan);margin-bottom:4px">STEP 3 OF 7 — TELEGRAM BOT <span style="color:var(--dim)">(optional)</span></div>
       <div style="color:var(--dim);font-size:0.78em;margin-bottom:18px">Connect a Telegram bot to control Galactic AI from anywhere on your phone.</div>
       <div style="display:flex;flex-direction:column;gap:14px">
         <div>
@@ -328,7 +400,7 @@ body::after{content:"";position:fixed;inset:0;background:linear-gradient(rgba(18
 
     <!-- Step 4: Security -->
     <div id="sw-step-4" style="display:none;padding:28px 32px">
-      <div style="font-size:0.7em;letter-spacing:3px;color:var(--cyan);margin-bottom:4px">STEP 4 OF 5 — SECURITY</div>
+      <div style="font-size:0.7em;letter-spacing:3px;color:var(--cyan);margin-bottom:4px">STEP 4 OF 7 — SECURITY</div>
       <div style="color:var(--dim);font-size:0.78em;margin-bottom:18px">Set a passphrase to protect your Galactic AI web UI.</div>
       <div style="display:flex;flex-direction:column;gap:14px">
         <div>
@@ -346,18 +418,85 @@ body::after{content:"";position:fixed;inset:0;background:linear-gradient(rgba(18
       </div>
     </div>
 
-    <!-- Step 5: Review & Save -->
+    <!-- Step 5: Personality -->
     <div id="sw-step-5" style="display:none;padding:28px 32px">
-      <div style="font-size:0.7em;letter-spacing:3px;color:var(--cyan);margin-bottom:4px">STEP 5 OF 5 — REVIEW &amp; LAUNCH</div>
+      <div style="font-size:0.7em;letter-spacing:3px;color:var(--cyan);margin-bottom:4px">STEP 5 OF 7 — PERSONALITY</div>
+      <div style="color:var(--dim);font-size:0.78em;margin-bottom:18px">Choose the personality for your AI assistant.</div>
+      <div style="display:flex;flex-direction:column;gap:12px">
+        <label style="display:flex;align-items:flex-start;gap:10px;padding:12px 14px;background:var(--bg3);border:1px solid var(--border);border-radius:9px;cursor:pointer" onclick="document.getElementById('sw-persona-byte').checked=true;document.getElementById('sw-custom-fields').style.display='none'">
+          <input type="radio" name="sw-persona" id="sw-persona-byte" value="byte" checked style="margin-top:3px">
+          <div><div style="font-weight:600;font-size:0.88em">⬡ Byte <span style="color:var(--dim);font-weight:400;font-size:0.85em">(Recommended)</span></div><div style="font-size:0.75em;color:var(--dim);margin-top:2px">Techno-hippie AI familiar. Chill, resourceful, opinionated. The default Galactic AI personality.</div></div>
+        </label>
+        <label style="display:flex;align-items:flex-start;gap:10px;padding:12px 14px;background:var(--bg3);border:1px solid var(--border);border-radius:9px;cursor:pointer" onclick="document.getElementById('sw-persona-custom').checked=true;document.getElementById('sw-custom-fields').style.display='block'">
+          <input type="radio" name="sw-persona" id="sw-persona-custom" value="custom" style="margin-top:3px">
+          <div><div style="font-weight:600;font-size:0.88em">✏️ Custom</div><div style="font-size:0.75em;color:var(--dim);margin-top:2px">Define your own AI name, personality, and behavior.</div></div>
+        </label>
+        <label style="display:flex;align-items:flex-start;gap:10px;padding:12px 14px;background:var(--bg3);border:1px solid var(--border);border-radius:9px;cursor:pointer" onclick="document.getElementById('sw-persona-generic').checked=true;document.getElementById('sw-custom-fields').style.display='none'">
+          <input type="radio" name="sw-persona" id="sw-persona-generic" value="generic" style="margin-top:3px">
+          <div><div style="font-weight:600;font-size:0.88em">🤖 Generic Assistant</div><div style="font-size:0.75em;color:var(--dim);margin-top:2px">Neutral, professional AI. No personality — just the facts.</div></div>
+        </label>
+      </div>
+      <div id="sw-custom-fields" style="display:none;margin-top:16px;display:flex;flex-direction:column;gap:12px">
+        <div>
+          <label style="font-size:0.8em;color:var(--dim);display:block;margin-bottom:5px">AI Name</label>
+          <input id="sw-persona-name" type="text" placeholder="e.g. Nova, Spark, Atlas..." style="width:100%;padding:9px 13px;background:var(--bg3);border:1px solid var(--border);border-radius:7px;color:var(--text);font-size:0.88em">
+        </div>
+        <div>
+          <label style="font-size:0.8em;color:var(--dim);display:block;margin-bottom:5px">Personality / Soul <span style="color:var(--dim)">(describe how the AI should behave)</span></label>
+          <textarea id="sw-persona-soul" rows="3" placeholder="e.g. You are a witty, curious assistant who loves science and dad jokes..." style="width:100%;padding:9px 13px;background:var(--bg3);border:1px solid var(--border);border-radius:7px;color:var(--text);font-size:0.85em;resize:vertical"></textarea>
+        </div>
+        <div>
+          <label style="font-size:0.8em;color:var(--dim);display:block;margin-bottom:5px">User Context <span style="color:var(--dim)">(optional — tell the AI about yourself)</span></label>
+          <textarea id="sw-persona-context" rows="2" placeholder="e.g. I'm a software developer who likes hiking and coffee..." style="width:100%;padding:9px 13px;background:var(--bg3);border:1px solid var(--border);border-radius:7px;color:var(--text);font-size:0.85em;resize:vertical"></textarea>
+        </div>
+      </div>
+      <div style="margin-top:14px;padding:10px;background:rgba(0,243,255,0.05);border:1px solid rgba(0,243,255,0.15);border-radius:8px;font-size:0.72em;color:var(--dim)">
+        💡 If you import files from OpenClaw in the next step, your IDENTITY.md and SOUL.md will override this selection.
+      </div>
+      <div style="display:flex;gap:10px;margin-top:22px">
+        <button onclick="swNextStep(5,4)" style="flex:0.4;padding:11px;background:var(--bg3);border:1px solid var(--border);border-radius:10px;color:var(--text);cursor:pointer;font-size:0.9em">← Back</button>
+        <button onclick="swNextStep(5,6)" style="flex:1;padding:11px;background:linear-gradient(135deg,var(--cyan),var(--pink));border:none;border-radius:10px;color:#000;font-weight:700;cursor:pointer;font-size:0.95em">Next →</button>
+      </div>
+    </div>
+
+    <!-- Step 6: OpenClaw Migration -->
+    <div id="sw-step-6" style="display:none;padding:28px 32px">
+      <div style="font-size:0.7em;letter-spacing:3px;color:var(--cyan);margin-bottom:4px">STEP 6 OF 7 — OPENCLAW MIGRATION <span style="color:var(--dim)">(optional)</span></div>
+      <div style="color:var(--dim);font-size:0.78em;margin-bottom:18px">Import your identity and memory files from an existing OpenClaw installation. This copies your USER.md, IDENTITY.md, SOUL.md, MEMORY.md, and TOOLS.md into Galactic AI.</div>
+      <div id="sw-oc-checking" style="padding:16px;text-align:center;color:var(--dim);font-size:0.85em">🔍 Checking for OpenClaw installation...</div>
+      <div id="sw-oc-not-found" style="display:none;padding:16px;background:rgba(136,136,136,0.07);border:1px solid rgba(136,136,136,0.2);border-radius:10px;text-align:center;color:var(--dim);font-size:0.85em">
+        OpenClaw installation not detected — nothing to import. Click Next to continue.
+      </div>
+      <div id="sw-oc-found" style="display:none">
+        <div style="padding:10px 14px;background:rgba(0,255,136,0.06);border:1px solid rgba(0,255,136,0.2);border-radius:8px;font-size:0.78em;color:var(--green);margin-bottom:14px">
+          ✅ OpenClaw detected at <span id="sw-oc-path" style="font-family:var(--mono)"></span>
+        </div>
+        <div style="font-size:0.78em;color:var(--dim);margin-bottom:10px">Select files to import (all available files are checked by default):</div>
+        <div id="sw-oc-file-list" style="display:flex;flex-direction:column;gap:8px;margin-bottom:16px"></div>
+        <button onclick="swMigrateOpenClaw()" id="sw-oc-import-btn" style="width:100%;padding:10px;background:linear-gradient(135deg,rgba(0,255,136,0.8),rgba(0,243,255,0.8));border:none;border-radius:9px;color:#000;font-weight:700;cursor:pointer;font-size:0.88em">⬡ Import Selected Files</button>
+        <div id="sw-oc-result" style="margin-top:10px;font-size:0.78em;display:none"></div>
+      </div>
+      <div style="display:flex;gap:10px;margin-top:22px">
+        <button onclick="swNextStep(6,5)" style="flex:0.4;padding:11px;background:var(--bg3);border:1px solid var(--border);border-radius:10px;color:var(--text);cursor:pointer;font-size:0.9em">← Back</button>
+        <button onclick="swNextStep(6,7)" style="flex:1;padding:11px;background:linear-gradient(135deg,var(--cyan),var(--pink));border:none;border-radius:10px;color:#000;font-weight:700;cursor:pointer;font-size:0.95em">Next →</button>
+      </div>
+    </div>
+
+    <!-- Step 7: Review & Save -->
+    <div id="sw-step-7" style="display:none;padding:28px 32px">
+      <div style="font-size:0.7em;letter-spacing:3px;color:var(--cyan);margin-bottom:4px">STEP 7 OF 7 — REVIEW &amp; LAUNCH</div>
       <div style="color:var(--dim);font-size:0.78em;margin-bottom:20px">Everything looks good? Hit Save &amp; Launch to start using Galactic AI.</div>
       <div style="background:var(--bg3);border:1px solid var(--border);border-radius:10px;padding:16px;font-size:0.82em;line-height:2;margin-bottom:20px">
         <div>Provider: <span id="sw-review-provider" style="color:var(--cyan)">—</span></div>
         <div>Model: <span id="sw-review-model" style="color:var(--cyan)">—</span></div>
+        <div>Additional providers: <span id="sw-review-extras" style="color:var(--dim)">—</span></div>
+        <div>TTS: <span id="sw-review-tts" style="color:var(--dim)">—</span></div>
         <div>Web password: <span id="sw-review-pw" style="color:var(--green)">—</span></div>
         <div>Telegram: <span id="sw-review-tg" style="color:var(--dim)">—</span></div>
+        <div>Personality: <span id="sw-review-persona" style="color:var(--cyan)">—</span></div>
       </div>
       <div style="display:flex;gap:10px">
-        <button onclick="swNextStep(5,4)" style="flex:0.4;padding:11px;background:var(--bg3);border:1px solid var(--border);border-radius:10px;color:var(--text);cursor:pointer;font-size:0.9em">← Back</button>
+        <button onclick="swNextStep(7,6)" style="flex:0.4;padding:11px;background:var(--bg3);border:1px solid var(--border);border-radius:10px;color:var(--text);cursor:pointer;font-size:0.9em">← Back</button>
         <button id="sw-save-btn" onclick="swFillReview();swSave()" style="flex:1;padding:13px;background:linear-gradient(135deg,var(--green),var(--cyan));border:none;border-radius:10px;color:#000;font-weight:700;cursor:pointer;font-size:1em">⬡ Save &amp; Launch</button>
       </div>
       <div style="margin-top:16px;text-align:center;font-size:0.75em;color:var(--dim)">
@@ -370,6 +509,7 @@ body::after{content:"";position:fixed;inset:0;background:linear-gradient(rgba(18
 <!-- TOP BAR -->
 <div id="topbar">
   <div class="logo">⬡ GALACTIC AI</div>
+  <div id="version-badge" style="font-size:0.65em;color:var(--dim);letter-spacing:1px;padding:2px 7px;border:1px solid var(--border);border-radius:10px;cursor:default" title="Galactic AI version">v0.7.1</div>
   <div id='ollama-pill' onclick='switchTab("models")'>
     <div class="status-dot" id="ollama-dot"></div>
     <span id="ollama-label">Ollama</span>
@@ -481,8 +621,17 @@ body::after{content:"";position:fixed;inset:0;background:linear-gradient(rgba(18
             <select id="cfg-provider" onchange="updateModelList()">
               <option value="google">Google</option>
               <option value="anthropic">Anthropic</option>
-              <option value="nvidia">NVIDIA</option>
+              <option value="openai">OpenAI</option>
               <option value="xai">xAI</option>
+              <option value="groq">Groq</option>
+              <option value="mistral">Mistral</option>
+              <option value="cerebras">Cerebras</option>
+              <option value="openrouter">OpenRouter</option>
+              <option value="huggingface">HuggingFace</option>
+              <option value="kimi">Kimi</option>
+              <option value="zai">ZAI/GLM</option>
+              <option value="minimax">MiniMax</option>
+              <option value="nvidia">NVIDIA</option>
               <option value="ollama">Ollama</option>
             </select>
           </div>
@@ -490,8 +639,17 @@ body::after{content:"";position:fixed;inset:0;background:linear-gradient(rgba(18
             <label>Model ID</label>
             <input id="cfg-model" type="text" placeholder="model-id">
           </div>
-          <div style="margin-top:8px">
+          <div class="model-config-row">
+            <label title="Max output tokens (0 = provider default)">Max Tokens</label>
+            <input id="cfg-max-tokens" type="number" placeholder="0 = default" min="0" max="200000">
+          </div>
+          <div class="model-config-row">
+            <label title="Context window size (0 = auto-detect)">Context Window</label>
+            <input id="cfg-context-window" type="number" placeholder="0 = auto" min="0" max="2000000">
+          </div>
+          <div style="margin-top:8px;display:flex;gap:8px">
             <button class="btn primary" onclick="applyModelOverride()">Apply Model</button>
+            <button class="btn secondary" onclick="applyModelConfig()">Save Token Config</button>
           </div>
         </div>
         <div id="model-grid-root"></div>
@@ -618,30 +776,84 @@ function showSetupWizard(status) {
   }
 }
 
+const SW_MODEL_HINTS = {
+  google:      {placeholder:'gemini-2.5-flash', link:'Get key: <a href="https://aistudio.google.com/apikey" target="_blank" style="color:var(--cyan)">aistudio.google.com/apikey</a>'},
+  anthropic:   {placeholder:'claude-opus-4-6', link:'Get key: <a href="https://console.anthropic.com/keys" target="_blank" style="color:var(--cyan)">console.anthropic.com/keys</a>'},
+  openai:      {placeholder:'gpt-4o', link:'Get key: <a href="https://platform.openai.com/api-keys" target="_blank" style="color:var(--cyan)">platform.openai.com/api-keys</a>'},
+  xai:         {placeholder:'grok-4', link:'Get key: <a href="https://console.x.ai" target="_blank" style="color:var(--cyan)">console.x.ai</a>'},
+  groq:        {placeholder:'llama-4-scout-17b-16e-instruct', link:'Get key: <a href="https://console.groq.com/keys" target="_blank" style="color:var(--cyan)">console.groq.com/keys</a>'},
+  mistral:     {placeholder:'mistral-small-latest', link:'Get key: <a href="https://console.mistral.ai/api-keys" target="_blank" style="color:var(--cyan)">console.mistral.ai/api-keys</a>'},
+  cerebras:    {placeholder:'llama3.3-70b', link:'Get key: <a href="https://cloud.cerebras.ai" target="_blank" style="color:var(--cyan)">cloud.cerebras.ai</a>'},
+  openrouter:  {placeholder:'anthropic/claude-opus-4-6', link:'Get key: <a href="https://openrouter.ai/keys" target="_blank" style="color:var(--cyan)">openrouter.ai/keys</a>'},
+  huggingface: {placeholder:'Qwen/Qwen3-235B-A22B', link:'Get token: <a href="https://huggingface.co/settings/tokens" target="_blank" style="color:var(--cyan)">huggingface.co/settings/tokens</a>'},
+  kimi:        {placeholder:'kimi-k2.5', link:'Get key: <a href="https://platform.moonshot.cn/console/api-keys" target="_blank" style="color:var(--cyan)">platform.moonshot.cn</a>'},
+  zai:         {placeholder:'glm-4-plus', link:'Get key: <a href="https://open.bigmodel.cn/usercenter/apikeys" target="_blank" style="color:var(--cyan)">open.bigmodel.cn</a>'},
+  minimax:     {placeholder:'MiniMax-Text-01', link:'Get key: <a href="https://platform.minimaxi.com" target="_blank" style="color:var(--cyan)">platform.minimaxi.com</a>'},
+  nvidia:      {placeholder:'deepseek-ai/deepseek-v3.2', link:'Get keys: <a href="https://build.nvidia.com" target="_blank" style="color:var(--cyan)">build.nvidia.com</a>'},
+  ollama:      {placeholder:'qwen3:8b', link:''}
+};
+
 function swUpdateModelHint() {
   const prov = document.getElementById('sw-provider').value;
-  const hints = {
-    google: 'gemini-2.5-flash',
-    anthropic: 'claude-sonnet-4-5',
-    xai: 'grok-4',
-    nvidia: 'deepseek-ai/deepseek-v3.2',
-    ollama: 'qwen3:8b (make sure Ollama is running)'
-  };
+  const hint = SW_MODEL_HINTS[prov] || {placeholder:'', link:''};
   const inp = document.getElementById('sw-model');
-  if (inp && hints[prov]) inp.placeholder = hints[prov];
+  if (inp) inp.placeholder = hint.placeholder;
+  const linkEl = document.getElementById('sw-key-link');
+  if (linkEl) linkEl.innerHTML = hint.link;
   // Show/hide API key fields
-  const keyField = document.getElementById('sw-apikey-wrap');
-  if (keyField) keyField.style.display = prov === 'ollama' ? 'none' : '';
-  const nvidiaWrap = document.getElementById('sw-nvidia-wrap');
-  if (nvidiaWrap) nvidiaWrap.style.display = prov === 'nvidia' ? '' : 'none';
-  const ollamaWrap = document.getElementById('sw-ollama-wrap');
-  if (ollamaWrap) ollamaWrap.style.display = prov === 'ollama' ? '' : 'none';
+  document.getElementById('sw-apikey-wrap').style.display = (prov === 'ollama' || prov === 'nvidia') ? 'none' : '';
+  document.getElementById('sw-nvidia-wrap').style.display = prov === 'nvidia' ? '' : 'none';
+  document.getElementById('sw-ollama-wrap').style.display = prov === 'ollama' ? '' : 'none';
+  // Update API key placeholder
+  const keyPlaceholders = {
+    google:'AIzaSy...', anthropic:'sk-ant-...', openai:'sk-...', xai:'xai-...',
+    groq:'gsk_...', mistral:'key...', cerebras:'csk-...', openrouter:'sk-or-...',
+    huggingface:'hf_...', kimi:'Bearer token...', zai:'zai-...', minimax:'key...'
+  };
+  const keyInp = document.getElementById('sw-apikey');
+  if (keyInp) keyInp.placeholder = keyPlaceholders[prov] || 'API key...';
 }
 
 function swNextStep(currentStep, nextStep) {
   document.getElementById('sw-step-' + currentStep).style.display = 'none';
   document.getElementById('sw-step-' + nextStep).style.display = '';
-  document.getElementById('sw-progress').style.width = (nextStep * 20) + '%';
+  document.getElementById('sw-progress').style.width = (nextStep * (100/7)).toFixed(1) + '%';
+  // When entering Step 2: pre-fill the provider key from Step 1 to avoid duplicate entry
+  if (nextStep === 2) {
+    const prov = document.getElementById('sw-provider').value;
+    const step1Key = (document.getElementById('sw-apikey') || {value:''}).value.trim();
+    if (step1Key) {
+      const provMap = {
+        google:'sw-google-key', anthropic:'sw-anthropic-key', openai:'sw-openai-key',
+        xai:'sw-xai-key', groq:'sw-groq-key', mistral:'sw-mistral-key',
+        cerebras:'sw-cerebras-key', openrouter:'sw-openrouter-key',
+        huggingface:'sw-huggingface-key', kimi:'sw-kimi-key', zai:'sw-zai-key',
+        minimax:'sw-minimax-key'
+      };
+      const targetId = provMap[prov];
+      if (targetId) {
+        const targetEl = document.getElementById(targetId);
+        if (targetEl && !targetEl.value) {
+          targetEl.value = step1Key;
+          // Mark the field visually as already-set from step 1
+          const container = document.getElementById('sw-extra-' + prov);
+          if (container) {
+            const note = container.querySelector('.sw-prefill-note');
+            if (!note) {
+              const n = document.createElement('div');
+              n.className = 'sw-prefill-note';
+              n.style.cssText = 'font-size:0.7em;color:var(--green);margin-top:3px';
+              n.textContent = '✓ Pre-filled from Step 1';
+              container.appendChild(n);
+            }
+          }
+        }
+      }
+    }
+  }
+  // When entering Step 6: check for OpenClaw
+  if (nextStep === 6) swCheckOpenClaw();
+  if (nextStep === 7) swFillReview();
 }
 
 async function swSave() {
@@ -653,24 +865,46 @@ async function swSave() {
   const modelVal = document.getElementById('sw-model').value.trim();
   const modelFinal = modelVal || document.getElementById('sw-model').placeholder.split(' ')[0];
 
+  function gv(id) { const el = document.getElementById(id); return el ? el.value.trim() : ''; }
+
   const payload = {
     provider: prov,
     model: modelFinal,
-    api_key: (document.getElementById('sw-apikey') || {value:''}).value.trim(),
-    password: (document.getElementById('sw-pw') || {value:''}).value.trim(),
-    system_name: (document.getElementById('sw-sysname') || {value:'Galactic AI'}).value.trim() || 'Galactic AI',
+    api_key: gv('sw-apikey'),
+    password: gv('sw-pw'),
+    system_name: gv('sw-sysname') || 'Galactic AI',
     // Per-provider keys
-    google_key: (document.getElementById('sw-google-key') || {value:''}).value.trim(),
-    anthropic_key: (document.getElementById('sw-anthropic-key') || {value:''}).value.trim(),
-    xai_key: (document.getElementById('sw-xai-key') || {value:''}).value.trim(),
-    nvidia_deepseek_key: (document.getElementById('sw-nvidia-ds-key') || {value:''}).value.trim(),
-    nvidia_qwen_key: (document.getElementById('sw-nvidia-qw-key') || {value:''}).value.trim(),
-    ollama_url: (document.getElementById('sw-ollama-url') || {value:'http://127.0.0.1:11434/v1'}).value.trim() || 'http://127.0.0.1:11434/v1',
-    telegram_token: (document.getElementById('sw-tg-token') || {value:''}).value.trim(),
-    telegram_chat_id: (document.getElementById('sw-tg-chat') || {value:''}).value.trim(),
+    google_key: gv('sw-google-key'),
+    anthropic_key: gv('sw-anthropic-key'),
+    openai_key: gv('sw-openai-key'),
+    xai_key: gv('sw-xai-key'),
+    groq_key: gv('sw-groq-key'),
+    mistral_key: gv('sw-mistral-key'),
+    cerebras_key: gv('sw-cerebras-key'),
+    openrouter_key: gv('sw-openrouter-key'),
+    huggingface_key: gv('sw-huggingface-key'),
+    kimi_key: gv('sw-kimi-key'),
+    zai_key: gv('sw-zai-key'),
+    minimax_key: gv('sw-minimax-key'),
+    // NVIDIA keys
+    nvidia_deepseek_key: gv('sw-nvidia-ds-key'),
+    nvidia_qwen_key: gv('sw-nvidia-qw-key'),
+    nvidia_kimi_key: gv('sw-nvidia-kimi-key'),
+    nvidia_glm_key: gv('sw-nvidia-glm-key'),
+    ollama_url: gv('sw-ollama-url') || 'http://127.0.0.1:11434/v1',
+    // Telegram
+    telegram_token: gv('sw-tg-token'),
+    telegram_chat_id: gv('sw-tg-chat'),
+    // ElevenLabs TTS
+    elevenlabs_key: gv('sw-elevenlabs-key'),
+    elevenlabs_voice: gv('sw-elevenlabs-voice') || 'nova',
+    persona_mode: (document.getElementById('sw-persona-custom').checked ? 'custom' : document.getElementById('sw-persona-generic').checked ? 'generic' : 'byte'),
+    persona_name: (document.getElementById('sw-persona-name') || {}).value || '',
+    persona_soul: (document.getElementById('sw-persona-soul') || {}).value || '',
+    persona_context: (document.getElementById('sw-persona-context') || {}).value || '',
   };
 
-  // If primary provider is one of the named ones, copy its key to api_key
+  // If primary provider key wasn't entered in step 1, pull from step 2
   if (!payload.api_key) {
     payload.api_key = payload[prov + '_key'] || '';
   }
@@ -744,10 +978,79 @@ function swFillReview() {
   const modelVal = document.getElementById('sw-model').value.trim() || document.getElementById('sw-model').placeholder.split(' ')[0];
   const pw = document.getElementById('sw-pw').value;
   const tgToken = document.getElementById('sw-tg-token').value.trim();
+  const elevenlabsKey = (document.getElementById('sw-elevenlabs-key') || {value:''}).value.trim();
+  const voice = (document.getElementById('sw-elevenlabs-voice') || {value:'gtts'}).value;
+  // Count extra providers with keys
+  const extraProviders = ['google','anthropic','openai','xai','groq','mistral','cerebras','openrouter','huggingface','kimi','zai','minimax']
+    .filter(p => {
+      const el = document.getElementById('sw-' + p + '-key');
+      return el && el.value.trim();
+    });
   document.getElementById('sw-review-provider').textContent = prov;
   document.getElementById('sw-review-model').textContent = modelVal;
+  document.getElementById('sw-review-extras').textContent = extraProviders.length ? extraProviders.join(', ') : 'None';
+  document.getElementById('sw-review-tts').textContent = elevenlabsKey ? 'ElevenLabs (' + voice + ')' : 'gTTS (free fallback)';
   document.getElementById('sw-review-pw').textContent = pw ? '✓ Set' : 'None (open access)';
   document.getElementById('sw-review-tg').textContent = tgToken ? '✓ Configured' : 'Not configured';
+  const personaMode = document.getElementById('sw-persona-custom').checked ? 'Custom' : document.getElementById('sw-persona-generic').checked ? 'Generic' : 'Byte';
+  document.getElementById('sw-review-persona').textContent = personaMode;
+}
+
+async function swCheckOpenClaw() {
+  document.getElementById('sw-oc-checking').style.display = '';
+  document.getElementById('sw-oc-not-found').style.display = 'none';
+  document.getElementById('sw-oc-found').style.display = 'none';
+  try {
+    const r = await fetch('/api/check_openclaw');
+    const d = await r.json();
+    document.getElementById('sw-oc-checking').style.display = 'none';
+    if (d.found && d.files && d.files.length) {
+      document.getElementById('sw-oc-path').textContent = d.path;
+      const listEl = document.getElementById('sw-oc-file-list');
+      listEl.innerHTML = '';
+      d.files.forEach(f => {
+        const row = document.createElement('label');
+        row.style.cssText = 'display:flex;align-items:center;gap:10px;padding:8px 12px;background:var(--bg3);border:1px solid var(--border);border-radius:8px;cursor:pointer;font-size:0.83em';
+        row.innerHTML = '<input type="checkbox" checked value="' + f + '" style="accent-color:var(--cyan)"> <span style="color:var(--cyan)">📄 ' + f + '</span>';
+        listEl.appendChild(row);
+      });
+      document.getElementById('sw-oc-found').style.display = '';
+    } else {
+      document.getElementById('sw-oc-not-found').style.display = '';
+    }
+  } catch(e) {
+    document.getElementById('sw-oc-checking').style.display = 'none';
+    document.getElementById('sw-oc-not-found').style.display = '';
+  }
+}
+
+async function swMigrateOpenClaw() {
+  const checkboxes = document.querySelectorAll('#sw-oc-file-list input[type=checkbox]:checked');
+  const files = Array.from(checkboxes).map(c => c.value);
+  if (!files.length) { alert('No files selected.'); return; }
+  const btn = document.getElementById('sw-oc-import-btn');
+  btn.textContent = '⏳ Importing...';
+  btn.disabled = true;
+  try {
+    const r = await fetch('/api/migrate_openclaw', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({files})});
+    const d = await r.json();
+    const resultEl = document.getElementById('sw-oc-result');
+    resultEl.style.display = '';
+    if (d.ok) {
+      resultEl.innerHTML = '<span style="color:var(--green)">✅ Imported: ' + (d.imported || []).join(', ') + '</span>';
+      if (d.failed && d.failed.length) {
+        resultEl.innerHTML += '<br><span style="color:var(--red)">⚠️ Failed: ' + d.failed.join(', ') + '</span>';
+      }
+    } else {
+      resultEl.innerHTML = '<span style="color:var(--red)">Error: ' + (d.error || 'Unknown') + '</span>';
+    }
+    btn.textContent = '✅ Done';
+  } catch(e) {
+    document.getElementById('sw-oc-result').innerHTML = '<span style="color:var(--red)">Network error: ' + e.message + '</span>';
+    document.getElementById('sw-oc-result').style.display = '';
+    btn.textContent = '⬡ Import Selected Files';
+    btn.disabled = false;
+  }
 }
 
 // Startup: check setup first, then check saved token
@@ -767,6 +1070,7 @@ document.getElementById('pw-input').addEventListener('keydown', e => { if (e.key
 
 // Init
 async function init() {
+  await loadChatHistory();
   connectWS();
   await loadTools();
   await loadPlugins();
@@ -829,6 +1133,17 @@ function appendBotMsg(text) {
   div.innerHTML = `<div class="bubble">${escHtml(text)}</div><div class="meta">Byte • now</div>`;
   log.appendChild(div);
   if (autoScroll) log.scrollTop = 99999;
+}
+
+async function loadChatHistory() {
+  try {
+    const r = await fetch('/api/history?limit=50');
+    const d = await r.json();
+    (d.messages || []).forEach(m => {
+      if (m.role === 'user') appendUserMsg(m.content);
+      else if (m.role === 'assistant') appendBotMsg(m.content);
+    });
+  } catch(e) { console.error('loadChatHistory:', e); }
 }
 
 function appendUserMsg(text) {
@@ -1088,33 +1403,85 @@ const ALL_MODELS = {
   'Google': [
     {name:'Gemini 3 Flash ⚡ [LATEST]', id:'gemini-3-flash-preview', provider:'google'},
     {name:'Gemini 2.5 Flash', id:'gemini-2.5-flash', provider:'google'},
-    {name:'Gemini 3 Pro 🪾 [LATEST]', id:'gemini-3-pro-preview', provider:'google'},
+    {name:'Gemini 3 Pro [LATEST]', id:'gemini-3-pro-preview', provider:'google'},
     {name:'Gemini 2.5 Pro', id:'gemini-2.5-pro', provider:'google'},
     {name:'Gemini 2.0 Flash', id:'gemini-2.0-flash', provider:'google'},
   ],
   'Anthropic': [
-    {name:'Claude Opus 4.6 🏆 [LATEST]', id:'claude-opus-4-6', provider:'anthropic'},
+    {name:'Claude Opus 4.6 [LATEST]', id:'claude-opus-4-6', provider:'anthropic'},
     {name:'Claude Sonnet 4.5', id:'claude-sonnet-4-5', provider:'anthropic'},
     {name:'Claude 3.7 Sonnet', id:'claude-3-7-sonnet-20250219', provider:'anthropic'},
     {name:'Claude 3.5 Sonnet', id:'claude-3-5-sonnet-20241022', provider:'anthropic'},
-    {name:'Claude 3.5 Haiku ⚡', id:'claude-3-5-haiku-20241022', provider:'anthropic'},
+    {name:'Claude 3.5 Haiku', id:'claude-3-5-haiku-20241022', provider:'anthropic'},
     {name:'Claude 3 Opus', id:'claude-3-opus-20240229', provider:'anthropic'},
   ],
+  'OpenAI': [
+    {name:'GPT-4o [LATEST]', id:'gpt-4o', provider:'openai'},
+    {name:'GPT-4.1', id:'gpt-4.1', provider:'openai'},
+    {name:'GPT-4o Mini', id:'gpt-4o-mini', provider:'openai'},
+    {name:'o3 Mini', id:'o3-mini', provider:'openai'},
+    {name:'o1', id:'o1', provider:'openai'},
+  ],
+  'xAI': [
+    {name:'Grok 4 [LATEST]', id:'grok-4', provider:'xai'},
+    {name:'Grok 4 Fast', id:'grok-4-fast', provider:'xai'},
+    {name:'Grok 3', id:'grok-3', provider:'xai'},
+    {name:'Grok 3 Mini', id:'grok-3-mini', provider:'xai'},
+  ],
+  'Groq (Fast)': [
+    {name:'Llama 4 Scout 17B [FAST]', id:'llama-4-scout-17b-16e-instruct', provider:'groq'},
+    {name:'Llama 4 Maverick 17B', id:'llama-4-maverick-17b-128e-instruct', provider:'groq'},
+    {name:'Llama 3.3 70B', id:'llama-3.3-70b-versatile', provider:'groq'},
+    {name:'DeepSeek R1 70B', id:'deepseek-r1-distill-llama-70b', provider:'groq'},
+    {name:'Qwen 3 32B', id:'qwen-3-32b', provider:'groq'},
+    {name:'Gemma 3 27B', id:'gemma2-9b-it', provider:'groq'},
+  ],
+  'Mistral': [
+    {name:'Mistral Small 3.1', id:'mistral-small-latest', provider:'mistral'},
+    {name:'Codestral (Code)', id:'codestral-latest', provider:'mistral'},
+    {name:'Devstral (Agents)', id:'devstral-small-latest', provider:'mistral'},
+    {name:'Mistral Large 2', id:'mistral-large-latest', provider:'mistral'},
+    {name:'Magistral Medium', id:'magistral-medium-latest', provider:'mistral'},
+  ],
+  'Cerebras': [
+    {name:'Llama 3.3 70B [FAST]', id:'llama3.3-70b', provider:'cerebras'},
+    {name:'Llama 3.1 8B', id:'llama3.1-8b', provider:'cerebras'},
+    {name:'Qwen 3 32B', id:'qwen-3-32b', provider:'cerebras'},
+  ],
+  'OpenRouter': [
+    {name:'Claude Opus 4.6 (via OR)', id:'anthropic/claude-opus-4-6', provider:'openrouter'},
+    {name:'GPT-4o (via OR)', id:'openai/gpt-4o', provider:'openrouter'},
+    {name:'Gemini 2.5 Pro (via OR)', id:'google/gemini-2.5-pro', provider:'openrouter'},
+    {name:'Llama 4 Scout (via OR)', id:'meta-llama/llama-4-scout', provider:'openrouter'},
+    {name:'DeepSeek V3 (via OR)', id:'deepseek/deepseek-chat', provider:'openrouter'},
+  ],
+  'HuggingFace': [
+    {name:'Qwen3 235B', id:'Qwen/Qwen3-235B-A22B', provider:'huggingface'},
+    {name:'Llama 4 Scout', id:'meta-llama/Llama-4-Scout-17B-16E-Instruct', provider:'huggingface'},
+    {name:'DeepSeek V3', id:'deepseek-ai/DeepSeek-V3-0324', provider:'huggingface'},
+  ],
+  'Kimi / Moonshot': [
+    {name:'Kimi K2.5 (Coding)', id:'kimi-k2.5', provider:'kimi'},
+    {name:'Kimi K2 Thinking', id:'kimi-k2-thinking', provider:'kimi'},
+  ],
+  'ZAI / GLM': [
+    {name:'GLM-4 Plus', id:'glm-4-plus', provider:'zai'},
+    {name:'GLM-4.5 Air', id:'glm-4.5-air', provider:'zai'},
+    {name:'GLM-4V Plus (Vision)', id:'glm-4v-plus', provider:'zai'},
+  ],
+  'MiniMax': [
+    {name:'MiniMax Text-01', id:'MiniMax-Text-01', provider:'minimax'},
+    {name:'MiniMax M2', id:'MiniMax-M2', provider:'minimax'},
+  ],
   'NVIDIA': [
-    {name:'DeepSeek V3.2 🚀 [TITAN]', id:'deepseek-ai/deepseek-v3.2', provider:'nvidia'},
-    {name:'Qwen3 Coder 480B 🪾', id:'qwen/qwen3-coder-480b-a35b-instruct', provider:'nvidia'},
+    {name:'DeepSeek V3.2 [TITAN]', id:'deepseek-ai/deepseek-v3.2', provider:'nvidia'},
+    {name:'Qwen3 Coder 480B', id:'qwen/qwen3-coder-480b-a35b-instruct', provider:'nvidia'},
     {name:'Llama 3.3 70B', id:'meta/llama-3.3-70b-instruct', provider:'nvidia'},
     {name:'Llama 3.1 405B', id:'meta/llama-3.1-405b-instruct', provider:'nvidia'},
     {name:'Nemotron 340B', id:'nvidia/nemotron-4-340b-instruct', provider:'nvidia'},
     {name:'GLM-5', id:'z-ai/glm5', provider:'nvidia'},
     {name:'Kimi K2.5', id:'moonshotai/kimi-k2.5', provider:'nvidia'},
     {name:'Mistral Large 2', id:'mistralai/mistral-large-2-instruct', provider:'nvidia'},
-  ],
-  'xAI': [
-    {name:'Grok 4 🧠 [LATEST]', id:'grok-4', provider:'xai'},
-    {name:'Grok 4 Fast ⚡', id:'grok-4-fast', provider:'xai'},
-    {name:'Grok 3', id:'grok-3', provider:'xai'},
-    {name:'Grok 3 Mini', id:'grok-3-mini', provider:'xai'},
   ],
   'Ollama (Local)': []
 };
@@ -1210,9 +1577,27 @@ function updateModelList() {
   const p = document.getElementById('cfg-provider').value;
   const presets = {
     google: 'gemini-2.5-flash', anthropic: 'claude-opus-4-6',
-    nvidia: 'deepseek-ai/deepseek-v3.2', xai: 'grok-4', ollama: 'qwen3:8b'
+    openai: 'gpt-4o', xai: 'grok-4', groq: 'llama-4-scout-17b-16e-instruct',
+    mistral: 'mistral-small-latest', cerebras: 'llama3.3-70b',
+    openrouter: 'anthropic/claude-opus-4-6', huggingface: 'Qwen/Qwen3-235B-A22B',
+    kimi: 'kimi-k2.5', zai: 'glm-4-plus', minimax: 'MiniMax-Text-01',
+    nvidia: 'deepseek-ai/deepseek-v3.2', ollama: 'qwen3:8b'
   };
   document.getElementById('cfg-model').value = presets[p] || '';
+}
+
+async function applyModelConfig() {
+  const maxTokens = document.getElementById('cfg-max-tokens').value.trim();
+  const contextWindow = document.getElementById('cfg-context-window').value.trim();
+  try {
+    const r = await fetch('/api/model_config', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({max_tokens: maxTokens || 0, context_window: contextWindow || 0})});
+    const d = await r.json();
+    if (d.ok) {
+      addLog('[Web] Token config saved — max_tokens: ' + (d.max_tokens || 'default') + ', context_window: ' + (d.context_window || 'auto'));
+    } else {
+      addLog('[Web] Token config error: ' + (d.error || 'unknown'));
+    }
+  } catch(e) { addLog('[Web] Token config error: ' + e.message); }
 }
 
 // Browser
@@ -1257,6 +1642,7 @@ async function refreshStatus() {
     currentModelId = d.model?.model || '';
     currentProvider = d.model?.provider || '';
     document.getElementById('model-badge').textContent = currentModelId.split('/').pop().substring(0,24) || 'No model';
+    if (d.version) document.getElementById('version-badge').textContent = 'v' + d.version;
     const pl = document.getElementById('status-plugins-list');
     if (pl && d.plugins) {
       pl.innerHTML = '<div style="font-size:0.8em;color:var(--dim);margin-bottom:8px;letter-spacing:2px">PLUGIN STATUS</div>';
@@ -1457,6 +1843,7 @@ function sendChat() { sendChatMain(); }
             'model': model_status,
             'tokens_in': self.core.gateway.total_tokens_in,
             'tokens_out': self.core.gateway.total_tokens_out,
+            'version': self.core.config.get('system', {}).get('version', '0.7.1'),
         })
 
     async def handle_plugin_toggle(self, request):
@@ -1612,12 +1999,29 @@ function sendChat() { sendChatMain(); }
         if 'providers' not in cfg:
             cfg['providers'] = {}
 
-        for prov in ['google', 'anthropic', 'xai', 'ollama']:
+        # Standard API-key providers (OpenAI-compatible)
+        openai_compat_providers = {
+            'google':      ('apiKey',  'https://generativelanguage.googleapis.com/v1beta'),
+            'anthropic':   ('apiKey',  'https://api.anthropic.com/v1'),
+            'openai':      ('apiKey',  'https://api.openai.com/v1'),
+            'xai':         ('apiKey',  'https://api.x.ai/v1'),
+            'groq':        ('apiKey',  'https://api.groq.com/openai/v1'),
+            'mistral':     ('apiKey',  'https://api.mistral.ai/v1'),
+            'cerebras':    ('apiKey',  'https://api.cerebras.ai/v1'),
+            'openrouter':  ('apiKey',  'https://openrouter.ai/api/v1'),
+            'huggingface': ('apiKey',  'https://api-inference.huggingface.co/v1'),
+            'kimi':        ('apiKey',  'https://api.kimi.com/v1'),
+            'zai':         ('apiKey',  'https://api.z.ai/api/paas/v4'),
+            'minimax':     ('apiKey',  'https://api.minimax.io/v1'),
+        }
+        for prov, (key_field, base_url) in openai_compat_providers.items():
             key = data.get(f'{prov}_key', '')
             if key:
                 if prov not in cfg['providers']:
                     cfg['providers'][prov] = {}
-                cfg['providers'][prov]['apiKey'] = key
+                cfg['providers'][prov][key_field] = key
+                if 'baseUrl' not in cfg['providers'][prov]:
+                    cfg['providers'][prov]['baseUrl'] = base_url
 
         # NVIDIA keys
         nv_keys = {}
@@ -1628,7 +2032,10 @@ function sendChat() { sendChatMain(); }
         if nv_keys:
             if 'nvidia' not in cfg['providers']:
                 cfg['providers']['nvidia'] = {}
-            cfg['providers']['nvidia']['keys'] = nv_keys
+            # Merge new keys into existing, don't wipe others
+            existing_keys = cfg['providers']['nvidia'].get('keys', {})
+            existing_keys.update(nv_keys)
+            cfg['providers']['nvidia']['keys'] = existing_keys
             cfg['providers']['nvidia']['baseUrl'] = 'https://integrate.api.nvidia.com/v1'
 
         # Ollama URL
@@ -1637,6 +2044,16 @@ function sendChat() { sendChatMain(); }
             if 'ollama' not in cfg['providers']:
                 cfg['providers']['ollama'] = {}
             cfg['providers']['ollama']['baseUrl'] = ollama_url
+
+        # ElevenLabs TTS
+        el_key = data.get('elevenlabs_key', '')
+        el_voice = data.get('elevenlabs_voice', 'nova')
+        if el_key or el_voice:
+            if 'elevenlabs' not in cfg:
+                cfg['elevenlabs'] = {}
+            if el_key:
+                cfg['elevenlabs']['api_key'] = el_key
+            cfg['elevenlabs']['voice'] = el_voice or 'nova'
 
         # Telegram
         tg_token = data.get('telegram_token', '')
@@ -1655,6 +2072,23 @@ function sendChat() { sendChatMain(); }
             if 'system' not in cfg:
                 cfg['system'] = {}
             cfg['system']['name'] = name
+
+        # Save personality config
+        persona_mode = data.get('persona_mode', 'byte')
+        persona_name = data.get('persona_name', '')
+        persona_soul = data.get('persona_soul', '')
+        persona_context = data.get('persona_context', '')
+        if 'personality' not in cfg:
+            cfg['personality'] = {}
+        cfg['personality']['mode'] = persona_mode
+        if persona_mode == 'custom':
+            cfg['personality']['name'] = persona_name or 'Assistant'
+            cfg['personality']['soul'] = persona_soul or 'Be helpful, accurate, and concise.'
+            cfg['personality']['user_context'] = persona_context
+        elif persona_mode == 'byte':
+            cfg['personality']['name'] = 'Byte'
+        elif persona_mode == 'generic':
+            cfg['personality']['name'] = 'Assistant'
 
         # Save
         try:
@@ -1688,6 +2122,86 @@ function sendChat() { sendChatMain(); }
             'current_provider': cfg.get('gateway', {}).get('provider', ''),
             'current_model': cfg.get('gateway', {}).get('model', ''),
         })
+
+    async def handle_check_openclaw(self, request):
+        """GET /api/check_openclaw — detect OpenClaw installation and list importable .md files."""
+        import pathlib
+        openclaw_workspace = pathlib.Path.home() / '.openclaw' / 'workspace'
+        md_files = ['USER.md', 'IDENTITY.md', 'SOUL.md', 'MEMORY.md', 'TOOLS.md']
+        found_files = []
+        if openclaw_workspace.exists():
+            for f in md_files:
+                if (openclaw_workspace / f).exists():
+                    found_files.append(f)
+            return web.json_response({
+                'found': True,
+                'path': str(openclaw_workspace),
+                'files': found_files
+            })
+        return web.json_response({'found': False, 'path': '', 'files': []})
+
+    async def handle_migrate_openclaw(self, request):
+        """POST /api/migrate_openclaw — copy selected .md files from OpenClaw workspace."""
+        import pathlib, shutil
+        try:
+            data = await request.json()
+        except Exception:
+            return web.json_response({'error': 'Invalid JSON'}, status=400)
+        files_to_import = data.get('files', [])
+        if not files_to_import:
+            return web.json_response({'error': 'No files specified'}, status=400)
+        openclaw_workspace = pathlib.Path.home() / '.openclaw' / 'workspace'
+        if not openclaw_workspace.exists():
+            return web.json_response({'error': 'OpenClaw workspace not found'}, status=404)
+        # Destination: one level up from this file (the workspace parent dir)
+        dest_dir = pathlib.Path(os.path.dirname(os.path.abspath(__file__))).parent
+        imported = []
+        failed = []
+        allowed = {'USER.md', 'IDENTITY.md', 'SOUL.md', 'MEMORY.md', 'TOOLS.md'}
+        for fname in files_to_import:
+            if fname not in allowed:
+                failed.append(fname + ' (not allowed)')
+                continue
+            src = openclaw_workspace / fname
+            dst = dest_dir / fname
+            try:
+                shutil.copy2(str(src), str(dst))
+                imported.append(fname)
+                await self.core.log(f"Migrated from OpenClaw: {fname}", priority=2)
+            except Exception as e:
+                failed.append(f"{fname} ({e})")
+        return web.json_response({'ok': True, 'imported': imported, 'failed': failed})
+
+    async def handle_model_config(self, request):
+        """POST /api/model_config — {max_tokens, context_window} — persist per-session model config."""
+        try:
+            data = await request.json()
+        except Exception:
+            return web.json_response({'error': 'Invalid JSON'}, status=400)
+        import yaml
+        cfg = self.core.config
+        if 'models' not in cfg:
+            cfg['models'] = {}
+        max_tokens = data.get('max_tokens')
+        context_window = data.get('context_window')
+        if max_tokens is not None:
+            try:
+                cfg['models']['max_tokens'] = int(max_tokens) if max_tokens else 0
+            except (ValueError, TypeError):
+                pass
+        if context_window is not None:
+            try:
+                cfg['models']['context_window'] = int(context_window) if context_window else 0
+            except (ValueError, TypeError):
+                pass
+        # Persist to config.yaml
+        try:
+            cfg_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'config.yaml')
+            with open(cfg_path, 'w', encoding='utf-8') as f:
+                yaml.dump(cfg, f, default_flow_style=False, allow_unicode=True)
+        except Exception as e:
+            return web.json_response({'ok': False, 'error': str(e)})
+        return web.json_response({'ok': True, 'max_tokens': cfg['models'].get('max_tokens', 0), 'context_window': cfg['models'].get('context_window', 0)})
 
     async def handle_stream(self, request):
         ws = web.WebSocketResponse()
@@ -1777,15 +2291,60 @@ function sendChat() { sendChatMain(); }
             
         return ws
 
+    async def handle_history(self, request):
+        """GET /api/history — return last N chat messages for UI restore on page refresh."""
+        try:
+            import json as _json
+            limit = int(request.query.get('limit', '50'))
+            history_file = getattr(self.core.gateway, 'history_file', '')
+            entries = []
+            if history_file and os.path.exists(history_file):
+                with open(history_file, 'r', encoding='utf-8') as f:
+                    lines = f.readlines()
+                for line in lines[-(limit * 2):]:  # Read 2x limit to account for user+bot pairs
+                    try:
+                        entries.append(_json.loads(line.strip()))
+                    except Exception:
+                        pass
+                # Return only last `limit` entries
+                entries = entries[-limit:]
+            return web.json_response({'messages': entries})
+        except Exception as e:
+            return web.json_response({'messages': [], 'error': str(e)})
+
     async def handle_list_files(self, request):
-        """List workspace files"""
-        workspace = self.core.config['paths']['workspace']
-        files = []
-        for f in ['MEMORY.md', 'USER.md', 'SOUL.md', 'IDENTITY.md', 'TOOLS.md', 'HEARTBEAT.md']:
-            path = os.path.join(workspace, f)
-            if os.path.exists(path):
-                files.append({'name': f, 'size': os.path.getsize(path)})
-        return web.json_response({'files': files})
+        """List workspace files — auto-creates missing .md files with starter templates."""
+        try:
+            workspace = self.core.config.get('paths', {}).get('workspace', '')
+            if not workspace:
+                workspace = os.path.join(os.path.dirname(os.path.abspath(__file__)), '..')
+
+            # Auto-create missing .md files with defaults
+            DEFAULTS = {
+                'USER.md': '# User Profile\n\nTell your AI about yourself here.\n',
+                'MEMORY.md': '# Memory\n\nThe AI will store important things here.\n',
+                'IDENTITY.md': '# Identity\n\nDefine who your AI is here.\n',
+                'SOUL.md': '# Soul\n\nDefine your AI\'s core values and personality here.\n',
+                'TOOLS.md': '# Tools\n\nNotes about available tools and workflows.\n',
+            }
+            os.makedirs(workspace, exist_ok=True)
+            for fname, default_content in DEFAULTS.items():
+                fpath = os.path.join(workspace, fname)
+                if not os.path.exists(fpath):
+                    try:
+                        with open(fpath, 'w', encoding='utf-8') as f:
+                            f.write(default_content)
+                    except Exception:
+                        pass
+
+            files = []
+            for f in ['MEMORY.md', 'USER.md', 'SOUL.md', 'IDENTITY.md', 'TOOLS.md', 'HEARTBEAT.md']:
+                path = os.path.join(workspace, f)
+                if os.path.exists(path):
+                    files.append({'name': f, 'size': os.path.getsize(path)})
+            return web.json_response({'files': files})
+        except Exception as e:
+            return web.json_response({'files': [], 'error': str(e)})
     
     async def handle_get_file(self, request):
         """Get file contents"""

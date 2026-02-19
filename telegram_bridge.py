@@ -4,6 +4,7 @@ import httpx
 import json
 import os
 import traceback
+import tempfile
 import time
 
 class TelegramBridge:
@@ -52,6 +53,17 @@ class TelegramBridge:
                 await self.client.post(url, data=data, files=files)
         except Exception as e:
             await self.core.log(f"Telegram Photo Error: {e}", priority=1)
+
+    async def send_audio(self, chat_id, audio_path, caption=None):
+        try:
+            url = f"{self.api_url}/sendAudio"
+            with open(audio_path, "rb") as audio:
+                files = {"audio": audio}
+                data = {"chat_id": chat_id}
+                if caption: data["caption"] = caption
+                await self.client.post(url, data=data, files=files)
+        except Exception as e:
+            await self.core.log(f"Telegram Audio Error: {e}", priority=1)
 
     async def send_typing(self, chat_id):
         try:
@@ -462,6 +474,16 @@ class TelegramBridge:
                             await self.send_typing(chat_id)
                             asyncio.create_task(self._handle_document(chat_id, msg))
                             continue
+                        # Handle photo attachments
+                        if "photo" in msg and hasattr(self.core, 'gateway'):
+                            await self.send_typing(chat_id)
+                            asyncio.create_task(self._handle_photo(chat_id, msg))
+                            continue
+                        # Handle audio/voice attachments
+                        if ("voice" in msg or "audio" in msg) and hasattr(self.core, 'gateway'):
+                            await self.send_typing(chat_id)
+                            asyncio.create_task(self._handle_audio(chat_id, msg))
+                            continue
                         if text.startswith('/'):
                             await self.process_command(chat_id, text)
                             continue
@@ -573,6 +595,145 @@ class TelegramBridge:
                 await self.core.relay.emit(2, "chat_from_telegram", {
                     "user": str(chat_id),
                     "data": f"📎 {msg.get('document', {}).get('file_name', 'file')}",
+                    "response": response,
+                })
+            except Exception:
+                pass
+            try:
+                await self.send_message(chat_id, response)
+            except Exception as e:
+                await self.core.log(f"Send Error: {e}", priority=1)
+
+    async def _handle_photo(self, chat_id, msg):
+        """Download a Telegram photo attachment and send to the AI for analysis."""
+        typing_task = None
+        temp_file_path = None
+        try:
+            typing_task = asyncio.create_task(self.keep_typing(chat_id))
+            photo_array = msg["photo"]
+            # Get the largest photo available
+            photo = photo_array[-1] 
+            file_size = photo.get("file_size", 0)
+            file_id = photo["file_id"]
+            caption = msg.get("caption", "")
+
+            # Get file path from Telegram
+            r = await self.client.get(f"{self.api_url}/getFile", params={"file_id": file_id})
+            file_data = r.json()
+            if not file_data.get("ok"):
+                await self.send_message(chat_id, "❌ Couldn't retrieve photo from Telegram.")
+                return
+            file_path = file_data["result"]["file_path"]
+
+            # Download file content
+            download_url = f"https://api.telegram.org/file/bot{self.bot_token}/{file_path}"
+            r = await self.client.get(download_url)
+            raw = r.content
+
+            # Save to a temporary file
+            with tempfile.NamedTemporaryFile(delete=False, suffix=".jpg") as temp_file:
+                temp_file.write(raw)
+                temp_file_path = temp_file.name
+            
+            await self.core.log(f"[Telegram] User sent photo: {os.path.basename(temp_file_path)} ({file_size} bytes)", priority=2)
+
+            # Instruct AI to analyze the image
+            full_msg = f"[Attached image: {os.path.basename(temp_file_path)}]\n---\n"
+            if caption:
+                full_msg += f"{caption}\n\n"
+            full_msg += f"Analyze the image at path: {temp_file_path}"
+
+            response = await self.core.gateway.speak(full_msg)
+        except Exception as e:
+            await self.core.log(f"Photo Error: {e}", priority=1)
+            response = f"🌌 **Byte Interference (Photo):** `{str(e)}`"
+        finally:
+            if typing_task and not typing_task.done():
+                typing_task.cancel()
+                try:
+                    await typing_task
+                except (asyncio.CancelledError, Exception):
+                    pass
+            if temp_file_path and os.path.exists(temp_file_path):
+                os.remove(temp_file_path)
+            
+            try:
+                await self.core.relay.emit(2, "chat_from_telegram", {
+                    "user": str(chat_id),
+                    "data": f"📸 {msg.get('caption', 'image')}",
+                    "response": response,
+                })
+            except Exception:
+                pass
+            try:
+                await self.send_message(chat_id, response)
+            except Exception as e:
+                await self.core.log(f"Send Error: {e}", priority=1)
+
+    async def _handle_audio(self, chat_id, msg):
+        """Download a Telegram audio/voice attachment and process."""
+        typing_task = None
+        temp_file_path = None
+        try:
+            typing_task = asyncio.create_task(self.keep_typing(chat_id))
+            
+            # Determine if it's a voice or audio message
+            audio_data = msg.get("voice") or msg.get("audio")
+            if not audio_data:
+                await self.send_message(chat_id, "❌ No audio data found.")
+                return
+
+            file_size = audio_data.get("file_size", 0)
+            file_id = audio_data["file_id"]
+            mime_type = audio_data.get("mime_type", "audio/ogg") # Telegram voice is usually ogg
+            caption = msg.get("caption", "")
+            
+            file_extension = ".ogg" if "ogg" in mime_type else ".mp3" # Default to ogg, or mp3
+
+            # Get file path from Telegram
+            r = await self.client.get(f"{self.api_url}/getFile", params={"file_id": file_id})
+            file_data = r.json()
+            if not file_data.get("ok"):
+                await self.send_message(chat_id, "❌ Couldn't retrieve audio from Telegram.")
+                return
+            file_path = file_data["result"]["file_path"]
+
+            # Download file content
+            download_url = f"https://api.telegram.org/file/bot{self.bot_token}/{file_path}"
+            r = await self.client.get(download_url)
+            raw = r.content
+
+            # Save to a temporary file
+            with tempfile.NamedTemporaryFile(delete=False, suffix=file_extension) as temp_file:
+                temp_file.write(raw)
+                temp_file_path = temp_file.name
+            
+            await self.core.log(f"[Telegram] User sent audio: {os.path.basename(temp_file_path)} ({file_size} bytes, {mime_type})", priority=2)
+
+            # Inform user that transcription is not yet directly supported
+            full_msg = f"[Attached audio: {os.path.basename(temp_file_path)}]\n---\n"
+            if caption:
+                full_msg += f"{caption}\n\n"
+            full_msg += "I've received the audio, but direct transcription isn't supported yet. I can store this information or if you tell me what you think it says, I can use that context."
+
+            response = await self.core.gateway.speak(full_msg)
+        except Exception as e:
+            await self.core.log(f"Audio Error: {e}", priority=1)
+            response = f"🌌 **Byte Interference (Audio):** `{str(e)}`"
+        finally:
+            if typing_task and not typing_task.done():
+                typing_task.cancel()
+                try:
+                    await typing_task
+                except (asyncio.CancelledError, Exception):
+                    pass
+            if temp_file_path and os.path.exists(temp_file_path):
+                os.remove(temp_file_path)
+            
+            try:
+                await self.core.relay.emit(2, "chat_from_telegram", {
+                    "user": str(chat_id),
+                    "data": f"🎶 {msg.get('caption', 'audio')}",
                     "response": response,
                 })
             except Exception:

@@ -1,6 +1,7 @@
 import asyncio
 import json
 import logging
+import os
 import re
 import traceback
 import httpx
@@ -23,12 +24,16 @@ class GalacticGateway:
         self.model = self.config.get('model', 'gemini-3-flash-preview')
         self.api_key = self.config.get('api_key', 'NONE')
         
-        # Load Personality
-        self.personality = GalacticPersonality()
-        
+        # Load Personality (dynamic: reads .md files, config, or Byte defaults)
+        workspace = core.config.get('paths', {}).get('workspace', '')
+        self.personality = GalacticPersonality(config=core.config, workspace=workspace)
+
         # Token tracking (for /status compatibility)
         self.total_tokens_in = 0
         self.total_tokens_out = 0
+
+        # TTS voice file tracking — set by speak() when text_to_speech tool is invoked
+        self.last_voice_file = None
         
         # LLM reference (for /status compatibility and model switching)
         from types import SimpleNamespace
@@ -44,6 +49,25 @@ class GalacticGateway:
         
         # Conversation History
         self.history = []
+
+        # Persistent chat log (JSONL) — survives page refreshes
+        logs_dir = core.config.get('paths', {}).get('logs', './logs')
+        self.history_file = os.path.join(logs_dir, 'chat_history.jsonl')
+        os.makedirs(os.path.dirname(self.history_file), exist_ok=True)
+
+    def _log_chat(self, role, content, source="web"):
+        """Append a chat entry to the persistent JSONL log (survives page refresh)."""
+        entry = {
+            "ts": datetime.now().isoformat(),
+            "role": role,
+            "content": content[:2000],  # Cap stored content to prevent log bloat
+            "source": source,
+        }
+        try:
+            with open(self.history_file, 'a', encoding='utf-8') as f:
+                f.write(json.dumps(entry) + '\n')
+        except Exception:
+            pass
 
     def register_tools(self):
         """Registers available tools for the LLM."""
@@ -2122,7 +2146,15 @@ class GalacticGateway:
 
         return system_prompt
 
-    async def speak(self, user_input, context=""):
+    async def _send_telegram_typing_ping(self, chat_id):
+        """Helper to send a typing indicator to Telegram if the bridge is active."""
+        if hasattr(self.core, 'telegram_bridge'):
+            try:
+                await self.core.telegram_bridge.send_typing(chat_id)
+            except Exception as e:
+                await self.core.log(f"Telegram typing ping error: {e}", priority=1)
+
+    async def speak(self, user_input, context="", chat_id=None):
         """
         Main entry point for user interaction.
         Implements a ReAct loop: Think -> Act -> Observe -> Answer.
@@ -2136,7 +2168,14 @@ class GalacticGateway:
         # Track input tokens (rough estimate: 1 token ~= 4 chars)
         self.total_tokens_in += len(user_input) // 4
 
+        # Reset per-turn state
+        self.last_voice_file = None
+
         self.history.append({"role": "user", "content": user_input})
+
+        # Persist to JSONL
+        source = "telegram" if chat_id else "web"
+        self._log_chat("user", user_input, source=source)
 
         # Smart model routing — pick the best model for this task type (opt-in via config)
         model_mgr = getattr(self.core, 'model_manager', None)
@@ -2157,6 +2196,7 @@ class GalacticGateway:
 
         for _ in range(max_turns):
             turn_count += 1
+            await self._send_telegram_typing_ping(chat_id)
             response_text = await self._call_llm(messages)
 
             # Strip think-tags from final response text (Qwen3/DeepSeek-R1)
@@ -2202,8 +2242,16 @@ class GalacticGateway:
                 if tool_name in self.tools:
                     try:
                         result = await self.tools[tool_name]["fn"](tool_args)
+                        await self._send_telegram_typing_ping(chat_id)
                     except Exception as e:
                         result = f"[Tool Error] {tool_name} raised: {type(e).__name__}: {e}"
+
+                    # Track TTS output so callers (telegram_bridge) can send the audio file
+                    if tool_name == "text_to_speech" and "[VOICE]" in str(result):
+                        voice_match = re.search(r'Generated speech.*?:\s*(.+\.mp3)', str(result))
+                        if voice_match:
+                            self.last_voice_file = voice_match.group(1).strip()
+
                     messages.append({"role": "assistant", "content": response_text})
                     messages.append({"role": "user", "content": f"Tool Output: {result}"})
                     continue  # Loop back to LLM with result
@@ -2226,6 +2274,11 @@ class GalacticGateway:
             await self.core.relay.emit(2, "thought", display_text)
 
             self.total_tokens_out += len(display_text) // 4
+
+            # Persist to JSONL
+            source = "telegram" if chat_id else "web"
+            self._log_chat("assistant", display_text, source=source)
+
             return display_text
 
         # Hit max turns
@@ -2236,6 +2289,7 @@ class GalacticGateway:
         )
         self.total_tokens_out += len(error_msg) // 4
         self.history.append({"role": "assistant", "content": error_msg})
+        self._log_chat("assistant", error_msg, source="telegram" if chat_id else "web")
         return error_msg
 
     async def _call_llm(self, messages):
@@ -2309,6 +2363,11 @@ class GalacticGateway:
                 [f"{m['role']}: {m['content']}" for m in messages[:-1]]
             )
             return await self._call_openai_compatible(prompt, context_str)
+
+        elif self.llm.provider in ["openai", "groq", "mistral", "cerebras",
+                                    "openrouter", "huggingface", "kimi", "zai", "minimax"]:
+            # OpenAI-compatible providers: pass full messages array for proper multi-turn context
+            return await self._call_openai_compatible_messages(messages)
 
         else:
             return f"[ERROR] Unknown provider: {self.llm.provider}"
@@ -2408,7 +2467,7 @@ class GalacticGateway:
 
         payload = {
             "model": self.llm.model,
-            "max_tokens": 8096,
+            "max_tokens": self._get_max_tokens(default=8192),
             "system": system_prompt if system_prompt else "You are a helpful AI assistant.",
             "messages": merged,
         }
@@ -2428,27 +2487,56 @@ class GalacticGateway:
         except Exception as e:
             return f"[ERROR] Anthropic: {str(e)}"
 
+    def _get_provider_base_url(self, provider):
+        """Return the base URL for an OpenAI-compatible provider from config."""
+        providers_cfg = self.core.config.get('providers', {})
+        default_urls = {
+            "openai":       "https://api.openai.com/v1",
+            "groq":         "https://api.groq.com/openai/v1",
+            "mistral":      "https://api.mistral.ai/v1",
+            "cerebras":     "https://api.cerebras.ai/v1",
+            "openrouter":   "https://openrouter.ai/api/v1",
+            "huggingface":  "https://api-inference.huggingface.co/v1",
+            "kimi":         "https://api.kimi.com/v1",
+            "zai":          "https://api.z.ai/api/paas/v4",
+            "minimax":      "https://api.minimax.io/v1",
+            "nvidia":       "https://integrate.api.nvidia.com/v1",
+            "xai":          "https://api.x.ai/v1",
+            "ollama":       "http://127.0.0.1:11434/v1",
+        }
+        configured = providers_cfg.get(provider, {}).get('baseUrl', '')
+        base = configured or default_urls.get(provider, '')
+        # Normalize Ollama URL — ensure it ends with /v1
+        if provider == "ollama" and not base.rstrip('/').endswith('/v1'):
+            base = base.rstrip('/') + '/v1'
+        return base.rstrip('/')
+
+    def _get_provider_api_key(self, provider):
+        """Return the API key for a provider, falling back to config providers section."""
+        # Use the live llm.api_key if it's set and not placeholder
+        key = self.llm.api_key
+        if key and key not in ("NONE", ""):
+            return key
+        providers_cfg = self.core.config.get('providers', {})
+        return providers_cfg.get(provider, {}).get('apiKey', '') or providers_cfg.get(provider, {}).get('api_key', '')
+
+    def _get_max_tokens(self, default=None):
+        """Return user-configured max_tokens (0 or None = use provider default)."""
+        val = self.core.config.get('models', {}).get('max_tokens', 0)
+        try:
+            val = int(val)
+        except (TypeError, ValueError):
+            val = 0
+        return val if val > 0 else default
+
     async def _call_openai_compatible(self, prompt, context):
         """OpenAI-compatible API call (NVIDIA, XAI, Ollama). All URLs are config-driven."""
-        providers_cfg = self.core.config.get('providers', {})
-
-        # Pull every base URL from config so custom hosts / ports are respected
-        ollama_base = providers_cfg.get('ollama', {}).get('baseUrl', 'http://127.0.0.1:11434/v1')
-        if not ollama_base.rstrip('/').endswith('/v1'):
-            ollama_base = ollama_base.rstrip('/') + '/v1'
-
-        base_urls = {
-            "nvidia":    providers_cfg.get('nvidia', {}).get('baseUrl', 'https://integrate.api.nvidia.com/v1'),
-            "xai":       providers_cfg.get('xai',    {}).get('baseUrl', 'https://api.x.ai/v1'),
-            "ollama":    ollama_base,
-        }
-
-        url = f"{base_urls.get(self.llm.provider, '')}/chat/completions"
+        url = f"{self._get_provider_base_url(self.llm.provider)}/chat/completions"
 
         # Ollama doesn't need auth header
         headers = {"Content-Type": "application/json"}
         if self.llm.provider not in ("ollama",):
-            headers["Authorization"] = f"Bearer {self.llm.api_key}"
+            headers["Authorization"] = f"Bearer {self._get_provider_api_key(self.llm.provider)}"
 
         # Use streaming for Ollama when configured (faster feel on local hardware)
         use_streaming = (
@@ -2465,6 +2553,9 @@ class GalacticGateway:
                 {"role": "user", "content": prompt}
             ]
         }
+        max_tokens = self._get_max_tokens()
+        if max_tokens:
+            payload["max_tokens"] = max_tokens
 
         try:
             async with httpx.AsyncClient(timeout=120.0, verify=False) as client:
@@ -2511,36 +2602,50 @@ class GalacticGateway:
 
     async def _call_openai_compatible_messages(self, messages):
         """
-        Ollama-specific OpenAI-compatible call that passes the FULL messages array.
+        OpenAI-compatible call that passes the FULL messages array.
 
-        This is the key difference from _call_openai_compatible():
-          • Passes messages[] directly (not collapsed to a prompt string)
-          • This preserves multi-turn tool-call context for local models
-          • Supports streaming (broadcasts tokens to web UI in real-time)
-          • Disables tool_calls in the payload — we use our own ReAct JSON protocol
-            which works with ALL Ollama models including those without native tool support
+        Used for: Ollama (local), OpenAI, Groq, Mistral, Cerebras, OpenRouter,
+                  HuggingFace, Kimi, ZAI/GLM, MiniMax — any provider using
+                  the standard /chat/completions messages array format.
 
-        Called by _call_llm() when provider == "ollama".
+        Key features:
+          • Passes messages[] directly (preserves multi-turn conversation context)
+          • Supports streaming for Ollama and OpenAI-compatible providers
+          • Reads base URL and API key from config for all providers
+          • Injects max_tokens if configured
         """
-        providers_cfg = self.core.config.get('providers', {})
-        ollama_base = providers_cfg.get('ollama', {}).get('baseUrl', 'http://127.0.0.1:11434/v1')
-        if not ollama_base.rstrip('/').endswith('/v1'):
-            ollama_base = ollama_base.rstrip('/') + '/v1'
+        provider = self.llm.provider
+        url = f"{self._get_provider_base_url(provider)}/chat/completions"
 
-        url = f"{ollama_base}/chat/completions"
         headers = {"Content-Type": "application/json"}
-        # Ollama doesn't use an auth token
+        # Ollama doesn't use auth; all other providers use Bearer token
+        if provider != "ollama":
+            api_key = self._get_provider_api_key(provider)
+            if api_key:
+                headers["Authorization"] = f"Bearer {api_key}"
+            # OpenRouter requires an extra header
+            if provider == "openrouter":
+                headers["HTTP-Referer"] = "https://galactic-ai.local"
+                headers["X-Title"] = "Galactic AI"
 
-        use_streaming = self.core.config.get('models', {}).get('streaming', True)
+        use_streaming = (
+            provider in ("ollama", "openai", "groq", "mistral", "cerebras", "openrouter")
+            and self.core.config.get('models', {}).get('streaming', True)
+        )
+
+        max_tokens = self._get_max_tokens()
 
         if use_streaming:
             payload = {
                 "model": self.llm.model,
                 "messages": messages,
                 "stream": True,
-                # Keep temperature moderate so local models follow JSON instructions reliably
-                "options": {"temperature": 0.3},
             }
+            # Ollama benefits from explicit temperature in options
+            if provider == "ollama":
+                payload["options"] = {"temperature": 0.3}
+            if max_tokens:
+                payload["max_tokens"] = max_tokens
             full_response = []
             try:
                 async with httpx.AsyncClient(timeout=180.0, verify=False) as client:
@@ -2561,22 +2666,25 @@ class GalacticGateway:
                                 continue
                 return "".join(full_response)
             except Exception as e:
-                return f"[ERROR] ollama (streaming): {str(e)}"
+                return f"[ERROR] {provider} (streaming): {str(e)}"
         else:
             payload = {
                 "model": self.llm.model,
                 "messages": messages,
                 "stream": False,
-                "options": {"temperature": 0.3},
             }
+            if provider == "ollama":
+                payload["options"] = {"temperature": 0.3}
+            if max_tokens:
+                payload["max_tokens"] = max_tokens
             try:
                 async with httpx.AsyncClient(timeout=180.0, verify=False) as client:
                     response = await client.post(url, headers=headers, json=payload)
                     data = response.json()
                     if 'choices' not in data:
-                        return f"[ERROR] ollama: {json.dumps(data)}"
+                        return f"[ERROR] {provider}: {json.dumps(data)}"
                     return data['choices'][0]['message']['content']
             except Exception as e:
-                return f"[ERROR] ollama: {str(e)}"
+                return f"[ERROR] {provider}: {str(e)}"
 
 
