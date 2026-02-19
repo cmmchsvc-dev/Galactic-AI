@@ -830,7 +830,7 @@ function showSetupWizard(status) {
 
 const SW_MODEL_HINTS = {
   google:      {placeholder:'gemini-2.5-flash', link:'Get key: <a href="https://aistudio.google.com/apikey" target="_blank" style="color:var(--cyan)">aistudio.google.com/apikey</a>'},
-  anthropic:   {placeholder:'claude-opus-4-6', link:'Get key: <a href="https://console.anthropic.com/keys" target="_blank" style="color:var(--cyan)">console.anthropic.com/keys</a>'},
+  anthropic:   {placeholder:'claude-sonnet-4-6', link:'Get key: <a href="https://console.anthropic.com/keys" target="_blank" style="color:var(--cyan)">console.anthropic.com/keys</a>'},
   openai:      {placeholder:'gpt-4o', link:'Get key: <a href="https://platform.openai.com/api-keys" target="_blank" style="color:var(--cyan)">platform.openai.com/api-keys</a>'},
   xai:         {placeholder:'grok-4', link:'Get key: <a href="https://console.x.ai" target="_blank" style="color:var(--cyan)">console.x.ai</a>'},
   groq:        {placeholder:'llama-4-scout-17b-16e-instruct', link:'Get key: <a href="https://console.groq.com/keys" target="_blank" style="color:var(--cyan)">console.groq.com/keys</a>'},
@@ -1488,11 +1488,10 @@ const ALL_MODELS = {
   ],
   'Anthropic': [
     {name:'Claude Opus 4.6 [LATEST]', id:'claude-opus-4-6', provider:'anthropic'},
-    {name:'Claude Sonnet 4.5', id:'claude-sonnet-4-5', provider:'anthropic'},
-    {name:'Claude 3.7 Sonnet', id:'claude-3-7-sonnet-20250219', provider:'anthropic'},
-    {name:'Claude 3.5 Sonnet', id:'claude-3-5-sonnet-20241022', provider:'anthropic'},
-    {name:'Claude 3.5 Haiku', id:'claude-3-5-haiku-20241022', provider:'anthropic'},
-    {name:'Claude 3 Opus', id:'claude-3-opus-20240229', provider:'anthropic'},
+    {name:'Claude Sonnet 4.6', id:'claude-sonnet-4-6', provider:'anthropic'},
+    {name:'Claude Haiku 4.5 (fast)', id:'claude-haiku-4-5', provider:'anthropic'},
+    {name:'Claude Sonnet 4.5 (legacy)', id:'claude-sonnet-4-5', provider:'anthropic'},
+    {name:'Claude Opus 4.5 (legacy)', id:'claude-opus-4-5', provider:'anthropic'},
   ],
   'OpenAI': [
     {name:'GPT-4o [LATEST]', id:'gpt-4o', provider:'openai'},
@@ -1529,6 +1528,7 @@ const ALL_MODELS = {
   ],
   'OpenRouter': [
     {name:'Claude Opus 4.6 (via OR)', id:'anthropic/claude-opus-4-6', provider:'openrouter'},
+    {name:'Claude Sonnet 4.6 (via OR)', id:'anthropic/claude-sonnet-4-6', provider:'openrouter'},
     {name:'GPT-4o (via OR)', id:'openai/gpt-4o', provider:'openrouter'},
     {name:'Gemini 2.5 Pro (via OR)', id:'google/gemini-2.5-pro', provider:'openrouter'},
     {name:'Llama 4 Scout (via OR)', id:'meta-llama/llama-4-scout', provider:'openrouter'},
