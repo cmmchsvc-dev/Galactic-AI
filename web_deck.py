@@ -829,7 +829,7 @@ function showSetupWizard(status) {
 }
 
 const SW_MODEL_HINTS = {
-  google:      {placeholder:'gemini-2.5-flash', link:'Get key: <a href="https://aistudio.google.com/apikey" target="_blank" style="color:var(--cyan)">aistudio.google.com/apikey</a>'},
+  google:      {placeholder:'gemini-3.1-pro-preview', link:'Get key: <a href="https://aistudio.google.com/apikey" target="_blank" style="color:var(--cyan)">aistudio.google.com/apikey</a>'},
   anthropic:   {placeholder:'claude-sonnet-4-6', link:'Get key: <a href="https://console.anthropic.com/keys" target="_blank" style="color:var(--cyan)">console.anthropic.com/keys</a>'},
   openai:      {placeholder:'gpt-4o', link:'Get key: <a href="https://platform.openai.com/api-keys" target="_blank" style="color:var(--cyan)">platform.openai.com/api-keys</a>'},
   xai:         {placeholder:'grok-4', link:'Get key: <a href="https://console.x.ai" target="_blank" style="color:var(--cyan)">console.x.ai</a>'},
@@ -1480,9 +1480,10 @@ async function togglePlugin(name, enabled) {
 // Models
 const ALL_MODELS = {
   'Google': [
-    {name:'Gemini 3 Flash ⚡ [LATEST]', id:'gemini-3-flash-preview', provider:'google'},
+    {name:'Gemini 3.1 Pro 🧠 [LATEST]', id:'gemini-3.1-pro-preview', provider:'google'},
+    {name:'Gemini 3 Flash ⚡', id:'gemini-3-flash-preview', provider:'google'},
+    {name:'Gemini 3 Pro', id:'gemini-3-pro-preview', provider:'google'},
     {name:'Gemini 2.5 Flash', id:'gemini-2.5-flash', provider:'google'},
-    {name:'Gemini 3 Pro [LATEST]', id:'gemini-3-pro-preview', provider:'google'},
     {name:'Gemini 2.5 Pro', id:'gemini-2.5-pro', provider:'google'},
     {name:'Gemini 2.0 Flash', id:'gemini-2.0-flash', provider:'google'},
   ],
