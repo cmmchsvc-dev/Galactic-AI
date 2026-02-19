@@ -2618,7 +2618,24 @@ class GalacticGateway:
         if key and key not in ("NONE", ""):
             return key
         providers_cfg = self.core.config.get('providers', {})
-        return providers_cfg.get(provider, {}).get('apiKey', '') or providers_cfg.get(provider, {}).get('api_key', '')
+        provider_cfg = providers_cfg.get(provider, {})
+
+        # NVIDIA uses a per-model keys: sub-dict (one nvapi key per model type).
+        # Match the active model name against each nickname in keys: and return the
+        # first one whose nickname appears anywhere in the model string.
+        # e.g. model "moonshot-ai/kimi-k2-instruct" → matches nickname "kimi"
+        if provider == 'nvidia':
+            model_str = (getattr(self.llm, 'model', '') or '').lower()
+            nvidia_keys = provider_cfg.get('keys', {}) or {}
+            for nickname, nvapi_key in nvidia_keys.items():
+                if nvapi_key and nickname.lower() in model_str:
+                    return nvapi_key
+            # Fall back to first non-empty key if no nickname matched
+            for nvapi_key in nvidia_keys.values():
+                if nvapi_key:
+                    return nvapi_key
+
+        return provider_cfg.get('apiKey', '') or provider_cfg.get('api_key', '')
 
     def _get_model_override(self, key, default=None):
         """Return a per-model override value for the active model, falling back to global config."""
