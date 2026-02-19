@@ -196,17 +196,27 @@ personality:
 
 ## Updating
 
-Extract the new release ZIP into your existing folder and run the updater. Your config, API keys, memory files, and chat history are **never touched**.
+One command — pulls the latest release directly from GitHub, no manual download needed:
 
 ```powershell
-# Windows
+# Windows (run from your Galactic AI folder)
 .\update.ps1
 
 # Linux / macOS
 ./update.sh
 ```
 
-The updater backs up your `config.yaml` before touching anything.
+Pin to a specific version if needed:
+```powershell
+.\update.ps1 -Version v0.7.1   # Windows
+./update.sh v0.7.1              # Linux / macOS
+```
+
+The updater will:
+- Check GitHub for the latest release and skip if you're already up to date
+- Back up your `config.yaml` to `logs/backups/` before touching anything
+- Update all source files while **never touching** your config, API keys, memory files, or chat history
+- Run `pip install --upgrade` to keep dependencies current
 
 ---
 
@@ -289,6 +299,6 @@ MIT License — see LICENSE file.
 
 | Version | Highlights |
 |---|---|
-| **v0.7.1** | True persistent memory (MEMORY.md auto-injection), voice I/O (Whisper STT + TTS), chat persistence, 7-step setup wizard with personality config |
+| **v0.7.1** | Persistent memory, voice I/O, chat persistence, personality config, Ollama timeout fix (10 min for local models + browser tools), max_turns raised to 50, one-command auto-updater |
 | **v0.7.0** | 14 AI providers, Gemini dupe fix, TTS config, OpenClaw migration step, expanded installer |
 | **v0.6.0-Alpha** | Initial public release — 72 tools, 5 providers, Telegram bot, web control deck |
