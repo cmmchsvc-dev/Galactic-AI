@@ -9,6 +9,9 @@ aliases:
   claude-opus: anthropic/claude-opus-4-6
   grok: xai/grok-4
   deepseek: nvidia/deepseek-ai/deepseek-v3.2
+  kimi: nvidia/moonshot-ai/kimi-k2-instruct
+  qwen480: nvidia/qwen/qwen3-coder-480b-a35b-instruct
+  nemotron: nvidia/nvidia/llama-3.3-nemotron-super-49b-v1
   llama: ollama/llama3.3:70b
   qwen: ollama/qwen3:8b
 
@@ -76,14 +79,8 @@ providers:
     apiKey: ""              # Get from https://platform.minimaxi.com
     baseUrl: https://api.minimax.io/v1
   nvidia:
+    apiKey: ""              # One key for ALL 500+ models — get from https://build.nvidia.com
     baseUrl: https://integrate.api.nvidia.com/v1
-    keys:
-      deepseek: ""          # Get from https://build.nvidia.com
-      glm: ""
-      kimi: ""              # Kimi K1.5 / older Kimi models
-      kimi2: ""             # Kimi K2 / Kimi 2.5 models
-      qwen: ""
-      stepfun: ""
   ollama:
     baseUrl: http://127.0.0.1:11434/v1   # Local Ollama server (https://ollama.com)
 
@@ -112,7 +109,7 @@ system:
   heartbeat_interval: 5
   name: Galactic AI
   port: 9999
-  version: 0.7.1
+  version: 0.7.2
 
 web:
   enabled: true

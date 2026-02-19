@@ -291,15 +291,26 @@ body::after{content:"";position:fixed;inset:0;background:linear-gradient(rgba(18
           💡 Ollama must be running locally. Install from <a href="https://ollama.com" target="_blank" style="color:var(--cyan)">ollama.com</a> then run <code style="background:var(--bg3);padding:2px 6px;border-radius:3px">ollama pull qwen3:8b</code>
         </div>
       </div>
-      <!-- NVIDIA multi-key field -->
+      <!-- NVIDIA single-key field -->
       <div id="sw-nvidia-wrap" style="display:none;margin-bottom:18px">
-        <label style="font-size:0.8em;color:var(--dim);display:block;margin-bottom:6px">NVIDIA AI Foundation API Keys — <a href="https://build.nvidia.com" target="_blank" style="color:var(--cyan)">build.nvidia.com</a></label>
-        <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">
-          <div><label style="font-size:0.72em;color:var(--dim)">DeepSeek key</label><input id="sw-nvidia-ds-key" type="password" placeholder="nvapi-..." style="width:100%;padding:8px 12px;background:var(--bg3);border:1px solid var(--border);border-radius:6px;color:var(--text);font-size:0.82em;margin-top:3px"></div>
-          <div><label style="font-size:0.72em;color:var(--dim)">Qwen key</label><input id="sw-nvidia-qw-key" type="password" placeholder="nvapi-..." style="width:100%;padding:8px 12px;background:var(--bg3);border:1px solid var(--border);border-radius:6px;color:var(--text);font-size:0.82em;margin-top:3px"></div>
-          <div><label style="font-size:0.72em;color:var(--dim)">Kimi key</label><input id="sw-nvidia-kimi-key" type="password" placeholder="nvapi-..." style="width:100%;padding:8px 12px;background:var(--bg3);border:1px solid var(--border);border-radius:6px;color:var(--text);font-size:0.82em;margin-top:3px"></div>
-          <div><label style="font-size:0.72em;color:var(--dim)">GLM key</label><input id="sw-nvidia-glm-key" type="password" placeholder="nvapi-..." style="width:100%;padding:8px 12px;background:var(--bg3);border:1px solid var(--border);border-radius:6px;color:var(--text);font-size:0.82em;margin-top:3px"></div>
+        <label style="font-size:0.8em;color:var(--dim);display:block;margin-bottom:6px">
+          NVIDIA API Key — one key works for <strong>all 500+ models</strong> on
+          <a href="https://build.nvidia.com/models" target="_blank" style="color:var(--cyan)">build.nvidia.com</a>
+        </label>
+        <input id="sw-nvidia-key" type="password" placeholder="nvapi-..." style="width:100%;padding:10px 14px;background:var(--bg3);border:1px solid var(--border);border-radius:8px;color:var(--text);font-size:0.9em;margin-bottom:10px">
+        <label style="font-size:0.8em;color:var(--dim);display:block;margin-bottom:6px">
+          Model — pick a popular one or paste any model ID from
+          <a href="https://build.nvidia.com/models" target="_blank" style="color:var(--cyan)">build.nvidia.com</a>:
+        </label>
+        <div style="display:flex;flex-wrap:wrap;gap:6px;margin-bottom:8px">
+          <button type="button" onclick="swNvSet('deepseek-ai/deepseek-v3.2')"         style="padding:4px 10px;background:var(--bg3);border:1px solid var(--border);border-radius:5px;color:var(--cyan);font-size:0.75em;cursor:pointer">DeepSeek V3.2</button>
+          <button type="button" onclick="swNvSet('qwen/qwen3-coder-480b-a35b-instruct')" style="padding:4px 10px;background:var(--bg3);border:1px solid var(--border);border-radius:5px;color:var(--cyan);font-size:0.75em;cursor:pointer">Qwen3-Coder 480B</button>
+          <button type="button" onclick="swNvSet('moonshot-ai/kimi-k2-instruct')"       style="padding:4px 10px;background:var(--bg3);border:1px solid var(--border);border-radius:5px;color:var(--cyan);font-size:0.75em;cursor:pointer">Kimi K2</button>
+          <button type="button" onclick="swNvSet('meta/llama-3.3-70b-instruct')"        style="padding:4px 10px;background:var(--bg3);border:1px solid var(--border);border-radius:5px;color:var(--cyan);font-size:0.75em;cursor:pointer">Llama 3.3 70B</button>
+          <button type="button" onclick="swNvSet('mistralai/mistral-large-2-instruct')" style="padding:4px 10px;background:var(--bg3);border:1px solid var(--border);border-radius:5px;color:var(--cyan);font-size:0.75em;cursor:pointer">Mistral Large 2</button>
+          <button type="button" onclick="swNvSet('nvidia/llama-3.3-nemotron-super-49b-v1')" style="padding:4px 10px;background:var(--bg3);border:1px solid var(--border);border-radius:5px;color:var(--cyan);font-size:0.75em;cursor:pointer">Nemotron 49B</button>
         </div>
+        <input id="sw-nvidia-model" type="text" placeholder="or paste any model ID, e.g. deepseek-ai/deepseek-v3.2" style="width:100%;padding:8px 12px;background:var(--bg3);border:1px solid var(--border);border-radius:6px;color:var(--text);font-size:0.82em">
       </div>
       <button onclick="swNextStep(1,2)" style="width:100%;padding:12px;background:linear-gradient(135deg,var(--cyan),var(--pink));border:none;border-radius:10px;color:#000;font-weight:700;cursor:pointer;font-size:0.95em">Next →</button>
     </div>
@@ -830,9 +841,18 @@ const SW_MODEL_HINTS = {
   kimi:        {placeholder:'kimi-k2.5', link:'Get key: <a href="https://platform.moonshot.cn/console/api-keys" target="_blank" style="color:var(--cyan)">platform.moonshot.cn</a>'},
   zai:         {placeholder:'glm-4-plus', link:'Get key: <a href="https://open.bigmodel.cn/usercenter/apikeys" target="_blank" style="color:var(--cyan)">open.bigmodel.cn</a>'},
   minimax:     {placeholder:'MiniMax-Text-01', link:'Get key: <a href="https://platform.minimaxi.com" target="_blank" style="color:var(--cyan)">platform.minimaxi.com</a>'},
-  nvidia:      {placeholder:'deepseek-ai/deepseek-v3.2', link:'Get keys: <a href="https://build.nvidia.com" target="_blank" style="color:var(--cyan)">build.nvidia.com</a>'},
+  nvidia:      {placeholder:'deepseek-ai/deepseek-v3.2', link:'500+ models available: <a href="https://build.nvidia.com/models" target="_blank" style="color:var(--cyan)">build.nvidia.com/models</a>'},
   ollama:      {placeholder:'qwen3:8b', link:''}
 };
+
+// Quick-pick button helper for NVIDIA model chips
+function swNvSet(modelId) {
+  const el = document.getElementById('sw-nvidia-model');
+  if (el) { el.value = modelId; el.focus(); }
+  // Also update the main sw-model field so it is saved correctly
+  const swm = document.getElementById('sw-model');
+  if (swm) swm.value = modelId;
+}
 
 function swUpdateModelHint() {
   const prov = document.getElementById('sw-provider').value;
@@ -903,7 +923,10 @@ async function swSave() {
   btn.disabled = true;
 
   const prov = document.getElementById('sw-provider').value;
-  const modelVal = document.getElementById('sw-model').value.trim();
+  // For NVIDIA, prefer the dedicated model field / quick-pick chip over sw-model
+  const nvModelEl = document.getElementById('sw-nvidia-model');
+  const nvModelVal = nvModelEl ? nvModelEl.value.trim() : '';
+  const modelVal = (prov === 'nvidia' && nvModelVal) ? nvModelVal : document.getElementById('sw-model').value.trim();
   const modelFinal = modelVal || document.getElementById('sw-model').placeholder.split(' ')[0];
 
   function gv(id) { const el = document.getElementById(id); return el ? el.value.trim() : ''; }
@@ -927,11 +950,9 @@ async function swSave() {
     kimi_key: gv('sw-kimi-key'),
     zai_key: gv('sw-zai-key'),
     minimax_key: gv('sw-minimax-key'),
-    // NVIDIA keys
-    nvidia_deepseek_key: gv('sw-nvidia-ds-key'),
-    nvidia_qwen_key: gv('sw-nvidia-qw-key'),
-    nvidia_kimi_key: gv('sw-nvidia-kimi-key'),
-    nvidia_glm_key: gv('sw-nvidia-glm-key'),
+    // NVIDIA single key + optional custom model
+    nvidia_key: gv('sw-nvidia-key'),
+    nvidia_model: gv('sw-nvidia-model'),
     ollama_url: gv('sw-ollama-url') || 'http://127.0.0.1:11434/v1',
     // Telegram
     telegram_token: gv('sw-tg-token'),
@@ -2182,19 +2203,12 @@ function sendChat() { sendChatMain(); }
                 if 'baseUrl' not in cfg['providers'][prov]:
                     cfg['providers'][prov]['baseUrl'] = base_url
 
-        # NVIDIA keys
-        nv_keys = {}
-        for slot in ['deepseek', 'qwen', 'glm', 'kimi', 'stepfun']:
-            k = data.get(f'nvidia_{slot}_key', '')
-            if k:
-                nv_keys[slot] = k
-        if nv_keys:
+        # NVIDIA — single unified API key (one key works for all 500+ models)
+        nv_key = data.get('nvidia_key', '').strip()
+        if nv_key:
             if 'nvidia' not in cfg['providers']:
                 cfg['providers']['nvidia'] = {}
-            # Merge new keys into existing, don't wipe others
-            existing_keys = cfg['providers']['nvidia'].get('keys', {})
-            existing_keys.update(nv_keys)
-            cfg['providers']['nvidia']['keys'] = existing_keys
+            cfg['providers']['nvidia']['apiKey'] = nv_key
             cfg['providers']['nvidia']['baseUrl'] = 'https://integrate.api.nvidia.com/v1'
 
         # Ollama URL
