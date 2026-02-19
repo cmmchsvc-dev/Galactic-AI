@@ -109,7 +109,7 @@ system:
   heartbeat_interval: 5
   name: Galactic AI
   port: 9999
-  version: 0.7.2
+  version: 0.7.3
 
 web:
   enabled: true

@@ -235,7 +235,7 @@ class GalacticCore:
 ║   ╚═════╝ ╚═╝  ╚═╝╚══════╝╚═╝  ╚═╝ ╚═════╝   ╚═╝   ╚═╝ ╚═════╝║
 ║                                                               ║
 ║               * * *  AUTOMATION SUITE  * * *                  ║
-║                      v{self.config.get('system',{}).get('version','?')}-Alpha (AsyncIO)                   ║
+║                      v{self.config.get('system',{}).get('version','?')}                                   ║
 ║                   Sovereign - Universal - Fast                ║
 ║                                                               ║
 ╚═══════════════════════════════════════════════════════════════╝
