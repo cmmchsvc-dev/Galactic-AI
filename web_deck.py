@@ -359,19 +359,29 @@ body::after{content:"";position:fixed;inset:0;background:linear-gradient(rgba(18
         <div style="font-size:0.72em;letter-spacing:2px;color:var(--cyan);margin-bottom:10px">🔊 TEXT-TO-SPEECH (OPTIONAL)</div>
         <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px">
           <div>
-            <label style="font-size:0.75em;color:var(--dim);display:block;margin-bottom:4px">ElevenLabs API Key <a href="https://elevenlabs.io" target="_blank" style="color:var(--cyan)">[get key]</a></label>
-            <input id="sw-elevenlabs-key" type="password" placeholder="xi_... (blank = free gTTS)" style="width:100%;padding:8px 12px;background:var(--bg3);border:1px solid var(--border);border-radius:7px;color:var(--text);font-size:0.85em">
+            <label style="font-size:0.75em;color:var(--dim);display:block;margin-bottom:4px">ElevenLabs API Key <a href="https://elevenlabs.io" target="_blank" style="color:var(--cyan)">[get key]</a> <span style="color:var(--dim)">(optional)</span></label>
+            <input id="sw-elevenlabs-key" type="password" placeholder="xi_... (leave blank for free voices)" style="width:100%;padding:8px 12px;background:var(--bg3);border:1px solid var(--border);border-radius:7px;color:var(--text);font-size:0.85em">
           </div>
           <div>
             <label style="font-size:0.75em;color:var(--dim);display:block;margin-bottom:4px">TTS Voice</label>
             <select id="sw-elevenlabs-voice" style="width:100%;padding:8px 12px;background:var(--bg3);border:1px solid var(--border);border-radius:7px;color:var(--text);font-size:0.85em">
-              <option value="nova">Nova (Rachel) — warm female</option>
-              <option value="byte">Byte (Adam) — AI assistant male</option>
-              <option value="gtts">gTTS — free fallback (no key needed)</option>
+              <optgroup label="FREE — Microsoft Neural (no key needed)">
+                <option value="Guy" selected>Guy — natural male (free) ✓</option>
+                <option value="Davis">Davis — expressive male (free)</option>
+                <option value="Aria">Aria — natural female (free)</option>
+                <option value="Jenny">Jenny — friendly female (free)</option>
+              </optgroup>
+              <optgroup label="Premium — ElevenLabs (API key required)">
+                <option value="Byte">Byte (Adam) — AI male</option>
+                <option value="Nova">Nova (Rachel) — warm female</option>
+              </optgroup>
+              <optgroup label="Fallback">
+                <option value="gtts">gTTS — basic female (free)</option>
+              </optgroup>
             </select>
           </div>
         </div>
-        <div style="margin-top:6px;font-size:0.72em;color:var(--dim)">💡 Leave blank to use free gTTS. ElevenLabs provides higher quality voices.</div>
+        <div style="margin-top:6px;font-size:0.72em;color:var(--dim)">💡 Free Microsoft voices work without any API key. ElevenLabs provides the highest quality.</div>
       </div>
       <div style="display:flex;gap:10px;margin-top:20px">
         <button onclick="swNextStep(2,1)" style="flex:0.4;padding:11px;background:var(--bg3);border:1px solid var(--border);border-radius:10px;color:var(--text);cursor:pointer;font-size:0.9em">← Back</button>
@@ -899,7 +909,7 @@ async function swSave() {
     telegram_chat_id: gv('sw-tg-chat'),
     // ElevenLabs TTS
     elevenlabs_key: gv('sw-elevenlabs-key'),
-    elevenlabs_voice: gv('sw-elevenlabs-voice') || 'nova',
+    elevenlabs_voice: gv('sw-elevenlabs-voice') || 'Guy',
     persona_mode: (document.getElementById('sw-persona-custom').checked ? 'custom' : document.getElementById('sw-persona-generic').checked ? 'generic' : 'byte'),
     persona_name: (document.getElementById('sw-persona-name') || {}).value || '',
     persona_soul: (document.getElementById('sw-persona-soul') || {}).value || '',
@@ -991,7 +1001,8 @@ function swFillReview() {
   document.getElementById('sw-review-provider').textContent = prov;
   document.getElementById('sw-review-model').textContent = modelVal;
   document.getElementById('sw-review-extras').textContent = extraProviders.length ? extraProviders.join(', ') : 'None';
-  document.getElementById('sw-review-tts').textContent = elevenlabsKey ? 'ElevenLabs (' + voice + ')' : 'gTTS (free fallback)';
+  const freeVoices = ['Guy','Davis','Aria','Jenny','gtts'];
+  document.getElementById('sw-review-tts').textContent = (elevenlabsKey && !freeVoices.includes(voice)) ? 'ElevenLabs (' + voice + ')' : 'Free voice: ' + voice;
   document.getElementById('sw-review-pw').textContent = pw ? '✓ Set' : 'None (open access)';
   document.getElementById('sw-review-tg').textContent = tgToken ? '✓ Configured' : 'Not configured';
   const personaMode = document.getElementById('sw-persona-custom').checked ? 'Custom' : document.getElementById('sw-persona-generic').checked ? 'Generic' : 'Byte';
