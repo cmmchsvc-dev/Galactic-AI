@@ -6,7 +6,7 @@ from memory_module import GalacticMemory
 def imprint_workspace():
     """Ingests the user's workspace soul into the local Galactic Memory."""
     mem = GalacticMemory()
-    workspace_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', 'workspace')
+    workspace_path = "C:\\Users\\Chesley\\.openclaw\\workspace"
     files_to_imprint = ["MEMORY.md", "USER.md", "IDENTITY.md", "SOUL.md"]
     
     print("=== GALACTIC IMPRINT: Starting Knowledge Ingestion ===")

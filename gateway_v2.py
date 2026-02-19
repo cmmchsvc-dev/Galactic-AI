@@ -2227,7 +2227,7 @@ class GalacticGateway:
         messages = [{"role": "system", "content": system_prompt}] + self.history[-5:]
 
         # 2. ReAct Loop
-        max_turns = 15
+        max_turns = 30
         turn_count = 0
         last_tool_call = None  # Track last (tool_name, json_args_str) to prevent duplicate calls
 
