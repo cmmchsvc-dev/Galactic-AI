@@ -116,17 +116,13 @@ class ModelManager:
     
     def _set_api_key(self, provider):
         """Set correct API key for provider."""
-        if provider == "google":
-            self.core.gateway.llm.api_key = self.core.config['providers']['google']['apiKey']
-        elif provider == "anthropic":
-            self.core.gateway.llm.api_key = self.core.config['providers']['anthropic']['apiKey']
-        elif provider == "nvidia":
+        providers_cfg = self.core.config.get('providers', {})
+
+        if provider == "nvidia":
             # Route to the correct NVIDIA API key based on the active model name
-            keys = self.core.config['providers']['nvidia']['keys']
+            keys = providers_cfg.get('nvidia', {}).get('keys', {})
             model = self.core.gateway.llm.model or ''
             model_lower = model.lower()
-
-            # Map model name fragments to their key slot in config
             key_routing = [
                 (['qwen'],                  'qwen'),
                 (['z-ai', 'glm'],           'glm'),
@@ -139,13 +135,16 @@ class ModelManager:
                 if any(frag in model_lower for frag in fragments):
                     selected_key = keys.get(key_name)
                     break
-
-            # Fallback: first available key
-            self.core.gateway.llm.api_key = selected_key or keys[list(keys.keys())[0]]
-        elif provider == "xai":
-            self.core.gateway.llm.api_key = self.core.config['providers']['xai']['apiKey']
+            all_keys = list(keys.values())
+            self.core.gateway.llm.api_key = selected_key or (all_keys[0] if all_keys else "NONE")
         elif provider == "ollama":
             self.core.gateway.llm.api_key = "NONE"
+        else:
+            # All other providers (google, anthropic, openai, xai, groq, mistral, cerebras,
+            # openrouter, huggingface, kimi, zai, minimax) use apiKey field
+            prov_cfg = providers_cfg.get(provider, {})
+            key = prov_cfg.get('apiKey', '') or prov_cfg.get('api_key', '') or prov_cfg.get('apikey', '')
+            self.core.gateway.llm.api_key = key or "NONE"
     
     async def set_primary(self, provider, model):
         """Set new primary model and switch to it."""
@@ -197,12 +196,14 @@ class ModelManager:
     # Mapping: task_type -> (provider, model_or_None)
     # model=None means "use best available discovered Ollama model"
     SMART_ROUTING_TABLE = {
-        "coding": ("nvidia",    "qwen/qwen3-coder-480b-a35b-instruct"),
-        "reasoning": ("nvidia", "deepseek-ai/deepseek-v3.2"),
-        "creative": ("xai",     "grok-4"),
-        "local": ("ollama",     None),
-        "quick": ("google",     "gemini-2.5-flash"),
-        "vision": ("google",    "gemini-2.5-flash"),
+        "coding":    ("nvidia",    "qwen/qwen3-coder-480b-a35b-instruct"),
+        "reasoning": ("nvidia",    "deepseek-ai/deepseek-v3.2"),
+        "creative":  ("xai",       "grok-4"),
+        "local":     ("ollama",    None),
+        "quick":     ("groq",      "llama-4-scout-17b-16e-instruct"),
+        "vision":    ("google",    "gemini-2.5-flash"),
+        "math":      ("openai",    "o3-mini"),
+        "chat":      ("google",    "gemini-2.5-flash"),
     }
 
     SMART_ROUTING_KEYWORDS = {

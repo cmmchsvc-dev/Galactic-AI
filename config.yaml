@@ -28,6 +28,8 @@ models:
   streaming: true
   context_window_trim: true
   smart_routing: false
+  max_tokens: 0                # Override max output tokens (0 = provider default)
+  context_window: 0            # Override context window size (0 = auto-detect)
 
 paths:
   logs: ./logs
@@ -42,6 +44,36 @@ providers:
   google:
     apiKey: ""              # Get from https://aistudio.google.com/apikey
     baseUrl: https://generativelanguage.googleapis.com/v1beta
+  openai:
+    apiKey: ""              # Get from https://platform.openai.com/api-keys
+    baseUrl: https://api.openai.com/v1
+  xai:
+    apiKey: ""              # Get from https://console.x.ai
+    baseUrl: https://api.x.ai/v1
+  groq:
+    apiKey: ""              # Get from https://console.groq.com/keys (free tier available)
+    baseUrl: https://api.groq.com/openai/v1
+  mistral:
+    apiKey: ""              # Get from https://console.mistral.ai/api-keys
+    baseUrl: https://api.mistral.ai/v1
+  cerebras:
+    apiKey: ""              # Get from https://cloud.cerebras.ai
+    baseUrl: https://api.cerebras.ai/v1
+  openrouter:
+    apiKey: ""              # Get from https://openrouter.ai/keys (100+ models, one key)
+    baseUrl: https://openrouter.ai/api/v1
+  huggingface:
+    apiKey: ""              # Get from https://huggingface.co/settings/tokens (free tier)
+    baseUrl: https://api-inference.huggingface.co/v1
+  kimi:
+    apiKey: ""              # Get from https://platform.moonshot.cn/console/api-keys
+    baseUrl: https://api.kimi.com/v1
+  zai:
+    apiKey: ""              # Get from https://open.bigmodel.cn/usercenter/apikeys
+    baseUrl: https://api.z.ai/api/paas/v4
+  minimax:
+    apiKey: ""              # Get from https://platform.minimaxi.com
+    baseUrl: https://api.minimax.io/v1
   nvidia:
     baseUrl: https://integrate.api.nvidia.com/v1
     keys:
@@ -52,9 +84,6 @@ providers:
       stepfun: ""
   ollama:
     baseUrl: http://127.0.0.1:11434/v1   # Local Ollama server (https://ollama.com)
-  xai:
-    apiKey: ""              # Get from https://console.x.ai
-    baseUrl: https://api.x.ai/v1
 
 browser:
   engine: chromium    # chromium | firefox | webkit
@@ -64,11 +93,21 @@ telegram:
   bot_token: ""       # Optional: get from @BotFather on Telegram
   admin_chat_id: ""   # Your Telegram user ID (message @userinfobot)
 
+elevenlabs:
+  api_key: ""        # Optional: get from elevenlabs.io for premium TTS voices
+  voice: nova        # nova (Rachel) | byte (Adam) | gtts (free fallback)
+
+personality:
+  mode: byte          # byte | custom | generic | files
+  name: Byte
+  soul: ""            # Only used when mode=custom
+  user_context: ""    # Only used when mode=custom
+
 system:
   heartbeat_interval: 5
   name: Galactic AI
   port: 9999
-  version: 0.6.0-Alpha
+  version: 0.7.1
 
 web:
   enabled: true
