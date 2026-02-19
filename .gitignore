@@ -82,6 +82,7 @@ social-media-promo.md
 *.csv
 *.bat
 *.html
+!index.html
 *.jpg
 *.svg
 *.docx
