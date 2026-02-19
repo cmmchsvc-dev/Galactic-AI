@@ -95,7 +95,8 @@ telegram:
 
 elevenlabs:
   api_key: ""        # Optional: get from elevenlabs.io for premium TTS voices
-  voice: nova        # nova (Rachel) | byte (Adam) | gtts (free fallback)
+  voice: Guy         # FREE: Guy (male) | Davis (male) | Aria (female) | Jenny (female)
+                     # Premium (ElevenLabs key required): Nova (Rachel) | Byte (Adam)
 
 personality:
   mode: byte          # byte | custom | generic | files
