@@ -5,8 +5,10 @@
 aliases:
   gemini-flash: google/gemini-2.5-flash
   gemini-pro: google/gemini-2.5-pro
-  claude-sonnet: anthropic/claude-sonnet-4-5
+  claude: anthropic/claude-sonnet-4-6
+  claude-sonnet: anthropic/claude-sonnet-4-6
   claude-opus: anthropic/claude-opus-4-6
+  claude-haiku: anthropic/claude-haiku-4-5
   grok: xai/grok-4
   deepseek: nvidia/deepseek-ai/deepseek-v3.2
   kimi: nvidia/moonshot-ai/kimi-k2-instruct
@@ -109,7 +111,7 @@ system:
   heartbeat_interval: 5
   name: Galactic AI
   port: 9999
-  version: 0.7.3
+  version: 0.7.4
 
 web:
   enabled: true
