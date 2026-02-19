@@ -80,7 +80,8 @@ providers:
     keys:
       deepseek: ""          # Get from https://build.nvidia.com
       glm: ""
-      kimi: ""
+      kimi: ""              # Kimi K1.5 / older Kimi models
+      kimi2: ""             # Kimi K2 / Kimi 2.5 models
       qwen: ""
       stepfun: ""
   ollama:
