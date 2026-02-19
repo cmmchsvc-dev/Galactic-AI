@@ -60,10 +60,66 @@ class TelegramBridge:
             with open(audio_path, "rb") as audio:
                 files = {"audio": audio}
                 data = {"chat_id": chat_id}
-                if caption: data["caption"] = caption
+                if caption: data["caption"] = caption[:1024]  # Telegram caption limit
                 await self.client.post(url, data=data, files=files)
         except Exception as e:
             await self.core.log(f"Telegram Audio Error: {e}", priority=1)
+
+    async def send_voice(self, chat_id, voice_path, caption=None):
+        """Send an OGG voice message to Telegram (shows as voice note with waveform)."""
+        try:
+            url = f"{self.api_url}/sendVoice"
+            with open(voice_path, "rb") as voice:
+                files = {"voice": voice}
+                data = {"chat_id": chat_id}
+                if caption: data["caption"] = caption[:1024]
+                await self.client.post(url, data=data, files=files)
+        except Exception as e:
+            await self.core.log(f"Telegram Voice Error: {e}", priority=1)
+
+    async def _transcribe_audio(self, audio_path):
+        """Transcribe audio using OpenAI Whisper API (preferred) or return None."""
+        # Try OpenAI Whisper API
+        openai_key = self.core.config.get('providers', {}).get('openai', {}).get('apiKey', '')
+        if openai_key:
+            try:
+                async with httpx.AsyncClient(timeout=30.0) as client:
+                    with open(audio_path, 'rb') as f:
+                        r = await client.post(
+                            'https://api.openai.com/v1/audio/transcriptions',
+                            headers={'Authorization': f'Bearer {openai_key}'},
+                            files={'file': (os.path.basename(audio_path), f, 'audio/ogg')},
+                            data={'model': 'whisper-1'}
+                        )
+                    if r.status_code == 200:
+                        text = r.json().get('text', '').strip()
+                        if text:
+                            await self.core.log(f"[STT] Whisper transcribed: {text[:80]}...", priority=2)
+                            return text
+            except Exception as e:
+                await self.core.log(f"Whisper STT error: {e}", priority=2)
+
+        # Try Groq Whisper (free, fast) — same OpenAI-compatible endpoint
+        groq_key = self.core.config.get('providers', {}).get('groq', {}).get('apiKey', '')
+        if groq_key:
+            try:
+                async with httpx.AsyncClient(timeout=30.0) as client:
+                    with open(audio_path, 'rb') as f:
+                        r = await client.post(
+                            'https://api.groq.com/openai/v1/audio/transcriptions',
+                            headers={'Authorization': f'Bearer {groq_key}'},
+                            files={'file': (os.path.basename(audio_path), f, 'audio/ogg')},
+                            data={'model': 'whisper-large-v3'}
+                        )
+                    if r.status_code == 200:
+                        text = r.json().get('text', '').strip()
+                        if text:
+                            await self.core.log(f"[STT] Groq Whisper transcribed: {text[:80]}...", priority=2)
+                            return text
+            except Exception as e:
+                await self.core.log(f"Groq STT error: {e}", priority=2)
+
+        return None  # No transcription available
 
     async def send_typing(self, chat_id):
         try:
@@ -504,7 +560,7 @@ class TelegramBridge:
         typing_task = None
         try:
             typing_task = asyncio.create_task(self.keep_typing(chat_id))
-            response = await self.core.gateway.speak(text)
+            response = await self.core.gateway.speak(text, chat_id=chat_id)
         except Exception as e:
             await self.core.log(f"Processing Error: {e}", priority=1)
             response = f"🌌 **Byte Interference:** `{str(e)}`"
@@ -527,7 +583,15 @@ class TelegramBridge:
                 })
             except Exception:
                 pass  # Non-fatal — web UI might not be connected
-            # Send response
+            # Check if the AI used TTS tool — deliver the audio file
+            voice_file = getattr(self.core.gateway, 'last_voice_file', None)
+            if voice_file and os.path.exists(voice_file):
+                try:
+                    await self.send_audio(chat_id, voice_file, caption=response[:200] if response else None)
+                    self.core.gateway.last_voice_file = None
+                except Exception as e:
+                    await self.core.log(f"TTS Delivery Error: {e}", priority=1)
+            # Send text response (always — user sees text alongside any audio)
             try:
                 await self.send_message(chat_id, response)
             except Exception as e:
@@ -579,7 +643,7 @@ class TelegramBridge:
 
             await self.core.log(f"[Telegram] User sent file: {file_name} ({file_size} bytes)", priority=2)
 
-            response = await self.core.gateway.speak(full_msg)
+            response = await self.core.gateway.speak(full_msg, chat_id=chat_id)
         except Exception as e:
             await self.core.log(f"Document Error: {e}", priority=1)
             response = f"🌌 **Byte Interference:** `{str(e)}`"
@@ -643,7 +707,7 @@ class TelegramBridge:
                 full_msg += f"{caption}\n\n"
             full_msg += f"Analyze the image at path: {temp_file_path}"
 
-            response = await self.core.gateway.speak(full_msg)
+            response = await self.core.gateway.speak(full_msg, chat_id=chat_id)
         except Exception as e:
             await self.core.log(f"Photo Error: {e}", priority=1)
             response = f"🌌 **Byte Interference (Photo):** `{str(e)}`"
@@ -671,12 +735,14 @@ class TelegramBridge:
                 await self.core.log(f"Send Error: {e}", priority=1)
 
     async def _handle_audio(self, chat_id, msg):
-        """Download a Telegram audio/voice attachment and process."""
+        """Download a Telegram audio/voice attachment, transcribe it, process, and reply with voice."""
         typing_task = None
         temp_file_path = None
+        response = ""
+        voice_reply_sent = False
         try:
             typing_task = asyncio.create_task(self.keep_typing(chat_id))
-            
+
             # Determine if it's a voice or audio message
             audio_data = msg.get("voice") or msg.get("audio")
             if not audio_data:
@@ -685,10 +751,10 @@ class TelegramBridge:
 
             file_size = audio_data.get("file_size", 0)
             file_id = audio_data["file_id"]
-            mime_type = audio_data.get("mime_type", "audio/ogg") # Telegram voice is usually ogg
+            mime_type = audio_data.get("mime_type", "audio/ogg")
             caption = msg.get("caption", "")
-            
-            file_extension = ".ogg" if "ogg" in mime_type else ".mp3" # Default to ogg, or mp3
+
+            file_extension = ".ogg" if "ogg" in mime_type else ".mp3"
 
             # Get file path from Telegram
             r = await self.client.get(f"{self.api_url}/getFile", params={"file_id": file_id})
@@ -707,16 +773,53 @@ class TelegramBridge:
             with tempfile.NamedTemporaryFile(delete=False, suffix=file_extension) as temp_file:
                 temp_file.write(raw)
                 temp_file_path = temp_file.name
-            
+
             await self.core.log(f"[Telegram] User sent audio: {os.path.basename(temp_file_path)} ({file_size} bytes, {mime_type})", priority=2)
 
-            # Inform user that transcription is not yet directly supported
-            full_msg = f"[Attached audio: {os.path.basename(temp_file_path)}]\n---\n"
-            if caption:
-                full_msg += f"{caption}\n\n"
-            full_msg += "I've received the audio, but direct transcription isn't supported yet. I can store this information or if you tell me what you think it says, I can use that context."
+            # ─── Step 1: Transcribe using STT (Whisper/Groq) ───
+            transcription = await self._transcribe_audio(temp_file_path)
 
-            response = await self.core.gateway.speak(full_msg)
+            if not transcription:
+                # Tell the user directly — don't run this through the AI
+                has_openai = bool(self.core.config.get('providers', {}).get('openai', {}).get('apiKey', ''))
+                has_groq = bool(self.core.config.get('providers', {}).get('groq', {}).get('apiKey', ''))
+                if not has_openai and not has_groq:
+                    no_key_msg = (
+                        "🎤 Voice received, but I can't transcribe it yet.\n\n"
+                        "To enable voice messages, add an OpenAI or Groq API key in the Control Deck → Setup Wizard → Step 2.\n\n"
+                        "Groq transcription is free: https://console.groq.com/keys"
+                    )
+                else:
+                    no_key_msg = "🎤 Got your voice message, but transcription failed. Please try again."
+                voice_reply_sent = True  # prevents double-send in finally block
+                await self.send_message(chat_id, no_key_msg)
+                return
+
+            full_msg = f"[Voice message from user]: {transcription}"
+            if caption:
+                full_msg += f"\n{caption}"
+
+            # ─── Step 2: Get AI response ───
+            response = await self.core.gateway.speak(full_msg, chat_id=chat_id)
+
+            # ─── Step 3: Voice in → Voice out (auto-TTS with male Byte voice) ───
+            if transcription and hasattr(self.core, 'gateway'):
+                try:
+                    tts_result = await self.core.gateway.tool_text_to_speech({
+                        'text': response,
+                        'voice': 'Byte'  # Male voice (Adam) for voice replies
+                    })
+                    if '[VOICE]' in str(tts_result):
+                        import re
+                        m = re.search(r'Generated speech.*?:\s*(.+\.mp3)', str(tts_result))
+                        if m:
+                            voice_path = m.group(1).strip()
+                            if os.path.exists(voice_path):
+                                await self.send_audio(chat_id, voice_path, caption=response[:200])
+                                voice_reply_sent = True
+                except Exception as e:
+                    await self.core.log(f"Auto-TTS voice reply error: {e}", priority=2)
+
         except Exception as e:
             await self.core.log(f"Audio Error: {e}", priority=1)
             response = f"🌌 **Byte Interference (Audio):** `{str(e)}`"
@@ -729,23 +832,26 @@ class TelegramBridge:
                     pass
             if temp_file_path and os.path.exists(temp_file_path):
                 os.remove(temp_file_path)
-            
+
             try:
                 await self.core.relay.emit(2, "chat_from_telegram", {
                     "user": str(chat_id),
-                    "data": f"🎶 {msg.get('caption', 'audio')}",
+                    "data": f"🎤 {msg.get('caption', 'voice message')}",
                     "response": response,
                 })
             except Exception:
                 pass
-            try:
-                await self.send_message(chat_id, response)
-            except Exception as e:
-                await self.core.log(f"Send Error: {e}", priority=1)
+
+            # Send text response only if voice reply wasn't already sent
+            if not voice_reply_sent:
+                try:
+                    await self.send_message(chat_id, response)
+                except Exception as e:
+                    await self.core.log(f"Send Error: {e}", priority=1)
 
     async def keep_typing(self, chat_id):
         """Keep sending typing indicator every 4 seconds, with 5-minute safety timeout."""
-        max_duration = 300  # 5 minutes max (safety limit)
+        max_duration = 1200  # 20 minutes max (extended for complex tasks)
         start_time = time.time()
         try:
             while True:

@@ -8,7 +8,7 @@ import time
 import logging
 from datetime import datetime
 
-# Silence noisy HTTP libraries globally — logs go to web UI, not terminal
+# Silence noisy HTTP libraries globally - logs go to web UI, not terminal
 logging.getLogger("httpx").setLevel(logging.WARNING)
 logging.getLogger("httpcore").setLevel(logging.WARNING)
 logging.getLogger("aiohttp.access").setLevel(logging.WARNING)
@@ -27,7 +27,7 @@ class GalacticRelay:
             priority, ts, raw_payload = await self.queue.get()
             payload = json.loads(raw_payload)
             payload["ts"] = ts
-            
+
             # Broadcast to all connected adapters
             disconnected = []
             for client in self.core.clients:
@@ -36,7 +36,7 @@ class GalacticRelay:
                     await client.drain()
                 except:
                     disconnected.append(client)
-            
+
             for d in disconnected:
                 self.core.clients.remove(d)
             self.queue.task_done()
@@ -72,12 +72,12 @@ class GalacticCore:
         from web_deck import GalacticWebDeck
         from scheduler import GalacticScheduler
         from model_manager import ModelManager
-        
+
         self.memory = GalacticMemory(self)
         self.gateway = GalacticGateway(self)
         self.model_manager = ModelManager(self)
 
-        # Ollama Manager — robust local model support (health, discovery, context windows)
+        # Ollama Manager - robust local model support (health, discovery, context windows)
         from ollama_manager import OllamaManager
         self.ollama_manager = OllamaManager(self)
         await self.ollama_manager.health_check()
@@ -92,26 +92,22 @@ class GalacticCore:
         self.gateway.llm.provider = initial_model['provider']
         self.gateway.llm.model = initial_model['model']
         self.model_manager._set_api_key(initial_model['provider'])
-        
-        # Initialize Plugins
-        from plugins.sniper import SniperPlugin
-        from plugins.watchdog import WatchdogPlugin
+
+        # Initialize Plugins (public release - no personal plugins)
         from plugins.shell_executor import ShellPlugin
         from plugins.browser_executor_pro import BrowserExecutorPro
         from plugins.subagent_manager import SubAgentPlugin
 
-        self.plugins.append(SniperPlugin(self))
-        self.plugins.append(WatchdogPlugin(self))
         self.plugins.append(ShellPlugin(self))
         self.plugins.append(BrowserExecutorPro(self))
         self.plugins.append(SubAgentPlugin(self))
-        
+
         # Ensure browser executor is available (after plugins are loaded)
         browser_plugin = next((p for p in self.plugins if "BrowserExecutorPro" in p.__class__.__name__), None)
         if browser_plugin:
             self.browser = browser_plugin
-        
-        await self.log("Systems initialized (Memory, Gateway, Telegram, Sniper, Watchdog, Shell, BrowserPro, SubAgents).", priority=2)
+
+        await self.log("Systems initialized (Memory, Gateway, Telegram, Shell, BrowserPro, SubAgents).", priority=2)
 
     async def imprint_workspace(self):
         """Initial memory imprint of key personality files."""
@@ -145,7 +141,7 @@ class GalacticCore:
             await writer.wait_closed()
 
     async def shutdown(self):
-        """Graceful shutdown — close all subsystems cleanly."""
+        """Graceful shutdown - close all subsystems cleanly."""
         if not self.running:
             return
         self.running = False
@@ -188,7 +184,7 @@ class GalacticCore:
 
         # Windows uses signal.signal(); Unix can use loop.add_signal_handler()
         if sys.platform == 'win32':
-            # On Windows, asyncio signal handling is limited — use signal module
+            # On Windows, asyncio signal handling is limited - use signal module
             def _win_handler(sig, frame):
                 _signal_handler()
             signal.signal(signal.SIGINT, _win_handler)
@@ -253,4 +249,4 @@ if __name__ == "__main__":
     try:
         asyncio.run(core.main_loop())
     except (KeyboardInterrupt, SystemExit):
-        pass  # Already handled by signal handler — exit cleanly
+        pass  # Already handled by signal handler - exit cleanly
