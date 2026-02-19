@@ -211,7 +211,7 @@ class GalacticCore:
                 self.loop.add_signal_handler(sig, _signal_handler)
 
         # GALACTIC AI SPLASH SCREEN
-        splash = """
+        splash = f"""
 ╔═══════════════════════════════════════════════════════════════╗
 ║                                                               ║
 ║   ██████╗  █████╗ ██╗      █████╗  ██████╗████████╗██╗ ██████╗║
@@ -222,7 +222,7 @@ class GalacticCore:
 ║   ╚═════╝ ╚═╝  ╚═╝╚══════╝╚═╝  ╚═╝ ╚═════╝   ╚═╝   ╚═╝ ╚═════╝║
 ║                                                               ║
 ║               * * *  AUTOMATION SUITE  * * *                  ║
-║                      v0.6.0-Alpha (AsyncIO)                   ║
+║                      v{self.config.get('system',{}).get('version','?')}-Alpha (AsyncIO)                   ║
 ║                   Sovereign - Universal - Fast                ║
 ║                                                               ║
 ╚═══════════════════════════════════════════════════════════════╝
@@ -232,7 +232,7 @@ class GalacticCore:
             print(splash.encode('utf-8').decode('utf-8'))
         except:
             print(splash)
-        await self.log(f"Launching {self.config['system']['name']} v0.6.0 (Async)...", priority=1)
+        await self.log(f"Launching {self.config['system']['name']} v{self.config.get('system',{}).get('version','?')} (Async)...", priority=1)
 
         await self.setup_systems()
         await self.imprint_workspace()
