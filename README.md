@@ -208,8 +208,8 @@ One command — pulls the latest release directly from GitHub, no manual downloa
 
 Pin to a specific version if needed:
 ```powershell
-.\update.ps1 -Version v0.7.1   # Windows
-./update.sh v0.7.1              # Linux / macOS
+.\update.ps1 -Version v0.7.2   # Windows
+./update.sh v0.7.2              # Linux / macOS
 ```
 
 The updater will:
@@ -299,6 +299,7 @@ MIT License — see LICENSE file.
 
 | Version | Highlights |
 |---|---|
-| **v0.7.1** | Persistent memory, voice I/O, chat persistence, personality config, Ollama timeout fix (10 min for local models + browser tools), max_turns raised to 50, one-command auto-updater |
+| **v0.7.2** | NVIDIA single-key setup (one `nvapi-` key for all 500+ models on build.nvidia.com), quick-pick model chips, custom model field, NVIDIA Bearer token fix, Ollama 10-min timeout, max_turns 50 |
+| **v0.7.1** | Persistent memory, voice I/O, chat persistence, personality config, Claude Pro OAuth, one-command auto-updater |
 | **v0.7.0** | 14 AI providers, Gemini dupe fix, TTS config, OpenClaw migration step, expanded installer |
 | **v0.6.0-Alpha** | Initial public release — 72 tools, 5 providers, Telegram bot, web control deck |
