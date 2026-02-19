@@ -100,8 +100,6 @@ class GalacticCore:
         
         # Initialize Plugins — all optional, missing files are skipped gracefully
         _BUILTIN_PLUGINS = [
-            ('plugins.sniper',              'SniperPlugin'),
-            ('plugins.watchdog',            'WatchdogPlugin'),
             ('plugins.shell_executor',      'ShellPlugin'),
             ('plugins.browser_executor_pro','BrowserExecutorPro'),
             ('plugins.subagent_manager',    'SubAgentPlugin'),
