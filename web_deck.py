@@ -520,6 +520,7 @@ body::after{content:"";position:fixed;inset:0;background:linear-gradient(rgba(18
   <div id="token-counter">↑0 ↓0 tokens</div>
   <button class="topbar-btn" onclick="clearChat()">🗑 Clear</button>
   <button class="topbar-btn" onclick="switchTab('logs')">📋 Logs</button>
+  <button class="topbar-btn" onclick="showSetupWizard({})" title="Re-run Setup Wizard — add API keys, change settings">⚙ Setup</button>
   <button class="topbar-btn" onclick="location.reload()">↺</button>
 </div>
 
@@ -1090,7 +1091,9 @@ function connectWS() {
     if (p.type === 'stream_chunk') {
       const sb = document.getElementById('stream-bubble');
       sb.style.display = 'block';
-      sb.textContent += p.data;
+      // accumulate raw text on a data attr, render formatted
+      sb._rawText = (sb._rawText || '') + p.data;
+      sb.innerHTML = formatMsg(sb._rawText);
       if (autoScroll) document.getElementById('chat-log').scrollTop = 99999;
     } else if (p.type === 'log') {
       const sb = document.getElementById('stream-bubble');
@@ -1127,11 +1130,11 @@ function connectWS() {
 // Chat
 function appendBotMsg(text) {
   const sb = document.getElementById('stream-bubble');
-  sb.style.display = 'none'; sb.textContent = '';
+  sb.style.display = 'none'; sb.textContent = ''; sb._rawText = '';
   const log = document.getElementById('chat-log');
   const div = document.createElement('div');
   div.className = 'msg bot';
-  div.innerHTML = `<div class="bubble">${escHtml(text)}</div><div class="meta">Byte • now</div>`;
+  div.innerHTML = `<div class="bubble">${formatMsg(text)}</div><div class="meta">Byte • now</div>`;
   log.appendChild(div);
   if (autoScroll) log.scrollTop = 99999;
 }
@@ -1740,7 +1743,34 @@ function switchTab(name) {
 
 // Utility
 function escHtml(s) {
-  return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/\n/g,'<br>');
+  return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+}
+
+function formatMsg(text) {
+  // Render markdown-ish formatting for chat bubbles
+  let s = String(text);
+  // Fenced code blocks (```lang\n...\n``` or ```\n...\n```)
+  s = s.replace(/```(\w*)\n?([\s\S]*?)```/g, function(_, lang, code) {
+    const label = lang ? '<span style="font-size:0.7em;color:var(--dim);display:block;margin-bottom:4px">' + escHtml(lang) + '</span>' : '';
+    return '<pre style="background:#0d0d14;border:1px solid var(--border);border-radius:7px;padding:10px 12px;overflow-x:auto;margin:6px 0;font-size:0.82em;line-height:1.6">' + label + escHtml(code.trimEnd()) + '</pre>';
+  });
+  // Inline code `...`
+  s = s.replace(/`([^`\n]+)`/g, '<code style="background:rgba(255,255,255,0.07);border-radius:4px;padding:1px 5px;font-size:0.88em">$1</code>');
+  // Bold **text**
+  s = s.replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>');
+  // Italic *text* (single star, not double)
+  s = s.replace(/(?<!\*)\*(?!\*)(.+?)(?<!\*)\*(?!\*)/g, '<em>$1</em>');
+  // Headers ### ## #
+  s = s.replace(/^###\s+(.+)$/gm, '<div style="font-weight:700;font-size:0.95em;color:var(--cyan);margin:8px 0 2px">$1</div>');
+  s = s.replace(/^##\s+(.+)$/gm, '<div style="font-weight:700;font-size:1em;color:var(--cyan);margin:10px 0 3px">$1</div>');
+  s = s.replace(/^#\s+(.+)$/gm, '<div style="font-weight:800;font-size:1.05em;color:var(--cyan);margin:12px 0 4px">$1</div>');
+  // Bullet lists - line
+  s = s.replace(/^[ \t]*[-*]\s+(.+)$/gm, '<div style="padding-left:14px;margin:1px 0">• $1</div>');
+  // Numbered lists
+  s = s.replace(/^[ \t]*(\d+)\.\s+(.+)$/gm, '<div style="padding-left:14px;margin:1px 0">$1. $2</div>');
+  // Newlines to <br> (after block-level replacements)
+  s = s.replace(/\n/g, '<br>');
+  return s;
 }
 function handleKey(e) { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendChatMain(); } }
 function sendChat() { sendChatMain(); }
