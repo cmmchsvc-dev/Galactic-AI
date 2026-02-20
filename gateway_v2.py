@@ -1732,15 +1732,20 @@ class GalacticGateway:
                 return f"[ERROR] Desktop screenshot failed: {result.get('message')}"
 
             # Automatically analyze with vision so the LLM can "see" the screen
-            vision_result = await self._analyze_image_b64(
-                result['b64'], 'image/png',
-                'Describe what is visible on this desktop screenshot in detail. '
-                'Identify all windows, applications, buttons, text, icons, taskbar items, '
-                'and any other UI elements. Include pixel coordinates of key elements if possible.'
-            )
+            try:
+                vision_result = await self._analyze_image_b64(
+                    result['b64'], 'image/png',
+                    'Describe what is visible on this desktop screenshot in detail. '
+                    'Identify all windows, applications, buttons, text, icons, taskbar items, '
+                    'and any other UI elements. Note the approximate pixel coordinates of key '
+                    'elements so they can be clicked with desktop_click.'
+                )
+            except Exception as ve:
+                vision_result = f"[Vision analysis failed: {ve}] Screenshot saved at {result['path']} — use analyze_image tool with that path to retry."
             return (
-                f"[DESKTOP] Screenshot saved: {result['path']} "
-                f"({result['width']}x{result['height']} px)\n\n"
+                f"[DESKTOP] Screenshot: {result['path']} "
+                f"(full {result['width']}x{result['height']} px, "
+                f"vision at {result.get('vision_width', result['width'])}x{result.get('vision_height', result['height'])} px)\n\n"
                 f"Vision Analysis:\n{vision_result}"
             )
         except Exception as e:
@@ -1832,7 +1837,8 @@ class GalacticGateway:
         desktop = self._get_desktop_plugin()
         if not desktop:
             return "[ERROR] DesktopTool plugin not loaded."
-        image_path = args.get('image_path', '')
+        # Accept both 'image_path' and 'template' (common alias LLMs use)
+        image_path = args.get('image_path') or args.get('template', '')
         confidence = float(args.get('confidence', 0.8))
         result = await desktop.locate_on_screen(image_path, confidence=confidence)
         if result['status'] == 'success':
@@ -1842,7 +1848,7 @@ class GalacticGateway:
                 f"Center: ({result['center_x']},{result['center_y']})"
             )
         elif result['status'] == 'not_found':
-            return f"[DESKTOP] Image not found on screen: {image_path}"
+            return f"[DESKTOP] Image not found on screen: {image_path}. {result.get('message', '')}"
         return f"[ERROR] Desktop locate: {result.get('message')}"
 
     async def tool_schedule_task(self, args):

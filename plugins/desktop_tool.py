@@ -19,6 +19,15 @@ try:
 except ImportError:
     PYAUTOGUI_AVAILABLE = False
 
+try:
+    import pyperclip
+    PYPERCLIP_AVAILABLE = True
+except ImportError:
+    PYPERCLIP_AVAILABLE = False
+
+# Max width for vision-analysis resize (keeps base64 payload manageable)
+VISION_MAX_WIDTH = 1280
+
 
 class DesktopTool:
     """OS-level desktop control: screenshots, mouse, keyboard."""
@@ -45,6 +54,8 @@ class DesktopTool:
         Capture the full desktop (or a region).
         region: (x, y, width, height) tuple or None for full screen.
         Returns: {'status': 'success', 'path': str, 'b64': str, 'width': int, 'height': int}
+        The base64 image is resized to max VISION_MAX_WIDTH px wide before encoding
+        so vision API payloads stay manageable.
         """
         self._check()
         try:
@@ -63,11 +74,20 @@ class DesktopTool:
                 os.makedirs(logs_dir, exist_ok=True)
                 path = os.path.join(logs_dir, f"desktop_{int(time.time())}.png")
 
+            # Save full-resolution copy to disk
             await loop.run_in_executor(None, img.save, path)
 
-            # Also return base64 for direct vision analysis
+            # Resize for vision API (avoid huge base64 payloads)
+            vision_img = img
+            if img.width > VISION_MAX_WIDTH:
+                ratio = VISION_MAX_WIDTH / img.width
+                new_h = int(img.height * ratio)
+                vision_img = await loop.run_in_executor(
+                    None, lambda: img.resize((VISION_MAX_WIDTH, new_h))
+                )
+
             buf = io.BytesIO()
-            img.save(buf, format='PNG')
+            vision_img.save(buf, format='PNG', optimize=True)
             b64 = base64.b64encode(buf.getvalue()).decode('utf-8')
 
             return {
@@ -76,6 +96,8 @@ class DesktopTool:
                 'b64': b64,
                 'width': img.width,
                 'height': img.height,
+                'vision_width': vision_img.width,
+                'vision_height': vision_img.height,
             }
         except Exception as e:
             return {'status': 'error', 'message': str(e)}
@@ -128,10 +150,10 @@ class DesktopTool:
         self._check()
         try:
             loop = asyncio.get_event_loop()
-            await loop.run_in_executor(None, lambda: (
-                pyautogui.moveTo(from_x, from_y),
+            def _drag():
+                pyautogui.moveTo(from_x, from_y)
                 pyautogui.drag(to_x - from_x, to_y - from_y, duration=duration)
-            ))
+            await loop.run_in_executor(None, _drag)
             return {'status': 'success', 'from': (from_x, from_y), 'to': (to_x, to_y)}
         except Exception as e:
             return {'status': 'error', 'message': str(e)}
@@ -139,13 +161,35 @@ class DesktopTool:
     # ── Keyboard ─────────────────────────────────────────────────────────────
 
     async def type_text(self, text, interval=0.05):
-        """Type text at the current cursor/focus position."""
+        """
+        Type text at the current cursor/focus position.
+        Uses clipboard paste for non-ASCII/Unicode text (emojis, special chars).
+        Falls back to pyautogui.typewrite for ASCII-only text.
+        """
         self._check()
         try:
             loop = asyncio.get_event_loop()
-            await loop.run_in_executor(
-                None, lambda: pyautogui.typewrite(text, interval=interval)
-            )
+            # Check if text is ASCII-safe
+            is_ascii = all(ord(c) < 128 for c in text)
+
+            if is_ascii:
+                await loop.run_in_executor(
+                    None, lambda: pyautogui.typewrite(text, interval=interval)
+                )
+            elif PYPERCLIP_AVAILABLE:
+                # Use clipboard for Unicode support
+                def _paste_text():
+                    pyperclip.copy(text)
+                    pyautogui.hotkey('ctrl', 'v')
+                await loop.run_in_executor(None, _paste_text)
+            else:
+                # Fallback: type ASCII chars, skip non-ASCII
+                ascii_text = text.encode('ascii', errors='ignore').decode('ascii')
+                await loop.run_in_executor(
+                    None, lambda: pyautogui.typewrite(ascii_text, interval=interval)
+                )
+                return {'status': 'partial', 'typed': ascii_text, 'note': 'Non-ASCII chars skipped (install pyperclip for full Unicode support)'}
+
             return {'status': 'success', 'typed': text[:80]}
         except Exception as e:
             return {'status': 'error', 'message': str(e)}
@@ -173,9 +217,27 @@ class DesktopTool:
     # ── Locate on screen ─────────────────────────────────────────────────────
 
     async def locate_on_screen(self, image_path, confidence=0.8):
-        """Find an image on the desktop screen (template matching)."""
+        """
+        Find an image on the desktop screen (template matching).
+        Requires opencv-python: pip install opencv-python
+        """
         self._check()
         try:
+            # Check OpenCV availability
+            try:
+                import cv2  # noqa: F401
+            except ImportError:
+                return {
+                    'status': 'error',
+                    'message': 'OpenCV not installed. Run: pip install opencv-python'
+                }
+
+            if not os.path.exists(image_path):
+                return {
+                    'status': 'error',
+                    'message': f'Template image not found: {image_path}'
+                }
+
             loop = asyncio.get_event_loop()
             result = await loop.run_in_executor(
                 None,
@@ -189,7 +251,10 @@ class DesktopTool:
                     'center_x': result.left + result.width // 2,
                     'center_y': result.top + result.height // 2,
                 }
-            return {'status': 'not_found'}
+            return {
+                'status': 'not_found',
+                'message': f'Template not found on screen (confidence={confidence}). Try lowering confidence or use desktop_screenshot + vision instead.'
+            }
         except Exception as e:
             return {'status': 'error', 'message': str(e)}
 
