@@ -183,16 +183,16 @@ class TelegramBridge:
         model_map = {
             "anthropic": [
                 ("Claude Opus 4.6 👑 [LATEST]", "claude-opus-4-6"),
-                ("Claude Sonnet 4.5 🌟", "claude-sonnet-4-5"),
-                ("Claude 3.7 Sonnet ⚡️", "claude-3-7-sonnet-20250219"),
-                ("Claude 3.5 Sonnet 🚀", "claude-3-5-sonnet-20241022"),
-                ("Claude 3.5 Haiku 🏎️", "claude-3-5-haiku-20241022"),
-                ("Claude 3 Opus 🏛️", "claude-3-opus-20240229"),
+                ("Claude Sonnet 4.6 🌟", "claude-sonnet-4-6"),
+                ("Claude Haiku 4.5 ⚡️", "claude-haiku-4-5"),
+                ("Claude Sonnet 4.5 🚀", "claude-sonnet-4-5"),
+                ("Claude Opus 4.5 🏛️", "claude-opus-4-5"),
             ],
             "google": [
-                ("Gemini 3 Flash ⚡️ [LATEST]", "gemini-3-flash-preview"),
+                ("Gemini 3.1 Pro 🧠 [LATEST]", "gemini-3.1-pro-preview"),
+                ("Gemini 3 Flash ⚡️", "gemini-3-flash-preview"),
+                ("Gemini 3 Pro 🧠", "gemini-3-pro-preview"),
                 ("Gemini 2.5 Flash 🏎️", "gemini-2.5-flash"),
-                ("Gemini 3 Pro 🧠 [LATEST]", "gemini-3-pro-preview"),
                 ("Gemini 2.5 Pro 🦾", "gemini-2.5-pro"),
                 ("Gemini 2.0 Flash", "gemini-2.0-flash"),
             ],
@@ -278,16 +278,17 @@ class TelegramBridge:
             
             model_map = {
                 "anthropic": [
-                    ("Opus 4.6 👑", "claude-3-opus-20250321"),
-                    ("Sonnet 3.7 ⚡️", "claude-3-7-sonnet-20250219"),
-                    ("Sonnet 3.5 🚀", "claude-3-5-sonnet-20241022"),
-                    ("Haiku 3.5 🏎️", "claude-3-5-haiku-20241022")
+                    ("Opus 4.6 👑", "claude-opus-4-6"),
+                    ("Sonnet 4.6 🌟", "claude-sonnet-4-6"),
+                    ("Haiku 4.5 ⚡️", "claude-haiku-4-5"),
+                    ("Sonnet 4.5 🚀", "claude-sonnet-4-5"),
                 ],
                 "google": [
+                    ("Gemini 3.1 Pro 🧠", "gemini-3.1-pro-preview"),
                     ("Gemini 3 Flash ⚡️", "gemini-3-flash-preview"),
-                    ("Gemini 2.5 Flash 🏎️", "gemini-2.5-flash"),
                     ("Gemini 3 Pro 🧠", "gemini-3-pro-preview"),
-                    ("Gemini 2.5 Pro 🦾", "gemini-2.5-pro")
+                    ("Gemini 2.5 Flash 🏎️", "gemini-2.5-flash"),
+                    ("Gemini 2.5 Pro 🦾", "gemini-2.5-pro"),
                 ],
                 "nvidia": [
                     ("DeepSeek V3 🚀", "deepseek-ai/deepseek-v3.2"),
@@ -710,14 +711,13 @@ class TelegramBridge:
                 await self.core.log(f"Send Error: {e}", priority=1)
 
     async def _handle_photo(self, chat_id, msg):
-        """Download a Telegram photo attachment and send to the AI for analysis."""
+        """Download a Telegram photo, analyze it directly with vision, then relay to AI."""
         typing_task = None
-        temp_file_path = None
+        response = None
         try:
             typing_task = asyncio.create_task(self.keep_typing(chat_id))
             photo_array = msg["photo"]
-            # Get the largest photo available
-            photo = photo_array[-1] 
+            photo = photo_array[-1]  # largest resolution
             file_size = photo.get("file_size", 0)
             file_id = photo["file_id"]
             caption = msg.get("caption", "")
@@ -730,26 +730,35 @@ class TelegramBridge:
                 return
             file_path = file_data["result"]["file_path"]
 
-            # Download file content
+            # Download raw bytes (no temp file needed)
             download_url = f"https://api.telegram.org/file/bot{self.bot_token}/{file_path}"
             r = await self.client.get(download_url)
             raw = r.content
 
-            # Save to a temporary file
-            with tempfile.NamedTemporaryFile(delete=False, suffix=".jpg") as temp_file:
-                temp_file.write(raw)
-                temp_file_path = temp_file.name
-            
-            await self.core.log(f"[Telegram] User sent photo: {os.path.basename(temp_file_path)} ({file_size} bytes)", priority=2)
+            await self.core.log(f"[Telegram] User sent photo: {os.path.basename(file_path)} ({file_size} bytes)", priority=2)
 
-            # Instruct AI to analyze the image
-            full_msg = f"[Attached image: {os.path.basename(temp_file_path)}]\n---\n"
+            # Analyze image immediately — no temp file, no race condition
+            import base64
+            image_b64 = base64.b64encode(raw).decode('utf-8')
+            ext = os.path.splitext(file_path)[1].lower() or '.jpg'
+            mime_map = {'.jpg': 'image/jpeg', '.jpeg': 'image/jpeg',
+                        '.png': 'image/png', '.gif': 'image/gif', '.webp': 'image/webp'}
+            mime_type = mime_map.get(ext, 'image/jpeg')
+
+            vision_prompt = caption if caption else "Describe this image in detail. Include any text you see."
+            vision_result = await self.core.gateway._analyze_image_b64(image_b64, mime_type, vision_prompt)
+
+            # Pass vision result to speak() as rich context
             if caption:
-                full_msg += f"{caption}\n\n"
-            full_msg += f"Analyze the image at path: {temp_file_path}"
+                speak_msg = (
+                    f"[Image Analysis Result]\n{vision_result}\n\n"
+                    f"User's caption/question: {caption}"
+                )
+            else:
+                speak_msg = f"[Image Analysis Result]\n{vision_result}"
 
             response = await asyncio.wait_for(
-                self.core.gateway.speak(full_msg, chat_id=chat_id),
+                self.core.gateway.speak(speak_msg, chat_id=chat_id),
                 timeout=self._get_speak_timeout()
             )
         except asyncio.TimeoutError:
@@ -765,9 +774,7 @@ class TelegramBridge:
                     await typing_task
                 except (asyncio.CancelledError, Exception):
                     pass
-            if temp_file_path and os.path.exists(temp_file_path):
-                os.remove(temp_file_path)
-            
+
             try:
                 await self.core.relay.emit(2, "chat_from_telegram", {
                     "user": str(chat_id),

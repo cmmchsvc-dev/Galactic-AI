@@ -868,6 +868,109 @@ class GalacticGateway:
                 },
                 "fn": self.tool_browser_set_proxy
             },
+
+            # ── Desktop automation (OS-level via pyautogui) ──────────────
+            "desktop_screenshot": {
+                "description": "Capture the entire desktop screen (not just browser). Automatically analyzes the screenshot with vision so you can 'see' and describe what is on screen. Use this to observe the desktop before clicking.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "region": {"type": "string", "description": "Optional region as 'x,y,width,height' (e.g. '0,0,1920,1080'). Omit for full screen."},
+                        "save_path": {"type": "string", "description": "Optional file path to save PNG."}
+                    }
+                },
+                "fn": self.tool_desktop_screenshot
+            },
+            "desktop_click": {
+                "description": "Click the mouse at desktop pixel coordinates (x, y). Use after desktop_screenshot to interact with any UI element on screen.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "x": {"type": "number", "description": "X pixel coordinate from left edge"},
+                        "y": {"type": "number", "description": "Y pixel coordinate from top edge"},
+                        "button": {"type": "string", "description": "Mouse button: left, right, or middle (default: left)"},
+                        "clicks": {"type": "integer", "description": "Number of clicks — 1=single, 2=double (default: 1)"}
+                    },
+                    "required": ["x", "y"]
+                },
+                "fn": self.tool_desktop_click
+            },
+            "desktop_type": {
+                "description": "Type text at the current cursor/focus position on the desktop. Click a text field first with desktop_click.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "text": {"type": "string", "description": "Text to type"},
+                        "interval": {"type": "number", "description": "Seconds between keystrokes (default: 0.05)"}
+                    },
+                    "required": ["text"]
+                },
+                "fn": self.tool_desktop_type
+            },
+            "desktop_move": {
+                "description": "Move the mouse cursor to desktop coordinates without clicking.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "x": {"type": "number", "description": "X coordinate"},
+                        "y": {"type": "number", "description": "Y coordinate"},
+                        "duration": {"type": "number", "description": "Move duration in seconds (default: 0.2)"}
+                    },
+                    "required": ["x", "y"]
+                },
+                "fn": self.tool_desktop_move
+            },
+            "desktop_scroll": {
+                "description": "Scroll the mouse wheel. Positive = up, negative = down.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "clicks": {"type": "integer", "description": "Scroll amount (positive=up, negative=down)"},
+                        "x": {"type": "number", "description": "Optional X to scroll at"},
+                        "y": {"type": "number", "description": "Optional Y to scroll at"}
+                    },
+                    "required": ["clicks"]
+                },
+                "fn": self.tool_desktop_scroll
+            },
+            "desktop_hotkey": {
+                "description": "Press a keyboard shortcut (e.g. 'ctrl,c' for Ctrl+C, 'alt,tab' for Alt+Tab, 'win,r' for Run dialog).",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "keys": {"type": "string", "description": "Comma-separated keys, e.g. 'ctrl,c' or 'alt,tab' or 'win,d'"}
+                    },
+                    "required": ["keys"]
+                },
+                "fn": self.tool_desktop_hotkey
+            },
+            "desktop_drag": {
+                "description": "Click and drag from one desktop coordinate to another.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "from_x": {"type": "number", "description": "Start X"},
+                        "from_y": {"type": "number", "description": "Start Y"},
+                        "to_x": {"type": "number", "description": "End X"},
+                        "to_y": {"type": "number", "description": "End Y"},
+                        "duration": {"type": "number", "description": "Drag duration in seconds (default: 0.5)"}
+                    },
+                    "required": ["from_x", "from_y", "to_x", "to_y"]
+                },
+                "fn": self.tool_desktop_drag
+            },
+            "desktop_locate": {
+                "description": "Find an image template on the desktop screen (template matching). Returns the coordinates where found.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "image_path": {"type": "string", "description": "Path to PNG image to search for on screen"},
+                        "confidence": {"type": "number", "description": "Match confidence 0.0-1.0 (default: 0.8)"}
+                    },
+                    "required": ["image_path"]
+                },
+                "fn": self.tool_desktop_locate
+            },
         }
 
     # --- Tool Implementations ---
@@ -1605,6 +1708,143 @@ class GalacticGateway:
         )
         return f"[BROWSER] Proxy set: {result.get('proxy')}" if result['status'] == 'success' else f"[ERROR] {result.get('message')}"
 
+    # ── Desktop tool implementations ─────────────────────────────────────────
+
+    def _get_desktop_plugin(self):
+        """Helper to retrieve DesktopTool plugin."""
+        return next((p for p in self.core.plugins if p.__class__.__name__ == "DesktopTool"), None)
+
+    async def tool_desktop_screenshot(self, args):
+        """Capture full desktop screen and analyze with vision."""
+        desktop = self._get_desktop_plugin()
+        if not desktop:
+            return "[ERROR] DesktopTool plugin not loaded. Install pyautogui: pip install pyautogui"
+        try:
+            region_str = args.get('region')
+            region = None
+            if region_str:
+                parts = [int(v.strip()) for v in region_str.split(',')]
+                if len(parts) == 4:
+                    region = tuple(parts)
+            save_path = args.get('save_path')
+            result = await desktop.screenshot(region=region, save_path=save_path)
+            if result['status'] != 'success':
+                return f"[ERROR] Desktop screenshot failed: {result.get('message')}"
+
+            # Automatically analyze with vision so the LLM can "see" the screen
+            vision_result = await self._analyze_image_b64(
+                result['b64'], 'image/png',
+                'Describe what is visible on this desktop screenshot in detail. '
+                'Identify all windows, applications, buttons, text, icons, taskbar items, '
+                'and any other UI elements. Include pixel coordinates of key elements if possible.'
+            )
+            return (
+                f"[DESKTOP] Screenshot saved: {result['path']} "
+                f"({result['width']}x{result['height']} px)\n\n"
+                f"Vision Analysis:\n{vision_result}"
+            )
+        except Exception as e:
+            return f"[ERROR] Desktop screenshot: {e}"
+
+    async def tool_desktop_click(self, args):
+        """Click at desktop coordinates."""
+        desktop = self._get_desktop_plugin()
+        if not desktop:
+            return "[ERROR] DesktopTool plugin not loaded."
+        x = args.get('x')
+        y = args.get('y')
+        button = args.get('button', 'left')
+        clicks = int(args.get('clicks', 1))
+        result = await desktop.click(x, y, button=button, clicks=clicks)
+        if result['status'] == 'success':
+            return f"[DESKTOP] Clicked ({x}, {y}) with {button} button x{clicks}"
+        return f"[ERROR] Desktop click: {result.get('message')}"
+
+    async def tool_desktop_type(self, args):
+        """Type text at current cursor position."""
+        desktop = self._get_desktop_plugin()
+        if not desktop:
+            return "[ERROR] DesktopTool plugin not loaded."
+        text = args.get('text', '')
+        interval = float(args.get('interval', 0.05))
+        result = await desktop.type_text(text, interval=interval)
+        if result['status'] == 'success':
+            preview = text[:80] + ('...' if len(text) > 80 else '')
+            return f"[DESKTOP] Typed: {preview}"
+        return f"[ERROR] Desktop type: {result.get('message')}"
+
+    async def tool_desktop_move(self, args):
+        """Move mouse to coordinates."""
+        desktop = self._get_desktop_plugin()
+        if not desktop:
+            return "[ERROR] DesktopTool plugin not loaded."
+        x = args.get('x')
+        y = args.get('y')
+        duration = float(args.get('duration', 0.2))
+        result = await desktop.move(x, y, duration=duration)
+        if result['status'] == 'success':
+            return f"[DESKTOP] Moved mouse to ({x}, {y})"
+        return f"[ERROR] Desktop move: {result.get('message')}"
+
+    async def tool_desktop_scroll(self, args):
+        """Scroll mouse wheel."""
+        desktop = self._get_desktop_plugin()
+        if not desktop:
+            return "[ERROR] DesktopTool plugin not loaded."
+        clicks = int(args.get('clicks', 3))
+        x = args.get('x')
+        y = args.get('y')
+        result = await desktop.scroll(clicks, x=x, y=y)
+        if result['status'] == 'success':
+            direction = "up" if clicks > 0 else "down"
+            return f"[DESKTOP] Scrolled {direction} {abs(clicks)} clicks"
+        return f"[ERROR] Desktop scroll: {result.get('message')}"
+
+    async def tool_desktop_hotkey(self, args):
+        """Press a keyboard shortcut."""
+        desktop = self._get_desktop_plugin()
+        if not desktop:
+            return "[ERROR] DesktopTool plugin not loaded."
+        keys_str = args.get('keys', '')
+        keys = [k.strip() for k in keys_str.split(',')]
+        result = await desktop.hotkey(*keys)
+        if result['status'] == 'success':
+            return f"[DESKTOP] Pressed hotkey: {'+'.join(keys)}"
+        return f"[ERROR] Desktop hotkey: {result.get('message')}"
+
+    async def tool_desktop_drag(self, args):
+        """Drag from one coordinate to another."""
+        desktop = self._get_desktop_plugin()
+        if not desktop:
+            return "[ERROR] DesktopTool plugin not loaded."
+        from_x = args.get('from_x')
+        from_y = args.get('from_y')
+        to_x = args.get('to_x')
+        to_y = args.get('to_y')
+        duration = float(args.get('duration', 0.5))
+        result = await desktop.drag(from_x, from_y, to_x, to_y, duration=duration)
+        if result['status'] == 'success':
+            return f"[DESKTOP] Dragged ({from_x},{from_y}) -> ({to_x},{to_y})"
+        return f"[ERROR] Desktop drag: {result.get('message')}"
+
+    async def tool_desktop_locate(self, args):
+        """Find an image on screen via template matching."""
+        desktop = self._get_desktop_plugin()
+        if not desktop:
+            return "[ERROR] DesktopTool plugin not loaded."
+        image_path = args.get('image_path', '')
+        confidence = float(args.get('confidence', 0.8))
+        result = await desktop.locate_on_screen(image_path, confidence=confidence)
+        if result['status'] == 'success':
+            return (
+                f"[DESKTOP] Found at ({result['x']},{result['y']}) "
+                f"size {result['width']}x{result['height']}. "
+                f"Center: ({result['center_x']},{result['center_y']})"
+            )
+        elif result['status'] == 'not_found':
+            return f"[DESKTOP] Image not found on screen: {image_path}"
+        return f"[ERROR] Desktop locate: {result.get('message')}"
+
     async def tool_schedule_task(self, args):
         """Schedule a task/reminder using the scheduler plugin."""
         name = args.get('name')
@@ -1829,7 +2069,7 @@ class GalacticGateway:
             return f"Error killing process: {e}"
     
     async def tool_analyze_image(self, args):
-        """Analyze an image — routes to Gemini Vision, Ollama vision models, or any available provider."""
+        """Analyze an image — routes to the active provider's vision endpoint."""
         path = args.get('path')
         prompt = args.get('prompt', 'Describe this image in detail. Include any text you see.')
 
@@ -1839,18 +2079,16 @@ class GalacticGateway:
         if not path or not Path(path).exists():
             return f"[ERR] Image not found: {path}"
 
-        provider = self.llm.provider
+        # Read file and detect MIME type (no hardcoded JPEG)
+        with open(path, 'rb') as f:
+            raw = f.read()
+        image_b64 = base64.b64encode(raw).decode('utf-8')
+        suffix = Path(path).suffix.lower()
+        mime_map = {'.jpg': 'image/jpeg', '.jpeg': 'image/jpeg',
+                    '.png': 'image/png', '.gif': 'image/gif', '.webp': 'image/webp'}
+        mime_type = mime_map.get(suffix, 'image/jpeg')
 
-        if provider == "google":
-            return await self._analyze_image_gemini(path, prompt)
-        elif provider == "ollama":
-            return await self._analyze_image_ollama(path, prompt)
-        else:
-            # Try Google first as universal fallback; if no key try Ollama
-            google_key = self.core.config.get('providers', {}).get('google', {}).get('apiKey')
-            if google_key:
-                return await self._analyze_image_gemini(path, prompt)
-            return await self._analyze_image_ollama(path, prompt)
+        return await self._analyze_image_b64(image_b64, mime_type, prompt)
 
     async def _analyze_image_gemini(self, path, prompt):
         """Analyze image using Google Gemini Vision."""
@@ -1918,7 +2156,200 @@ class GalacticGateway:
                 return f"[ERR] Ollama vision error: {data}\n(Ensure you're using a vision-capable model like llava or moondream)"
         except Exception as e:
             return f"Error analyzing image (Ollama): {e}"
-    
+
+    # ── Vision routing (base64 pipeline) ─────────────────────────────────────
+    # These methods accept pre-encoded base64 + MIME type, eliminating the
+    # temp-file race condition from _handle_photo.
+
+    async def _analyze_image_b64(self, image_b64: str, mime_type: str, prompt: str) -> str:
+        """Route image analysis to the best available provider (base64 input)."""
+        provider = self.llm.provider
+        if provider == "google":
+            return await self._analyze_image_gemini_b64(image_b64, mime_type, prompt)
+        elif provider == "anthropic":
+            return await self._analyze_image_anthropic_b64(image_b64, mime_type, prompt)
+        elif provider == "nvidia":
+            return await self._analyze_image_nvidia_b64(image_b64, mime_type, prompt)
+        elif provider == "ollama":
+            return await self._analyze_image_ollama_b64(image_b64, mime_type, prompt)
+        else:
+            # xai, groq, openai, openrouter, etc. — try Google first, then OpenAI-compat
+            google_key = self.core.config.get('providers', {}).get('google', {}).get('apiKey')
+            if google_key:
+                return await self._analyze_image_gemini_b64(image_b64, mime_type, prompt)
+            return await self._analyze_image_openai_b64(image_b64, mime_type, prompt)
+
+    async def _analyze_image_gemini_b64(self, image_b64: str, mime_type: str, prompt: str) -> str:
+        """Analyze image using Google Gemini Vision (base64 input)."""
+        try:
+            api_key = self.config.get('api_key') or self.core.config.get('providers', {}).get('google', {}).get('apiKey')
+            if not api_key:
+                return "[ERR] Google API key not configured for image analysis."
+
+            # Use active model if Google, else fall back to gemini-2.5-flash
+            vision_model = self.llm.model if self.llm.provider == "google" else "gemini-2.5-flash"
+
+            url = f"https://generativelanguage.googleapis.com/v1beta/models/{vision_model}:generateContent?key={api_key}"
+            payload = {"contents": [{"parts": [
+                {"text": prompt},
+                {"inline_data": {"mime_type": mime_type, "data": image_b64}}
+            ]}]}
+
+            async with httpx.AsyncClient(timeout=60.0) as client:
+                response = await client.post(url, json=payload)
+                data = response.json()
+                if 'candidates' in data and data['candidates']:
+                    result = data['candidates'][0]['content']['parts'][0]['text']
+                    return f"[VISION/Gemini/{vision_model}]\n\n{result}"
+                return f"[ERR] Gemini vision error: {data}"
+        except Exception as e:
+            return f"Error analyzing image (Gemini): {e}"
+
+    async def _analyze_image_anthropic_b64(self, image_b64: str, mime_type: str, prompt: str) -> str:
+        """Analyze image using Anthropic Claude vision (native multimodal format)."""
+        try:
+            api_key = self._get_provider_api_key("anthropic")
+            if not api_key:
+                return "[ERR] Anthropic API key not configured."
+
+            url = "https://api.anthropic.com/v1/messages"
+            if api_key.startswith("sk-ant-oat"):
+                headers = {
+                    "Content-Type": "application/json",
+                    "Authorization": f"Bearer {api_key}",
+                    "anthropic-version": "2023-06-01",
+                    "anthropic-beta": "claude-code-20250219,oauth-2025-04-20",
+                }
+            else:
+                headers = {
+                    "Content-Type": "application/json",
+                    "x-api-key": api_key,
+                    "anthropic-version": "2023-06-01",
+                }
+
+            vision_model = self.llm.model if self.llm.provider == "anthropic" else "claude-sonnet-4-6"
+
+            payload = {
+                "model": vision_model,
+                "max_tokens": 1024,
+                "messages": [{
+                    "role": "user",
+                    "content": [
+                        {"type": "image", "source": {
+                            "type": "base64",
+                            "media_type": mime_type,
+                            "data": image_b64,
+                        }},
+                        {"type": "text", "text": prompt}
+                    ]
+                }]
+            }
+
+            async with httpx.AsyncClient(timeout=60.0) as client:
+                response = await client.post(url, headers=headers, json=payload)
+                data = response.json()
+                if "content" in data and data["content"]:
+                    text_blocks = [b["text"] for b in data["content"] if b.get("type") == "text"]
+                    return f"[VISION/Anthropic/{vision_model}]\n\n" + "\n".join(text_blocks)
+                return f"[ERR] Anthropic vision error: {data}"
+        except Exception as e:
+            return f"Error analyzing image (Anthropic): {e}"
+
+    async def _analyze_image_nvidia_b64(self, image_b64: str, mime_type: str, prompt: str) -> str:
+        """Analyze image using NVIDIA vision endpoint (phi-3.5-vision-instruct)."""
+        try:
+            api_key = self._get_provider_api_key("nvidia")
+            if not api_key:
+                return "[ERR] NVIDIA API key not configured."
+
+            vision_model = "microsoft/phi-3.5-vision-instruct"
+            url = "https://integrate.api.nvidia.com/v1/chat/completions"
+            headers = {
+                "Authorization": f"Bearer {api_key}",
+                "Content-Type": "application/json",
+            }
+            payload = {
+                "model": vision_model,
+                "messages": [{
+                    "role": "user",
+                    "content": [
+                        {"type": "text", "text": prompt},
+                        {"type": "image_url", "image_url": {"url": f"data:{mime_type};base64,{image_b64}"}}
+                    ]
+                }],
+                "max_tokens": 1024,
+                "temperature": 0.2,
+            }
+
+            async with httpx.AsyncClient(timeout=60.0) as client:
+                response = await client.post(url, headers=headers, json=payload)
+                data = response.json()
+                if 'choices' in data and data['choices']:
+                    result = data['choices'][0]['message']['content']
+                    return f"[VISION/NVIDIA/{vision_model}]\n\n{result}"
+                return f"[ERR] NVIDIA vision error: {data}"
+        except Exception as e:
+            return f"Error analyzing image (NVIDIA): {e}"
+
+    async def _analyze_image_ollama_b64(self, image_b64: str, mime_type: str, prompt: str) -> str:
+        """Analyze image using Ollama vision model (correct MIME type)."""
+        try:
+            ollama_base = self.core.config.get('providers', {}).get('ollama', {}).get('baseUrl', 'http://127.0.0.1:11434/v1')
+            if not ollama_base.rstrip('/').endswith('/v1'):
+                ollama_base = ollama_base.rstrip('/') + '/v1'
+            url = f"{ollama_base}/chat/completions"
+
+            payload = {
+                "model": self.llm.model,
+                "messages": [{
+                    "role": "user",
+                    "content": [
+                        {"type": "text", "text": prompt},
+                        {"type": "image_url", "image_url": {"url": f"data:{mime_type};base64,{image_b64}"}}
+                    ]
+                }]
+            }
+
+            async with httpx.AsyncClient(timeout=90.0, verify=False) as client:
+                response = await client.post(url, json=payload)
+                data = response.json()
+                if 'choices' in data and data['choices']:
+                    result = data['choices'][0]['message']['content']
+                    return f"[VISION/Ollama]\n\n{result}"
+                return f"[ERR] Ollama vision error: {data}\n(Ensure you're using a vision-capable model like llava or moondream)"
+        except Exception as e:
+            return f"Error analyzing image (Ollama): {e}"
+
+    async def _analyze_image_openai_b64(self, image_b64: str, mime_type: str, prompt: str) -> str:
+        """Analyze image via OpenAI-compatible multimodal format (xai, groq, openai, etc.)."""
+        try:
+            provider = self.llm.provider
+            url = f"{self._get_provider_base_url(provider)}/chat/completions"
+            api_key = self._get_provider_api_key(provider)
+            headers = {"Content-Type": "application/json", "Authorization": f"Bearer {api_key}"}
+
+            payload = {
+                "model": self.llm.model,
+                "messages": [{
+                    "role": "user",
+                    "content": [
+                        {"type": "text", "text": prompt},
+                        {"type": "image_url", "image_url": {"url": f"data:{mime_type};base64,{image_b64}"}}
+                    ]
+                }],
+                "max_tokens": 1024,
+            }
+
+            async with httpx.AsyncClient(timeout=60.0, verify=False) as client:
+                response = await client.post(url, headers=headers, json=payload)
+                data = response.json()
+                if 'choices' in data and data['choices']:
+                    result = data['choices'][0]['message']['content']
+                    return f"[VISION/{provider.upper()}]\n\n{result}"
+                return f"[ERR] {provider} vision error: {data}"
+        except Exception as e:
+            return f"Error analyzing image ({self.llm.provider}): {e}"
+
     async def tool_memory_search(self, args):
         """Search semantic memory for relevant context."""
         query = args.get('query')

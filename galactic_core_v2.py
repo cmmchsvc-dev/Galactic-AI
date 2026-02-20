@@ -103,6 +103,7 @@ class GalacticCore:
             ('plugins.shell_executor',      'ShellPlugin'),
             ('plugins.browser_executor_pro','BrowserExecutorPro'),
             ('plugins.subagent_manager',    'SubAgentPlugin'),
+            ('plugins.desktop_tool',        'DesktopTool'),
         ]
         loaded_plugin_names = []
         for module_path, class_name in _BUILTIN_PLUGINS:
