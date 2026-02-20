@@ -211,6 +211,53 @@ body::after{content:"";position:fixed;inset:0;background:linear-gradient(rgba(18
 ::-webkit-scrollbar{width:5px;height:5px}
 ::-webkit-scrollbar-track{background:var(--bg)}
 ::-webkit-scrollbar-thumb{background:var(--border);border-radius:3px}
+/* ── THINKING TAB ───────────────────────────────────────────────────────── */
+#thinking-pane{display:flex;flex-direction:column;overflow:hidden;height:100%}
+#thinking-controls{display:flex;gap:8px;padding:10px 14px;border-bottom:1px solid var(--border);flex-shrink:0;background:var(--bg2);align-items:center;flex-wrap:wrap}
+#thinking-filter{padding:5px 10px;background:var(--bg3);border:1px solid var(--border);border-radius:6px;color:var(--text);font-size:0.8em;flex:1;min-width:100px;outline:none}
+#thinking-filter:focus{border-color:var(--pink)}
+#thinking-phase-filter{padding:5px 8px;background:var(--bg3);border:1px solid var(--border);border-radius:6px;color:var(--text);font-size:0.8em;outline:none}
+#thinking-turn-counter{font-size:0.72em;color:var(--dim);margin-left:auto;font-family:var(--mono);white-space:nowrap}
+#thinking-scroll{flex:1;overflow-y:auto;padding:14px;font-family:var(--mono);font-size:0.8em;line-height:1.6}
+#thinking-scroll::-webkit-scrollbar{width:4px}
+#thinking-scroll::-webkit-scrollbar-thumb{background:var(--border);border-radius:2px}
+.trace-session{margin-bottom:16px;border:1px solid rgba(56,217,169,0.2);border-radius:10px;overflow:hidden}
+.trace-session-header{padding:9px 14px;background:rgba(56,217,169,0.05);border-bottom:1px solid rgba(56,217,169,0.12);display:flex;align-items:center;gap:8px;cursor:pointer;user-select:none}
+.trace-session-header:hover{background:rgba(56,217,169,0.09)}
+.trace-sid{font-size:0.72em;color:var(--cyan);font-family:var(--mono);flex-shrink:0}
+.trace-query{font-size:0.82em;color:var(--text);flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.trace-toggle{color:var(--dim);font-size:0.75em;flex-shrink:0;transition:transform .2s}
+.trace-session.collapsed .trace-session-body{display:none}
+.trace-session.collapsed .trace-toggle{transform:rotate(-90deg)}
+.trace-session-body{padding:8px 12px}
+.trace-turn{margin-bottom:10px;border-left:2px solid rgba(255,121,198,0.35);padding-left:10px}
+.trace-turn-header{font-size:0.72em;font-weight:700;color:var(--pink);letter-spacing:1px;margin-bottom:5px;cursor:pointer;user-select:none}
+.trace-turn-header:hover{color:#ff99dd}
+.trace-turn.collapsed .trace-turn-entries{display:none}
+.trace-entry{padding:6px 10px;margin-bottom:4px;border-radius:6px;border:1px solid transparent;position:relative}
+.trace-entry.phase-thinking{background:rgba(255,121,198,0.06);border-color:rgba(255,121,198,0.22)}
+.trace-entry.phase-thinking .trace-label{color:var(--pink)}
+.trace-entry.phase-llm_response{background:rgba(56,217,169,0.04);border-color:rgba(56,217,169,0.15)}
+.trace-entry.phase-llm_response .trace-label{color:var(--cyan)}
+.trace-entry.phase-tool_call{background:rgba(241,250,140,0.05);border-color:rgba(241,250,140,0.2)}
+.trace-entry.phase-tool_call .trace-label{color:var(--yellow)}
+.trace-entry.phase-tool_result{background:rgba(80,250,123,0.04);border-color:rgba(80,250,123,0.18)}
+.trace-entry.phase-tool_result .trace-label{color:var(--green)}
+.trace-entry.phase-tool_result.error{background:rgba(255,85,85,0.06);border-color:rgba(255,85,85,0.22)}
+.trace-entry.phase-tool_result.error .trace-label{color:var(--red)}
+.trace-entry.phase-final_answer{background:rgba(56,217,169,0.08);border-color:rgba(56,217,169,0.3)}
+.trace-entry.phase-final_answer .trace-label{color:var(--cyan);font-weight:700}
+.trace-entry.phase-duplicate_blocked,.trace-entry.phase-tool_not_found{background:rgba(255,85,85,0.05);border-color:rgba(255,85,85,0.18)}
+.trace-entry.phase-duplicate_blocked .trace-label,.trace-entry.phase-tool_not_found .trace-label{color:var(--red)}
+.trace-entry.phase-session_abort{background:rgba(255,85,85,0.08);border-color:rgba(255,85,85,0.25)}
+.trace-entry.phase-session_abort .trace-label{color:var(--red);font-weight:700}
+.trace-label{font-size:0.68em;font-weight:700;letter-spacing:1px;text-transform:uppercase;margin-bottom:3px}
+.trace-content{font-size:0.82em;color:var(--text);white-space:pre-wrap;word-break:break-word;max-height:180px;overflow-y:auto}
+.trace-content.expanded{max-height:none}
+.trace-expand-btn{font-size:0.68em;color:var(--dim);cursor:pointer;margin-top:3px;display:inline-block}
+.trace-expand-btn:hover{color:var(--cyan)}
+.trace-tool-badge{display:inline-block;padding:1px 7px;background:rgba(241,250,140,0.12);border-radius:4px;font-size:0.78em;color:var(--yellow);margin-right:5px;font-family:var(--mono)}
+.trace-ts{font-size:0.62em;color:var(--dim);position:absolute;top:6px;right:8px}
 </style>
 </head>
 <body>
@@ -565,6 +612,7 @@ body::after{content:"";position:fixed;inset:0;background:linear-gradient(rgba(18
     <div class="sidebar-item" onclick="switchTab('memory')"><span class="icon">💾</span> Memory</div>
     <div class="sidebar-item" onclick="switchTab('status')"><span class="icon">📊</span> Status</div>
     <div class="sidebar-item" onclick="switchTab('logs')"><span class="icon">📋</span> Logs</div>
+    <div class="sidebar-item" onclick="switchTab('thinking')"><span class="icon">🧠</span> Thinking</div>
   </div>
 
   <!-- CONTENT -->
@@ -578,6 +626,7 @@ body::after{content:"";position:fixed;inset:0;background:linear-gradient(rgba(18
       <button class="tab-btn" onclick="switchTab('memory')">💾 Memory</button>
       <button class="tab-btn" onclick="switchTab('status')">📊 Status</button>
       <button class="tab-btn" onclick="switchTab('logs')">📋 Logs</button>
+      <button class="tab-btn" id="thinking-tab-btn" onclick="switchTab('thinking')">🧠 Thinking</button>
     </div>
 
     <!-- CHAT -->
@@ -778,6 +827,28 @@ body::after{content:"";position:fixed;inset:0;background:linear-gradient(rgba(18
         <div id="logs-scroll"></div>
       </div>
     </div>
+
+    <!-- THINKING / AGENT TRACE -->
+    <div class="tab-pane" id="tab-thinking">
+      <div id="thinking-pane">
+        <div id="thinking-controls">
+          <input id="thinking-filter" type="text" placeholder="Filter traces..." oninput="filterTraces()">
+          <select id="thinking-phase-filter" onchange="filterTraces()">
+            <option value="">All Phases</option>
+            <option value="thinking">Thinking</option>
+            <option value="tool_call">Tool Calls</option>
+            <option value="tool_result">Tool Results</option>
+            <option value="final_answer">Final Answers</option>
+            <option value="llm_response">LLM Response</option>
+          </select>
+          <button class="btn secondary" onclick="clearTraces()">Clear</button>
+          <button class="btn secondary" id="thinking-auto-scroll-btn" onclick="toggleThinkingAutoScroll()">Auto-scroll: ON</button>
+          <span id="thinking-turn-counter">Turns: 0</span>
+        </div>
+        <div id="thinking-scroll"></div>
+      </div>
+    </div>
+
   </div><!-- /content -->
 </div><!-- /main -->
 
@@ -1185,6 +1256,15 @@ function connectWS() {
       if (tg.response) appendBotMsg(tg.response);
     } else if (p.type === 'alert') {
       // optional alert sound
+    } else if (p.type === 'agent_trace') {
+      handleAgentTrace(p.data);
+      // Flash the Thinking tab button pink when it's not the active tab
+      const tBtn = document.getElementById('thinking-tab-btn');
+      if (tBtn && !tBtn.classList.contains('active')) {
+        tBtn.style.color = 'var(--pink)';
+        tBtn.style.textShadow = '0 0 8px var(--pink)';
+        setTimeout(() => { tBtn.style.color = ''; tBtn.style.textShadow = ''; }, 1800);
+      }
     }
   };
   socket.onclose = () => setTimeout(connectWS, 3000);
@@ -1909,6 +1989,10 @@ function switchTab(name) {
   if (name === 'status') refreshStatus();
   if (name === 'models') { loadOllamaStatus(); pmoLoad(); }
   if (name === 'plugins') loadPlugins();
+  if (name === 'thinking') {
+    const tBtn = document.getElementById('thinking-tab-btn');
+    if (tBtn) { tBtn.style.color = ''; tBtn.style.textShadow = ''; }
+  }
 }
 
 // Utility
@@ -1944,6 +2028,178 @@ function formatMsg(text) {
 }
 function handleKey(e) { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendChatMain(); } }
 function sendChat() { sendChatMain(); }
+
+// ── THINKING TAB ────────────────────────────────────────────────────────────
+let traceAutoScroll = true;
+let traceSessions = {};   // session_id -> { el, body, turnEls, maxTurn }
+let traceAllEntries = []; // flat list for filter replay
+
+function handleAgentTrace(data) {
+  const sid   = data.session_id || 'anon';
+  const turn  = data.turn  || 0;
+  const phase = data.phase || 'unknown';
+  const scroll = document.getElementById('thinking-scroll');
+  if (!scroll) return;
+
+  // ── SESSION START ──
+  if (phase === 'session_start') {
+    const sEl = document.createElement('div');
+    sEl.className = 'trace-session';
+    sEl.dataset.sid = sid;
+    const query = (data.query || '').substring(0, 140);
+    sEl.innerHTML =
+      '<div class="trace-session-header" onclick="this.parentElement.classList.toggle(\'collapsed\')">' +
+        '<span class="trace-sid">#' + escHtml(sid) + '</span>' +
+        '<span class="trace-query">' + escHtml(query) + '</span>' +
+        '<span class="trace-toggle">&#9660;</span>' +
+      '</div>' +
+      '<div class="trace-session-body"></div>';
+    scroll.appendChild(sEl);
+    traceSessions[sid] = { el: sEl, body: sEl.querySelector('.trace-session-body'), turnEls: {}, maxTurn: 0 };
+    if (traceAutoScroll) scroll.scrollTop = 99999;
+    return;
+  }
+
+  // ── Ensure session container exists (joined mid-session) ──
+  if (!traceSessions[sid]) {
+    const sEl = document.createElement('div');
+    sEl.className = 'trace-session';
+    sEl.dataset.sid = sid;
+    sEl.innerHTML =
+      '<div class="trace-session-header" onclick="this.parentElement.classList.toggle(\'collapsed\')">' +
+        '<span class="trace-sid">#' + escHtml(sid) + '</span>' +
+        '<span class="trace-query">(mid-session)</span>' +
+        '<span class="trace-toggle">&#9660;</span>' +
+      '</div>' +
+      '<div class="trace-session-body"></div>';
+    scroll.appendChild(sEl);
+    traceSessions[sid] = { el: sEl, body: sEl.querySelector('.trace-session-body'), turnEls: {}, maxTurn: 0 };
+  }
+  const sess = traceSessions[sid];
+
+  // ── TURN START ──
+  if (phase === 'turn_start') {
+    const tEl = document.createElement('div');
+    tEl.className = 'trace-turn';
+    tEl.dataset.turn = turn;
+    tEl.innerHTML =
+      '<div class="trace-turn-header" onclick="this.parentElement.classList.toggle(\'collapsed\')">TURN ' + turn + ' &#9660;</div>' +
+      '<div class="trace-turn-entries"></div>';
+    sess.body.appendChild(tEl);
+    sess.turnEls[turn] = tEl;
+    if (turn > sess.maxTurn) {
+      sess.maxTurn = turn;
+      const ctr = document.getElementById('thinking-turn-counter');
+      if (ctr) ctr.textContent = 'Turns: ' + turn;
+    }
+    if (traceAutoScroll) scroll.scrollTop = 99999;
+    return;
+  }
+
+  // ── Get or create turn container ──
+  let turnEl = sess.turnEls[turn];
+  if (!turnEl) {
+    turnEl = document.createElement('div');
+    turnEl.className = 'trace-turn';
+    turnEl.dataset.turn = turn;
+    turnEl.innerHTML =
+      '<div class="trace-turn-header" onclick="this.parentElement.classList.toggle(\'collapsed\')">TURN ' + turn + ' &#9660;</div>' +
+      '<div class="trace-turn-entries"></div>';
+    sess.body.appendChild(turnEl);
+    sess.turnEls[turn] = turnEl;
+  }
+  const entries = turnEl.querySelector('.trace-turn-entries');
+
+  // ── Build entry ──
+  const entry = document.createElement('div');
+  let cls = 'trace-entry phase-' + phase;
+  if (phase === 'tool_result' && data.success === false) cls += ' error';
+  entry.className = cls;
+
+  const ts = data.ts ? new Date(data.ts * 1000).toLocaleTimeString() : '';
+
+  let label = phase.replace(/_/g, ' ').toUpperCase();
+  let html  = '';
+
+  if (phase === 'thinking') {
+    html = escHtml(data.content || '');
+  } else if (phase === 'llm_response') {
+    const txt = (data.content || '').substring(0, 1500);
+    html = escHtml(txt) + ((data.content || '').length > 1500 ? '\n...(truncated)' : '');
+  } else if (phase === 'tool_call') {
+    label = 'TOOL CALL';
+    const argsStr = (typeof data.args === 'object') ? JSON.stringify(data.args, null, 2) : String(data.args || '');
+    html = '<span class="trace-tool-badge">' + escHtml(data.tool || '') + '</span>\n' + escHtml(argsStr);
+  } else if (phase === 'tool_result') {
+    label = data.success ? 'TOOL RESULT' : 'TOOL ERROR';
+    html = '<span class="trace-tool-badge">' + escHtml(data.tool || '') + '</span>\n' + escHtml(data.result || '');
+  } else if (phase === 'final_answer') {
+    label = 'FINAL ANSWER';
+    html = escHtml((data.content || '').substring(0, 2000));
+  } else if (phase === 'duplicate_blocked') {
+    label = 'DUPLICATE BLOCKED';
+    html = 'Blocked repeated call to <span class="trace-tool-badge">' + escHtml(data.tool || '') + '</span>';
+  } else if (phase === 'tool_not_found') {
+    label = 'TOOL NOT FOUND';
+    html = 'Unknown tool: <span class="trace-tool-badge">' + escHtml(data.tool || '') + '</span>';
+  } else if (phase === 'session_abort') {
+    label = 'ABORTED';
+    html = escHtml(data.reason || 'max turns exceeded');
+  } else {
+    html = escHtml(JSON.stringify(data).substring(0, 500));
+  }
+
+  entry.innerHTML =
+    '<span class="trace-ts">' + ts + '</span>' +
+    '<div class="trace-label">' + label + '</div>' +
+    '<div class="trace-content">' + html + '</div>';
+
+  // Add expand toggle for long content
+  const contentEl = entry.querySelector('.trace-content');
+  if (contentEl && (html.length > 300 || html.includes('\n'))) {
+    const btn = document.createElement('span');
+    btn.className = 'trace-expand-btn';
+    btn.textContent = contentEl.scrollHeight > 180 ? 'show more' : '';
+    btn.onclick = function() {
+      contentEl.classList.toggle('expanded');
+      this.textContent = contentEl.classList.contains('expanded') ? 'show less' : 'show more';
+    };
+    entry.appendChild(btn);
+    // Set button text after render
+    setTimeout(() => { if (contentEl.scrollHeight > 180) btn.textContent = 'show more'; else btn.remove(); }, 50);
+  }
+
+  traceAllEntries.push({ el: entry, phase, sid, turn });
+  entries.appendChild(entry);
+  applyTraceEntryFilter(entry);
+
+  if (traceAutoScroll) scroll.scrollTop = 99999;
+}
+
+function applyTraceEntryFilter(entry) {
+  const fText  = (document.getElementById('thinking-filter').value || '').toLowerCase();
+  const fPhase = document.getElementById('thinking-phase-filter').value;
+  let show = true;
+  if (fPhase && !entry.classList.contains('phase-' + fPhase)) show = false;
+  if (fText && !entry.textContent.toLowerCase().includes(fText)) show = false;
+  entry.style.display = show ? '' : 'none';
+}
+
+function filterTraces() {
+  traceAllEntries.forEach(t => applyTraceEntryFilter(t.el));
+}
+
+function clearTraces() {
+  traceAllEntries = [];
+  traceSessions   = {};
+  document.getElementById('thinking-scroll').innerHTML = '';
+  document.getElementById('thinking-turn-counter').textContent = 'Turns: 0';
+}
+
+function toggleThinkingAutoScroll() {
+  traceAutoScroll = !traceAutoScroll;
+  document.getElementById('thinking-auto-scroll-btn').textContent = 'Auto-scroll: ' + (traceAutoScroll ? 'ON' : 'OFF');
+}
 </script>
 </body>
 </html>"""

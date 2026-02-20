@@ -3,7 +3,9 @@ import json
 import logging
 import os
 import re
+import time
 import traceback
+import uuid
 import httpx
 from datetime import datetime
 from personality import GalacticPersonality
@@ -3042,6 +3044,12 @@ class GalacticGateway:
             except Exception as e:
                 await self.core.log(f"Telegram typing ping error: {e}", priority=1)
 
+    async def _emit_trace(self, phase, turn, **kwargs):
+        """Emit a structured agent_trace event to all connected WS clients."""
+        payload = {"phase": phase, "turn": turn, "ts": time.time()}
+        payload.update(kwargs)
+        await self.core.relay.emit(3, "agent_trace", payload)
+
     async def speak(self, user_input, context="", chat_id=None):
         """
         Main entry point for user interaction.
@@ -3084,10 +3092,26 @@ class GalacticGateway:
         # Tools that are legitimately called repeatedly with same args (snapshots, reads, etc.)
         _DUPLICATE_EXEMPT = {'browser_snapshot', 'web_search', 'read_file', 'memory_search', 'generate_image'}
 
+        # Unique session ID for tracing this speak() invocation
+        trace_sid = str(uuid.uuid4())[:8]
+        await self._emit_trace("session_start", 0, session_id=trace_sid,
+                               query=user_input[:500])
+
         for _ in range(max_turns):
             turn_count += 1
+            await self._emit_trace("turn_start", turn_count, session_id=trace_sid)
             await self._send_telegram_typing_ping(chat_id)
             response_text = await self._call_llm(messages)
+
+            # Capture think-tag content before stripping (for Thinking tab)
+            think_match = re.search(r'<think>(.*?)</think>', response_text, re.DOTALL)
+            if think_match:
+                await self._emit_trace("thinking", turn_count, session_id=trace_sid,
+                                       content=think_match.group(1).strip()[:5000])
+
+            # Emit raw LLM response
+            await self._emit_trace("llm_response", turn_count, session_id=trace_sid,
+                                   content=response_text[:3000])
 
             # Strip think-tags from final response text (Qwen3/DeepSeek-R1)
             display_text = re.sub(r'<think>.*?</think>', '', response_text, flags=re.DOTALL).strip()
@@ -3104,6 +3128,8 @@ class GalacticGateway:
                         f"⚠️ Duplicate tool call detected ({tool_name}), forcing final answer.",
                         priority=2
                     )
+                    await self._emit_trace("duplicate_blocked", turn_count, session_id=trace_sid,
+                                           tool=tool_name)
                     # Force the model to give a final answer
                     messages.append({"role": "assistant", "content": response_text})
                     messages.append({
@@ -3131,11 +3157,19 @@ class GalacticGateway:
                 await self.core.log(f"🛠️ Executing: {tool_name} {tool_args}", priority=2)
 
                 if tool_name in self.tools:
+                    # Emit tool_call trace before executing
+                    await self._emit_trace("tool_call", turn_count, session_id=trace_sid,
+                                           tool=tool_name,
+                                           args=tool_args if isinstance(tool_args, dict) else str(tool_args)[:1000])
                     try:
                         result = await self.tools[tool_name]["fn"](tool_args)
                         await self._send_telegram_typing_ping(chat_id)
+                        await self._emit_trace("tool_result", turn_count, session_id=trace_sid,
+                                               tool=tool_name, result=str(result)[:3000], success=True)
                     except Exception as e:
                         result = f"[Tool Error] {tool_name} raised: {type(e).__name__}: {e}"
+                        await self._emit_trace("tool_result", turn_count, session_id=trace_sid,
+                                               tool=tool_name, result=str(result)[:3000], success=False)
 
                     # Track TTS output so callers (telegram_bridge) can send the audio file
                     if tool_name == "text_to_speech" and "[VOICE]" in str(result):
@@ -3147,6 +3181,8 @@ class GalacticGateway:
                     messages.append({"role": "user", "content": f"Tool Output: {result}"})
                     continue  # Loop back to LLM with result
                 else:
+                    await self._emit_trace("tool_not_found", turn_count, session_id=trace_sid,
+                                           tool=tool_name)
                     tool_list_hint = ", ".join(list(self.tools.keys())[:20]) + "..."
                     messages.append({"role": "assistant", "content": response_text})
                     messages.append({
@@ -3161,6 +3197,8 @@ class GalacticGateway:
 
             # No tool call detected → this is the final answer
             # Use display_text (think-tags stripped) for the history and relay
+            await self._emit_trace("final_answer", turn_count, session_id=trace_sid,
+                                   content=display_text[:3000])
             self.history.append({"role": "assistant", "content": display_text})
             # Only emit "thought" to the web UI if this is a web chat request.
             # Telegram calls are handled by process_and_respond which emits
@@ -3177,6 +3215,8 @@ class GalacticGateway:
             return display_text
 
         # Hit max turns
+        await self._emit_trace("session_abort", turn_count, session_id=trace_sid,
+                               reason="max_turns_exceeded")
         error_msg = (
             f"[ABORT] Hit maximum tool call limit ({max_turns} turns). "
             f"Used {turn_count} tool calls but couldn't form a final answer. "
