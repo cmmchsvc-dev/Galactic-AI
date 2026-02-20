@@ -444,7 +444,7 @@ class TelegramBridge:
             
             report = (
                 f"🌌 **GALACTIC AI SYSTEM STATUS** 🚀\n"
-                f"⏰ **Time:** `{now}` | 🛸 **Version:** `v0.6.0-Alpha`\n"
+                f"⏰ **Time:** `{now}` | 🛸 **Version:** `v{self.core.config.get('system', {}).get('version', '?')}`\n"
                 f"━━━━━━━━━━━━━━━━━━━━━━━━\n"
                 f"{mode_indicator} **Model:** `{model_display}`\n"
                 f"🔄 **Configured Mode:** `{configured_model['mode'].upper()}`\n"
