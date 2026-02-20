@@ -3738,7 +3738,7 @@ class GalacticGateway:
         if not nvidia_key:
             return "[ERROR] No nvidia.apiKey found in config.yaml"
 
-        url = "https://ai.api.nvidia.com/v1/genai/stabilityai/stable-diffusion-3-5-large"
+        url = "https://ai.api.nvidia.com/v1/genai/stabilityai/stable-diffusion-3_5-large"
         headers = {
             "Authorization": f"Bearer {nvidia_key}",
             "Accept": "application/json",
@@ -4446,10 +4446,11 @@ $notify.Dispose()
             elif operation == 'count':
                 lines = text.splitlines()
                 words = text.split()
+                non_space = len(text.replace(' ', '').replace('\n', ''))
                 return (f"Characters: {len(text):,}\n"
                         f"Words:      {len(words):,}\n"
                         f"Lines:      {len(lines):,}\n"
-                        f"Non-space:  {len(text.replace(' ','').replace('\n','')):,}")
+                        f"Non-space:  {non_space:,}")
             elif operation == 'strip':
                 return text.strip()
             elif operation == 'regex_extract':
