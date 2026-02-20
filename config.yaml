@@ -1,123 +1,106 @@
-# Galactic AI - Automation Suite
-# Configuration file -- edit this to set your API keys and preferences
-# Run the web UI at http://127.0.0.1:17789 for the graphical setup wizard
-
 aliases:
-  gemini: google/gemini-3.1-pro-preview
-  gemini-pro: google/gemini-3.1-pro-preview
-  gemini-flash: google/gemini-3-flash-preview
-  gemini-2-flash: google/gemini-2.5-flash
-  gemini-2-pro: google/gemini-2.5-pro
-  claude: anthropic/claude-sonnet-4-6
-  claude-sonnet: anthropic/claude-sonnet-4-6
-  claude-opus: anthropic/claude-opus-4-6
-  claude-haiku: anthropic/claude-haiku-4-5
-  grok: xai/grok-4
+  coder30: ollama/qwen3-coder:30b
   deepseek: nvidia/deepseek-ai/deepseek-v3.2
-  kimi: nvidia/moonshot-ai/kimi-k2-instruct
+  flash: google/gemini-2.5-flash
+  flux-dev: nvidia/black-forest-labs/flux.1-dev
+  flux-schnell: nvidia/black-forest-labs/flux.1-schnell
+  gemini: google/gemini-3.1-pro-preview
+  gemma27: nvidia/google/gemma-3-27b-it
+  glm5: nvidia/z-ai/glm5
+  grok: xai/grok-4
+  kimi25: nvidia/moonshotai/kimi-k2.5
+  llama405: nvidia/meta/llama-3.1-405b-instruct
+  minimax-m2: nvidia/minimaxai/minimax-m2.1
+  mistral: nvidia/mistralai/mistral-large-3-675b-instruct-2512
+  nemotron-nano: nvidia/nvidia/nemotron-3-nano-30b-a3b
+  nemotron-vl: nvidia/nvidia/nemotron-nano-12b-v2-vl
+  phi-vision: nvidia/microsoft/phi-3.5-vision-instruct
+  pro: google/gemini-2.5-pro
+  q30: ollama/qwen3:30b
+  q8: ollama/qwen3:8b
+  qwen397: nvidia/qwen/qwen3.5-397b-a17b
   qwen480: nvidia/qwen/qwen3-coder-480b-a35b-instruct
-  nemotron: nvidia/nvidia/llama-3.3-nemotron-super-49b-v1
-  llama: ollama/llama3.3:70b
-  qwen: ollama/qwen3:8b
-
+  sd35: nvidia/stabilityai/stable-diffusion-3.5-large
+  step35: nvidia/stepfun-ai/step-3.5-flash
+browser:
+  engine: chromium
+  headless: false
+elevenlabs:
+  api_key: ''
+  voice: Guy
 gateway:
-  provider: google          # google | anthropic | xai | nvidia | ollama
-  model: gemini-2.5-flash   # Model ID for selected provider
-  api_key: NONE             # Set via setup wizard or directly here
-
+  api_key: ''
+  model: gemini-2.5-flash
+  provider: google
+model_overrides: {}
 models:
   auto_fallback: true
+  context_window: 0
+  context_window_trim: true
   error_threshold: 3
   fallback_model: qwen3:8b
   fallback_provider: ollama
+  max_tokens: 0
+  max_turns: 50
   primary_model: gemini-2.5-flash
   primary_provider: google
-  recovery_time_seconds: 300
-  streaming: true
-  context_window_trim: true
+  recovery_time_seconds: 9999
   smart_routing: false
-  max_turns: 50                # Max ReAct tool-call iterations per response
-  max_tokens: 0                # Override max output tokens (0 = provider default)
-  context_window: 0            # Override context window size (0 = auto-detect)
-
+  streaming: true
 paths:
   logs: ./logs
   plugins: ./plugins
   watch: ./watch
   workspace: ./workspace
-
+personality:
+  mode: byte
+  name: Byte
 providers:
   anthropic:
-    apiKey: ""              # Get from https://console.anthropic.com/keys
+    apiKey: ''
     baseUrl: https://api.anthropic.com/v1
   google:
-    apiKey: ""              # Get from https://aistudio.google.com/apikey
+    apiKey: ''
     baseUrl: https://generativelanguage.googleapis.com/v1beta
+  groq:
+    apiKey: ''
+    baseUrl: https://api.groq.com/openai/v1
+  nvidia:
+    apiKey: ''
+    fluxApiKey: ''
+    fluxDevApiKey: ''
+    baseUrl: https://integrate.api.nvidia.com/v1
+    keys:
+      deepseek: ''
+      glm: ''
+      kimi: ''
+      qwen: ''
+      stepfun: ''
+  ollama:
+    baseUrl: http://127.0.0.1:11434/v1
   openai:
-    apiKey: ""              # Get from https://platform.openai.com/api-keys
+    apiKey: ''
     baseUrl: https://api.openai.com/v1
   xai:
-    apiKey: ""              # Get from https://console.x.ai
+    apiKey: ''
     baseUrl: https://api.x.ai/v1
-  groq:
-    apiKey: ""              # Get from https://console.groq.com/keys (free tier available)
-    baseUrl: https://api.groq.com/openai/v1
-  mistral:
-    apiKey: ""              # Get from https://console.mistral.ai/api-keys
-    baseUrl: https://api.mistral.ai/v1
-  cerebras:
-    apiKey: ""              # Get from https://cloud.cerebras.ai
-    baseUrl: https://api.cerebras.ai/v1
-  openrouter:
-    apiKey: ""              # Get from https://openrouter.ai/keys (100+ models, one key)
-    baseUrl: https://openrouter.ai/api/v1
-  huggingface:
-    apiKey: ""              # Get from https://huggingface.co/settings/tokens (free tier)
-    baseUrl: https://api-inference.huggingface.co/v1
-  kimi:
-    apiKey: ""              # Get from https://platform.moonshot.cn/console/api-keys
-    baseUrl: https://api.kimi.com/v1
-  zai:
-    apiKey: ""              # Get from https://open.bigmodel.cn/usercenter/apikeys
-    baseUrl: https://api.z.ai/api/paas/v4
-  minimax:
-    apiKey: ""              # Get from https://platform.minimaxi.com
-    baseUrl: https://api.minimax.io/v1
-  nvidia:
-    apiKey: ""              # One key for ALL 500+ models — get from https://build.nvidia.com
-    baseUrl: https://integrate.api.nvidia.com/v1
-  ollama:
-    baseUrl: http://127.0.0.1:11434/v1   # Local Ollama server (https://ollama.com)
-
-browser:
-  engine: chromium    # chromium | firefox | webkit
-  headless: false
-
-telegram:
-  bot_token: ""       # Optional: get from @BotFather on Telegram
-  admin_chat_id: ""   # Your Telegram user ID (message @userinfobot)
-  timeout_seconds: 300           # Cloud models — raised to 5 min for multi-step desktop automation tasks
-  ollama_timeout_seconds: 600    # Local Ollama — 10 min covers 30B + multi-turn browser tasks
-
-elevenlabs:
-  api_key: ""        # Optional: get from elevenlabs.io for premium TTS voices
-  voice: Guy         # FREE: Guy (male) | Davis (male) | Aria (female) | Jenny (female)
-                     # Premium (ElevenLabs key required): Nova (Rachel) | Byte (Adam)
-
-personality:
-  mode: byte          # byte | custom | generic | files
-  name: Byte
-  soul: ""            # Only used when mode=custom
-  user_context: ""    # Only used when mode=custom
-
+shell_tasks:
+- command: adb devices
+  name: ADB Check
+- command: tasklist | findstr python
+  name: Watchdog Status
 system:
   heartbeat_interval: 5
   name: Galactic AI
   port: 9999
-  version: 0.7.7
-
+  version: 0.8.0
+telegram:
+  admin_chat_id: 0
+  bot_token: ''
+  ollama_timeout_seconds: 600
+  timeout_seconds: 300
 web:
   enabled: true
   host: 127.0.0.1
+  password_hash: ''
   port: 17789
-  password_hash: ""   # Set via setup wizard, or generate: python -c "import hashlib; print(hashlib.sha256(b'yourpassword').hexdigest())"

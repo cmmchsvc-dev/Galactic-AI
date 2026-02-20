@@ -45,6 +45,7 @@ class GalacticWebDeck:
         self.app.router.add_delete('/api/model_overrides', self.handle_delete_model_override)
         self.app.router.add_get('/api/history', self.handle_history)
         self.app.router.add_get('/api/logs', self.handle_logs)
+        self.app.router.add_get('/api/image/{filename}', self.handle_serve_image)
         
     async def handle_index(self, request):
         html = r"""<!DOCTYPE html>
@@ -1201,6 +1202,19 @@ function appendBotMsg(text) {
   if (autoScroll) log.scrollTop = 99999;
 }
 
+function appendBotImage(url) {
+  const log = document.getElementById('chat-log');
+  const div = document.createElement('div');
+  div.className = 'msg bot';
+  div.innerHTML = `<div class="bubble" style="padding:8px">
+    <img src="${url}" style="max-width:100%;max-height:512px;border-radius:8px;display:block;cursor:pointer"
+         onclick="window.open('${url}','_blank')" title="Click to open full size" />
+    <div style="font-size:0.75em;color:var(--dim);margin-top:4px">🎨 Click image to open full size</div>
+  </div><div class="meta">Byte • now</div>`;
+  log.appendChild(div);
+  if (autoScroll) log.scrollTop = 99999;
+}
+
 async function loadChatHistory() {
   try {
     const r = await fetch('/api/history?limit=50');
@@ -1313,6 +1327,7 @@ async function sendChatMain() {
     const d = await r.json();
     stream.style.display = 'none'; stream.textContent = '';
     appendBotMsg(d.response || d.error || 'No response');
+    if (d.image_url) appendBotImage(d.image_url);
   } catch(err) {
     stream.style.display = 'none';
     appendBotMsg('[ERROR] ' + err.message);
@@ -1541,27 +1556,32 @@ const ALL_MODELS = {
     {name:'DeepSeek V3', id:'deepseek-ai/DeepSeek-V3-0324', provider:'huggingface'},
   ],
   'Kimi / Moonshot': [
-    {name:'Kimi K2.5 (Coding)', id:'kimi-k2.5', provider:'kimi'},
-    {name:'Kimi K2 Thinking', id:'kimi-k2-thinking', provider:'kimi'},
+    {name:'Kimi K2.5 (Thinking) 🌙 [via NVIDIA]', id:'moonshotai/kimi-k2.5', provider:'nvidia'},
   ],
   'ZAI / GLM': [
-    {name:'GLM-4 Plus', id:'glm-4-plus', provider:'zai'},
-    {name:'GLM-4.5 Air', id:'glm-4.5-air', provider:'zai'},
-    {name:'GLM-4V Plus (Vision)', id:'glm-4v-plus', provider:'zai'},
+    {name:'GLM-5 (Thinking) 🧠 [via NVIDIA]', id:'z-ai/glm5', provider:'nvidia'},
   ],
   'MiniMax': [
-    {name:'MiniMax Text-01', id:'MiniMax-Text-01', provider:'minimax'},
-    {name:'MiniMax M2', id:'MiniMax-M2', provider:'minimax'},
+    {name:'MiniMax M2.1 🎯 [via NVIDIA]', id:'minimaxai/minimax-m2.1', provider:'nvidia'},
+  ],
+  'FLUX (Image Gen)': [
+    {name:'FLUX.1 Schnell ⚡️ (fast)', id:'black-forest-labs/flux.1-schnell', provider:'nvidia'},
+    {name:'FLUX.1 Dev 🎨 (quality)', id:'black-forest-labs/flux.1-dev', provider:'nvidia'},
   ],
   'NVIDIA': [
-    {name:'DeepSeek V3.2 [TITAN]', id:'deepseek-ai/deepseek-v3.2', provider:'nvidia'},
-    {name:'Qwen3 Coder 480B', id:'qwen/qwen3-coder-480b-a35b-instruct', provider:'nvidia'},
-    {name:'Llama 3.3 70B', id:'meta/llama-3.3-70b-instruct', provider:'nvidia'},
-    {name:'Llama 3.1 405B', id:'meta/llama-3.1-405b-instruct', provider:'nvidia'},
-    {name:'Nemotron 340B', id:'nvidia/nemotron-4-340b-instruct', provider:'nvidia'},
-    {name:'GLM-5', id:'z-ai/glm5', provider:'nvidia'},
-    {name:'Kimi K2.5', id:'moonshotai/kimi-k2.5', provider:'nvidia'},
-    {name:'Mistral Large 2', id:'mistralai/mistral-large-2-instruct', provider:'nvidia'},
+    {name:'GLM-5 (Thinking) 🧠', id:'z-ai/glm5', provider:'nvidia'},
+    {name:'Kimi K2.5 (Thinking) 🌙', id:'moonshotai/kimi-k2.5', provider:'nvidia'},
+    {name:'Qwen 3.5 397B (Thinking) 🦾', id:'qwen/qwen3.5-397b-a17b', provider:'nvidia'},
+    {name:'Nemotron 30B (Reasoning) ⚛️', id:'nvidia/nemotron-3-nano-30b-a3b', provider:'nvidia'},
+    {name:'Nemotron Nano VL 👁️', id:'nvidia/nemotron-nano-12b-v2-vl', provider:'nvidia'},
+    {name:'StepFun 3.5 Flash ⚡️', id:'stepfun-ai/step-3.5-flash', provider:'nvidia'},
+    {name:'MiniMax M2.1 🎯', id:'minimaxai/minimax-m2.1', provider:'nvidia'},
+    {name:'DeepSeek V3.2 (Math) 🚀', id:'deepseek-ai/deepseek-v3.2', provider:'nvidia'},
+    {name:'Llama 405B (Reasoning) 🏛️', id:'meta/llama-3.1-405b-instruct', provider:'nvidia'},
+    {name:'Phi-3.5 Vision (OCR) 👁️', id:'microsoft/phi-3.5-vision-instruct', provider:'nvidia'},
+    {name:'Gemma 3 27B (Chat) 🌌', id:'google/gemma-3-27b-it', provider:'nvidia'},
+    {name:'Mistral Large 3 (General) 🌊', id:'mistralai/mistral-large-3-675b-instruct-2512', provider:'nvidia'},
+    {name:'Qwen 480B Coder 🦾', id:'qwen/qwen3-coder-480b-a35b-instruct', provider:'nvidia'}
   ],
   'Ollama (Local)': []
 };
@@ -1944,6 +1964,21 @@ function sendChat() { sendChatMain(); }
             status = {"healthy": False, "base_url": "unknown", "models": [], "model_count": 0}
         return web.json_response(status)
 
+    async def handle_serve_image(self, request):
+        """GET /api/image/{filename} — serve a generated image from the logs directory."""
+        import mimetypes
+        filename = request.match_info.get('filename', '')
+        # Security: no path traversal — basename only
+        filename = os.path.basename(filename)
+        logs_dir = self.core.config.get('paths', {}).get('logs', './logs')
+        path = os.path.join(logs_dir, filename)
+        if not os.path.exists(path):
+            return web.Response(status=404, text='Image not found')
+        mime = mimetypes.guess_type(filename)[0] or 'image/jpeg'
+        with open(path, 'rb') as f:
+            data = f.read()
+        return web.Response(body=data, content_type=mime)
+
     async def handle_chat(self, request):
         """POST /api/chat — send message to the AI and get response.
         Accepts JSON body OR multipart/form-data with file attachments.
@@ -1964,7 +1999,7 @@ function sendChat() { sendChatMain(); }
                         user_msg = (await part.text()).strip()
                     elif part.name == 'files':
                         filename = part.filename or 'unnamed'
-                        raw = await part.read(chunk_size=5 * 1024 * 1024)
+                        raw = await part.read(5 * 1024 * 1024)
                         try:
                             text = raw.decode('utf-8', errors='replace')
                         except Exception:
@@ -1996,7 +2031,14 @@ function sendChat() { sendChatMain(); }
 
             response = await self.core.gateway.speak(full_msg)
             await self.core.log(f"[Core] Byte: {response}", priority=2)
-            return web.json_response({'response': response})
+            # Check if a generated image should be delivered inline
+            resp_data = {'response': response}
+            image_file = getattr(self.core.gateway, 'last_image_file', None)
+            if image_file and os.path.exists(image_file):
+                fname = os.path.basename(image_file)
+                resp_data['image_url'] = f'/api/image/{fname}'
+                self.core.gateway.last_image_file = None
+            return web.json_response(resp_data)
         except Exception as e:
             return web.json_response({'error': str(e)}, status=500)
 

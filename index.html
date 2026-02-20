@@ -4,7 +4,7 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Galactic AI — Sovereign. Universal. Fast.</title>
-  <meta name="description" content="A local-first AI automation platform with true persistent memory, voice I/O, 72+ tools, 14 providers, and a real-time control deck. Runs on your machine. No subscriptions." />
+  <meta name="description" content="A local-first AI automation platform with true persistent memory, voice I/O, 92+ tools, 14 providers, and a real-time control deck. Runs on your machine. No subscriptions." />
   <style>
     :root {
       --bg: #0a0a0f;
@@ -386,11 +386,11 @@
 
 <!-- HERO -->
 <div class="hero">
-  <div class="hero-badge">v0.7.1 — Now with True Persistent Memory</div>
-  <h1>Your AI that actually<br><span class="grad">remembers you.</span></h1>
-  <p>A local-first AI automation platform with true persistent memory, voice I/O, 72+ tools, 14 providers, and a real-time control deck. Runs on your machine. No subscriptions. No cloud required.</p>
+  <div class="hero-badge">v0.8.0 — Ultimate Automation Suite · 92+ Tools</div>
+  <h1>Your AI that actually<br><span class="grad">does everything.</span></h1>
+  <p>A local-first AI automation platform with true persistent memory, voice I/O, 92+ tools, 14 providers, and a real-time control deck. Runs on your machine. No subscriptions. No cloud required.</p>
   <div class="hero-actions">
-    <a href="https://github.com/cmmchsvc-dev/Galactic-AI/releases/latest" class="btn-primary">Download v0.7.1</a>
+    <a href="https://github.com/cmmchsvc-dev/Galactic-AI/releases/latest" class="btn-primary">Download v0.8.0</a>
     <a href="https://github.com/cmmchsvc-dev/Galactic-AI" class="btn-secondary">View on GitHub</a>
   </div>
   <p class="hero-sub">Free &amp; open source · Python 3.10+ · Windows / macOS / Linux</p>
@@ -398,7 +398,7 @@
 
 <!-- STATS BAR -->
 <div class="stats-bar">
-  <div class="stat"><span class="stat-num">72+</span><span class="stat-label">Built-in Tools</span></div>
+  <div class="stat"><span class="stat-num">92+</span><span class="stat-label">Built-in Tools</span></div>
   <div class="stat"><span class="stat-num">14</span><span class="stat-label">AI Providers</span></div>
   <div class="stat"><span class="stat-num">56</span><span class="stat-label">Browser Actions</span></div>
   <div class="stat"><span class="stat-num">100%</span><span class="stat-label">Local Mode Available</span></div>
@@ -545,44 +545,56 @@
 
 <!-- TOOLS -->
 <section id="tools">
-  <h2>72+ Built-In Tools</h2>
+  <h2>92+ Built-In Tools</h2>
   <p class="section-sub">The AI can use all of these autonomously, chaining them together to complete complex tasks.</p>
   <div class="tools-categories">
     <div class="tool-cat">
       <h4>File System</h4>
-      <ul><li>read_file</li><li>write_file</li><li>edit_file</li></ul>
+      <ul><li>read_file / write_file / edit_file</li><li>list_dir (rich listing)</li><li>find_files (glob search)</li><li>hash_file (SHA256/MD5)</li><li>diff_files (unified diff)</li><li>zip_create / zip_extract</li><li>image_info (dimensions/format)</li></ul>
     </div>
     <div class="tool-cat">
       <h4>Shell & Process</h4>
-      <ul><li>exec_shell</li><li>process_start</li><li>process_status</li><li>process_kill</li><li>schedule_task</li><li>list_tasks</li></ul>
+      <ul><li>exec_shell (PowerShell)</li><li>process_start / status / kill</li><li>kill_process_by_name</li><li>schedule_task / list_tasks</li><li>system_info (CPU/RAM/disk)</li><li>env_get / env_set</li></ul>
     </div>
     <div class="tool-cat">
-      <h4>Web & Search</h4>
-      <ul><li>web_search (DuckDuckGo)</li><li>web_fetch</li></ul>
+      <h4>Web & HTTP</h4>
+      <ul><li>web_search (DuckDuckGo)</li><li>web_fetch (read pages)</li><li>http_request (raw REST API)</li></ul>
     </div>
     <div class="tool-cat">
       <h4>Memory</h4>
       <ul><li>memory_imprint → MEMORY.md</li><li>memory_search</li></ul>
     </div>
     <div class="tool-cat">
-      <h4>Vision & Audio</h4>
-      <ul><li>analyze_image</li><li>text_to_speech</li></ul>
+      <h4>Vision, Audio & Image Gen</h4>
+      <ul><li>analyze_image (vision AI)</li><li>text_to_speech (ElevenLabs/edge-tts)</li><li>generate_image (FLUX.1)</li><li>generate_image_sd35 (SD 3.5)</li><li>color_pick (sample pixel color)</li></ul>
+    </div>
+    <div class="tool-cat">
+      <h4>Clipboard & Notifications</h4>
+      <ul><li>clipboard_get / clipboard_set</li><li>notify (desktop toast)</li><li>qr_generate (QR code images)</li><li>text_transform (15 operations)</li></ul>
+    </div>
+    <div class="tool-cat">
+      <h4>Window Management</h4>
+      <ul><li>window_list (all open windows)</li><li>window_focus (bring to front)</li><li>window_resize (move/resize)</li></ul>
+    </div>
+    <div class="tool-cat">
+      <h4>Desktop Automation</h4>
+      <ul><li>desktop_screenshot + AI analysis</li><li>desktop_click / type / move</li><li>desktop_scroll / hotkey</li><li>desktop_drag / locate</li></ul>
     </div>
     <div class="tool-cat">
       <h4>Browser Navigation</h4>
-      <ul><li>open_browser</li><li>browser_search</li><li>screenshot</li><li>browser_snapshot</li><li>browser_pdf</li><li>browser_new_tab</li></ul>
+      <ul><li>open_browser / browser_search</li><li>screenshot / browser_snapshot</li><li>browser_pdf / browser_new_tab</li></ul>
     </div>
     <div class="tool-cat">
       <h4>Browser Interaction</h4>
-      <ul><li>click / type / hover</li><li>fill_form / select</li><li>drag / scroll</li><li>download / upload</li><li>by selector, ref, or coords</li></ul>
+      <ul><li>click / type / hover</li><li>fill_form / select / drag</li><li>download / upload / scroll</li><li>by selector, ref, or coords</li></ul>
     </div>
     <div class="tool-cat">
       <h4>Browser Data</h4>
-      <ul><li>browser_extract</li><li>browser_execute_js</li><li>network_requests</li><li>console_logs / errors</li><li>local / session storage</li></ul>
+      <ul><li>browser_extract / execute_js</li><li>network_requests / console_logs</li><li>local / session storage</li><li>browser_response_body</li></ul>
     </div>
     <div class="tool-cat">
       <h4>Advanced Browser</h4>
-      <ul><li>intercept network</li><li>set geolocation</li><li>emulate media</li><li>save / load session</li><li>trace recording</li><li>proxy routing</li></ul>
+      <ul><li>intercept / mock network</li><li>geolocation / media emulation</li><li>save / load sessions</li><li>trace recording / proxy routing</li></ul>
     </div>
   </div>
 </section>
@@ -666,7 +678,7 @@
   <h2>Ready to run your own AI?</h2>
   <p>Free. Open source. Runs on your machine. No subscriptions, no cloud lock-in, no data leaks.</p>
   <div class="hero-actions">
-    <a href="https://github.com/cmmchsvc-dev/Galactic-AI/releases/latest" class="btn-primary">Download v0.7.1 Free</a>
+    <a href="https://github.com/cmmchsvc-dev/Galactic-AI/releases/latest" class="btn-primary">Download v0.8.0 Free</a>
     <a href="https://github.com/cmmchsvc-dev/Galactic-AI" class="btn-secondary">View Source on GitHub</a>
   </div>
   <p style="margin-top:1.5rem;color:var(--muted);font-size:0.875rem;">Windows · macOS · Linux · Chromebook · WSL2</p>
@@ -674,7 +686,7 @@
 
 <!-- FOOTER -->
 <footer>
-  <span>⭐ Galactic AI v0.7.1</span>
+  <span>⭐ Galactic AI v0.8.0</span>
   <a href="https://github.com/cmmchsvc-dev/Galactic-AI">GitHub</a>
   <a href="https://github.com/cmmchsvc-dev/Galactic-AI/releases">Releases</a>
   <a href="https://github.com/cmmchsvc-dev/Galactic-AI/blob/main/README.md">Docs</a>

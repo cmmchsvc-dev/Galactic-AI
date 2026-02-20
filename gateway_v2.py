@@ -16,6 +16,18 @@ logger = logging.getLogger("GalacticGateway")
 logging.getLogger("httpx").setLevel(logging.WARNING)
 logging.getLogger("httpcore").setLevel(logging.WARNING)
 
+# NVIDIA models that require extra body params for thinking/reasoning.
+# These are injected into the payload when the active model is on this list.
+_NVIDIA_THINKING_MODELS = {
+    "z-ai/glm5":              {"chat_template_kwargs": {"enable_thinking": True, "clear_thinking": False}},
+    "moonshotai/kimi-k2.5":   {"chat_template_kwargs": {"thinking": True}},
+    "qwen/qwen3.5-397b-a17b": {"chat_template_kwargs": {"enable_thinking": True}},
+    "nvidia/nemotron-3-nano-30b-a3b": {
+        "reasoning_budget": 16384,
+        "chat_template_kwargs": {"enable_thinking": True},
+    },
+}
+
 class GalacticGateway:
     def __init__(self, core):
         self.core = core
@@ -971,6 +983,307 @@ class GalacticGateway:
                 },
                 "fn": self.tool_desktop_locate
             },
+
+            # ── NVIDIA FLUX image generation ──────────────────────────────
+            "generate_image": {
+                "description": "Generate an image using FLUX AI via NVIDIA. Returns the path to the saved PNG file. Models: 'black-forest-labs/flux.1-schnell' (fast, 4 steps) or 'black-forest-labs/flux.1-dev' (quality, 50 steps).",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "prompt": {"type": "string", "description": "Image description / prompt"},
+                        "model": {"type": "string", "description": "FLUX model ID (default: flux.1-schnell)"},
+                        "width": {"type": "integer", "description": "Image width in pixels (default: 1024)"},
+                        "height": {"type": "integer", "description": "Image height in pixels (default: 1024)"},
+                        "steps": {"type": "integer", "description": "Diffusion steps — schnell default 4, dev default 50"}
+                    },
+                    "required": ["prompt"]
+                },
+                "fn": self.tool_generate_image
+            },
+
+            # ── Stable Diffusion 3.5 image generation ─────────────────────────
+            "generate_image_sd35": {
+                "description": "Generate an image using Stable Diffusion 3.5 Large via NVIDIA NIM. Higher quality, different style than FLUX. Returns path to saved image.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "prompt":          {"type": "string",  "description": "Image description / prompt"},
+                        "negative_prompt": {"type": "string",  "description": "Things to avoid in the image (optional)"},
+                        "width":           {"type": "integer", "description": "Image width in pixels (default: 1024, max: 1536)"},
+                        "height":          {"type": "integer", "description": "Image height in pixels (default: 1024, max: 1536)"},
+                        "steps":           {"type": "integer", "description": "Diffusion steps (default: 40, range: 10-100)"},
+                        "cfg_scale":       {"type": "number",  "description": "Guidance scale (default: 5.0, range: 1-20)"},
+                        "seed":            {"type": "integer", "description": "Random seed (0 = random)"},
+                    },
+                    "required": ["prompt"]
+                },
+                "fn": self.tool_generate_image_sd35
+            },
+
+            # ── File & system utilities ────────────────────────────────────────
+            "list_dir": {
+                "description": "List files and directories at a path with sizes, dates, and types. Better than exec_shell for directory listings.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "path":    {"type": "string",  "description": "Directory path to list (default: current working directory)"},
+                        "pattern": {"type": "string",  "description": "Optional glob pattern to filter, e.g. '*.py' or '*.txt'"},
+                        "recurse": {"type": "boolean", "description": "Recurse into subdirectories (default: false)"},
+                    },
+                    "required": []
+                },
+                "fn": self.tool_list_dir
+            },
+            "find_files": {
+                "description": "Find files matching a name pattern recursively under a directory. Faster and safer than exec_shell find/dir.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "path":    {"type": "string", "description": "Root directory to search from (default: current working directory)"},
+                        "pattern": {"type": "string", "description": "Glob pattern, e.g. '*.log', '**/*.py', 'config.*'"},
+                        "limit":   {"type": "integer", "description": "Maximum results to return (default: 100)"},
+                    },
+                    "required": ["pattern"]
+                },
+                "fn": self.tool_find_files
+            },
+            "hash_file": {
+                "description": "Compute SHA256 (default), MD5, or SHA1 checksum of a file. Useful for verifying downloads or detecting changes.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "path":      {"type": "string", "description": "Path to the file"},
+                        "algorithm": {"type": "string", "description": "Hash algorithm: sha256 (default), md5, sha1"},
+                    },
+                    "required": ["path"]
+                },
+                "fn": self.tool_hash_file
+            },
+            "diff_files": {
+                "description": "Show a unified diff between two text files, or between a file and a string. Great for reviewing changes before overwriting.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "path_a":  {"type": "string", "description": "Path to first file"},
+                        "path_b":  {"type": "string", "description": "Path to second file (if comparing two files)"},
+                        "text_b":  {"type": "string", "description": "String content to compare against path_a (if not comparing two files)"},
+                        "context": {"type": "integer", "description": "Lines of context around changes (default: 3)"},
+                    },
+                    "required": ["path_a"]
+                },
+                "fn": self.tool_diff_files
+            },
+            "zip_create": {
+                "description": "Create a ZIP archive from a file or directory.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "source":      {"type": "string", "description": "File or directory path to archive"},
+                        "destination": {"type": "string", "description": "Output .zip file path (default: source + '.zip')"},
+                    },
+                    "required": ["source"]
+                },
+                "fn": self.tool_zip_create
+            },
+            "zip_extract": {
+                "description": "Extract a ZIP archive to a directory.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "source":      {"type": "string", "description": "Path to the .zip file"},
+                        "destination": {"type": "string", "description": "Directory to extract into (default: same directory as zip)"},
+                    },
+                    "required": ["source"]
+                },
+                "fn": self.tool_zip_extract
+            },
+            "image_info": {
+                "description": "Get metadata about an image file: dimensions, format, file size, color mode. Does NOT send the image to any AI — pure local metadata.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "path": {"type": "string", "description": "Path to image file"},
+                    },
+                    "required": ["path"]
+                },
+                "fn": self.tool_image_info
+            },
+
+            # ── Clipboard ─────────────────────────────────────────────────────
+            "clipboard_get": {
+                "description": "Read the current text content of the OS clipboard.",
+                "parameters": {"type": "object", "properties": {}, "required": []},
+                "fn": self.tool_clipboard_get
+            },
+            "clipboard_set": {
+                "description": "Write text to the OS clipboard so the user can paste it anywhere.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "text": {"type": "string", "description": "Text to put on the clipboard"},
+                    },
+                    "required": ["text"]
+                },
+                "fn": self.tool_clipboard_set
+            },
+
+            # ── Desktop notifications ─────────────────────────────────────────
+            "notify": {
+                "description": "Send a desktop notification (toast/balloon) to the user's screen. Works on Windows, macOS, and Linux.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "title":   {"type": "string", "description": "Notification title"},
+                        "message": {"type": "string", "description": "Notification body text"},
+                        "sound":   {"type": "boolean", "description": "Play a sound (default: false)"},
+                    },
+                    "required": ["title", "message"]
+                },
+                "fn": self.tool_notify
+            },
+
+            # ── Window management ─────────────────────────────────────────────
+            "window_list": {
+                "description": "List all currently open application windows with their titles, process names, and window IDs.",
+                "parameters": {"type": "object", "properties": {}, "required": []},
+                "fn": self.tool_window_list
+            },
+            "window_focus": {
+                "description": "Bring a window to the foreground and focus it by title substring or window ID.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "title": {"type": "string", "description": "Partial window title to match (case-insensitive)"},
+                        "hwnd":  {"type": "integer", "description": "Exact window handle/ID from window_list"},
+                    },
+                    "required": []
+                },
+                "fn": self.tool_window_focus
+            },
+            "window_resize": {
+                "description": "Resize and/or move an application window by title or window ID.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "title":  {"type": "string",  "description": "Partial window title to match"},
+                        "hwnd":   {"type": "integer", "description": "Window handle from window_list"},
+                        "x":      {"type": "integer", "description": "Left position (pixels from screen left)"},
+                        "y":      {"type": "integer", "description": "Top position (pixels from screen top)"},
+                        "width":  {"type": "integer", "description": "Window width in pixels"},
+                        "height": {"type": "integer", "description": "Window height in pixels"},
+                    },
+                    "required": []
+                },
+                "fn": self.tool_window_resize
+            },
+
+            # ── HTTP / API ────────────────────────────────────────────────────
+            "http_request": {
+                "description": "Make a raw HTTP request (GET, POST, PUT, DELETE, PATCH) to any URL. Supports custom headers, JSON body, and form data. Great for calling REST APIs directly.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "method":  {"type": "string", "description": "HTTP method: GET, POST, PUT, DELETE, PATCH (default: GET)"},
+                        "url":     {"type": "string", "description": "Full URL including protocol"},
+                        "headers": {"type": "object", "description": "Request headers as key-value pairs"},
+                        "json":    {"type": "object", "description": "JSON body (sets Content-Type: application/json automatically)"},
+                        "data":    {"type": "string", "description": "Raw string body"},
+                        "params":  {"type": "object", "description": "URL query parameters as key-value pairs"},
+                        "timeout": {"type": "integer", "description": "Timeout in seconds (default: 30)"},
+                    },
+                    "required": ["url"]
+                },
+                "fn": self.tool_http_request
+            },
+
+            # ── QR code ───────────────────────────────────────────────────────
+            "qr_generate": {
+                "description": "Generate a QR code image from any text or URL. Saves to logs/ and returns the file path.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "text":       {"type": "string",  "description": "Text or URL to encode in the QR code"},
+                        "size":       {"type": "integer", "description": "Box size in pixels (default: 10)"},
+                        "border":     {"type": "integer", "description": "Border width in boxes (default: 4)"},
+                        "error_correction": {"type": "string", "description": "Error correction level: L, M, Q, H (default: M)"},
+                    },
+                    "required": ["text"]
+                },
+                "fn": self.tool_qr_generate
+            },
+
+            # ── Environment variables ─────────────────────────────────────────
+            "env_get": {
+                "description": "Read an environment variable value. Returns all env vars if no name specified (filtered list, excludes secrets).",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "name": {"type": "string", "description": "Environment variable name (e.g. PATH, HOME). Omit to list all."},
+                    },
+                    "required": []
+                },
+                "fn": self.tool_env_get
+            },
+            "env_set": {
+                "description": "Set an environment variable for the current process (affects subprocesses spawned from this session).",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "name":  {"type": "string", "description": "Environment variable name"},
+                        "value": {"type": "string", "description": "Value to set"},
+                    },
+                    "required": ["name", "value"]
+                },
+                "fn": self.tool_env_set
+            },
+
+            # ── System info ────────────────────────────────────────────────────
+            "system_info": {
+                "description": "Get detailed system information: CPU, RAM, disk usage, OS version, uptime, Python version, and running process count.",
+                "parameters": {"type": "object", "properties": {}, "required": []},
+                "fn": self.tool_system_info
+            },
+            "kill_process_by_name": {
+                "description": "Kill all running processes matching a name or partial name (e.g. 'chrome', 'notepad'). More convenient than process_kill which needs an ID.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "name":  {"type": "string",  "description": "Process name or partial name to match (case-insensitive)"},
+                        "force": {"type": "boolean", "description": "Force kill (SIGKILL/taskkill /F). Default: false (graceful SIGTERM)"},
+                    },
+                    "required": ["name"]
+                },
+                "fn": self.tool_kill_process_by_name
+            },
+
+            # ── Color picker ───────────────────────────────────────────────────
+            "color_pick": {
+                "description": "Sample the pixel color at exact desktop screen coordinates. Returns hex, RGB, and HSL values. Useful for UI automation color verification.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "x": {"type": "integer", "description": "X coordinate (pixels from left edge of screen)"},
+                        "y": {"type": "integer", "description": "Y coordinate (pixels from top edge of screen)"},
+                    },
+                    "required": ["x", "y"]
+                },
+                "fn": self.tool_color_pick
+            },
+
+            # ── Text / data utilities ──────────────────────────────────────────
+            "text_transform": {
+                "description": "Transform text: convert case, encode/decode base64, URL-encode/decode, count words/lines/chars, reverse, strip, wrap, or extract regex matches.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "text":      {"type": "string", "description": "Input text to transform"},
+                        "operation": {"type": "string", "description": "Operation: upper, lower, title, snake_case, camel_case, base64_encode, base64_decode, url_encode, url_decode, reverse, count, strip, regex_extract, json_format, csv_to_json"},
+                        "pattern":   {"type": "string", "description": "Regex pattern (for regex_extract operation)"},
+                    },
+                    "required": ["text", "operation"]
+                },
+                "fn": self.tool_text_transform
+            },
         }
 
     # --- Tool Implementations ---
@@ -1848,8 +2161,84 @@ class GalacticGateway:
                 f"Center: ({result['center_x']},{result['center_y']})"
             )
         elif result['status'] == 'not_found':
-            return f"[DESKTOP] Image not found on screen: {image_path}. {result.get('message', '')}"
+            return f"[DESKTOP] Image not found on screen: {image_path}"
         return f"[ERROR] Desktop locate: {result.get('message')}"
+
+    async def tool_generate_image(self, args):
+        """Generate an image using FLUX via NVIDIA's GenAI API."""
+        import base64 as _b64, time as _time
+        prompt = args.get('prompt', '')
+        if not prompt:
+            return "[ERROR] generate_image requires a 'prompt' argument."
+        model = args.get('model', 'black-forest-labs/flux.1-schnell')
+        # Strip nvidia/ prefix if user passed the alias path
+        if model.startswith('nvidia/'):
+            model = model[len('nvidia/'):]
+        width = int(args.get('width', 1024))
+        height = int(args.get('height', 1024))
+        is_schnell = 'schnell' in model
+        steps = int(args.get('steps', 4 if is_schnell else 50))
+
+        # FLUX schnell and dev each have their own API key.
+        # fluxDevApiKey → flux.1-dev, fluxApiKey → flux.1-schnell, apiKey → fallback.
+        nvidia_cfg = self.core.config.get('providers', {}).get('nvidia', {})
+        if not is_schnell:
+            nvidia_key = (
+                nvidia_cfg.get('fluxDevApiKey') or
+                nvidia_cfg.get('fluxApiKey') or
+                nvidia_cfg.get('apiKey') or ''
+            )
+        else:
+            nvidia_key = (
+                nvidia_cfg.get('fluxApiKey') or
+                nvidia_cfg.get('apiKey') or ''
+            )
+        if not nvidia_key:
+            return "[ERROR] NVIDIA FLUX key not found — add providers.nvidia.fluxApiKey (schnell) or fluxDevApiKey (dev) to config.yaml"
+
+        url = f"https://ai.api.nvidia.com/v1/genai/{model}"
+        headers = {
+            "Authorization": f"Bearer {nvidia_key}",
+            "Accept": "application/json",
+            "Content-Type": "application/json",
+        }
+        # Build payload — schnell doesn't support cfg_scale or mode fields
+        payload = {"prompt": prompt, "width": width, "height": height, "seed": 0, "steps": steps}
+        if not is_schnell:
+            payload["mode"] = "base"
+            payload["cfg_scale"] = 5  # dev default per NVIDIA docs (1-9 range)
+
+        try:
+            async with httpx.AsyncClient(timeout=120.0) as client:
+                r = await client.post(url, headers=headers, json=payload)
+                if r.status_code == 401:
+                    return f"[ERROR] NVIDIA GenAI 401 Unauthorized — key used: nvapi-...{nvidia_key[-8:]}. Check that your NVIDIA API key has access to the FLUX model at ai.api.nvidia.com."
+                if r.status_code == 500:
+                    return f"[ERROR] NVIDIA GenAI HTTP 500 — their inference server is down right now. Do NOT retry. Report this to the user and suggest trying again in a few minutes or switching to flux.1-schnell."
+                if r.status_code != 200:
+                    return f"[ERROR] NVIDIA GenAI HTTP {r.status_code}: {r.text[:500]}"
+                data = r.json()
+
+            artifact = data.get('artifacts', [{}])[0]
+            finish = artifact.get('finishReason', '')
+            if finish == 'CONTENT_FILTERED':
+                return "⚠️ Image generation blocked by content filter. Try a different prompt."
+            b64 = artifact.get('base64', '')
+            if not b64:
+                return f"[ERROR] Image generation failed: {json.dumps(data)}"
+
+            # API returns JPEG data
+            logs_dir = self.core.config.get('paths', {}).get('logs', './logs')
+            os.makedirs(logs_dir, exist_ok=True)
+            fname = f"flux_{int(_time.time())}.jpg"
+            path = os.path.join(logs_dir, fname)
+            with open(path, 'wb') as f:
+                f.write(_b64.b64decode(b64))
+            # Signal Telegram bridge and web deck to deliver the image directly
+            self.last_image_file = path
+            return f"✅ Image generated and saved to: {path}\nModel: {model}\nPrompt: {prompt}"
+        except Exception as e:
+            return f"[ERROR] generate_image: {str(e)}"
 
     async def tool_schedule_task(self, args):
         """Schedule a task/reminder using the scheduler plugin."""
@@ -2693,7 +3082,7 @@ class GalacticGateway:
         turn_count = 0
         last_tool_call = None  # Track last (tool_name, json_args_str) to prevent duplicate calls
         # Tools that are legitimately called repeatedly with same args (snapshots, reads, etc.)
-        _DUPLICATE_EXEMPT = {'browser_snapshot', 'web_search', 'read_file', 'memory_search'}
+        _DUPLICATE_EXEMPT = {'browser_snapshot', 'web_search', 'read_file', 'memory_search', 'generate_image'}
 
         for _ in range(max_turns):
             turn_count += 1
@@ -3132,6 +3521,15 @@ class GalacticGateway:
 
     async def _call_openai_compatible(self, prompt, context):
         """OpenAI-compatible API call (NVIDIA, XAI, Ollama). All URLs are config-driven."""
+
+        # FLUX models are image-generation only — they don't support chat/completions.
+        # Auto-invoke generate_image with the user's prompt instead of erroring.
+        if self.llm.provider == "nvidia" and "flux" in self.llm.model.lower():
+            return await self.tool_generate_image({
+                "prompt": prompt,
+                "model": self.llm.model,
+            })
+
         url = f"{self._get_provider_base_url(self.llm.provider)}/chat/completions"
 
         # Ollama doesn't need auth header
@@ -3158,13 +3556,27 @@ class GalacticGateway:
         if max_tokens:
             payload["max_tokens"] = max_tokens
 
+        # Inject thinking/reasoning params for NVIDIA models that require them
+        if self.llm.provider == "nvidia":
+            extra = _NVIDIA_THINKING_MODELS.get(self.llm.model, {})
+            if extra:
+                payload.update(extra)
+
         try:
             async with httpx.AsyncClient(timeout=120.0, verify=False) as client:
                 response = await client.post(url, headers=headers, json=payload)
                 data = response.json()
                 if 'choices' not in data:
                     return f"[ERROR] {self.llm.provider}: {json.dumps(data)}"
-                return data['choices'][0]['message']['content']
+                msg = data['choices'][0]['message']
+                content = (msg.get('content') or '').strip()
+                reasoning = (msg.get('reasoning_content') or '').strip()
+                if content:
+                    return content
+                elif reasoning:
+                    return f"[Reasoning]\n{reasoning}"
+                else:
+                    return '[No response]'
         except Exception as e:
             return f"[ERROR] {self.llm.provider}: {str(e)}"
 
@@ -3302,5 +3714,766 @@ class GalacticGateway:
                     return data['choices'][0]['message']['content']
             except Exception as e:
                 return f"[ERROR] {provider}: {str(e)}"
+
+
+    # ═══════════════════════════════════════════════════════════════════════════
+    # ── v0.8.0 NEW TOOLS — Ultimate Automation Suite ──────────────────────────
+    # ═══════════════════════════════════════════════════════════════════════════
+
+    async def tool_generate_image_sd35(self, args):
+        """Generate an image using Stable Diffusion 3.5 Large via NVIDIA NIM."""
+        import base64 as _b64, time as _time
+        prompt = args.get('prompt', '')
+        if not prompt:
+            return "[ERROR] generate_image_sd35 requires a 'prompt' argument."
+        negative_prompt = args.get('negative_prompt', '')
+        width    = int(args.get('width', 1024))
+        height   = int(args.get('height', 1024))
+        steps    = int(args.get('steps', 40))
+        cfg_scale = float(args.get('cfg_scale', 5.0))
+        seed     = int(args.get('seed', 0))
+
+        nvidia_cfg = self.core.config.get('providers', {}).get('nvidia', {})
+        nvidia_key = nvidia_cfg.get('apiKey', '')
+        if not nvidia_key:
+            return "[ERROR] No nvidia.apiKey found in config.yaml"
+
+        url = "https://ai.api.nvidia.com/v1/genai/stabilityai/stable-diffusion-3-5-large"
+        headers = {
+            "Authorization": f"Bearer {nvidia_key}",
+            "Accept": "application/json",
+            "Content-Type": "application/json",
+        }
+        payload = {
+            "prompt": prompt,
+            "width": width,
+            "height": height,
+            "steps": steps,
+            "cfg_scale": cfg_scale,
+            "seed": seed,
+        }
+        if negative_prompt:
+            payload["negative_prompt"] = negative_prompt
+
+        try:
+            async with httpx.AsyncClient(timeout=120.0) as client:
+                r = await client.post(url, headers=headers, json=payload)
+                if r.status_code == 401:
+                    return f"[ERROR] NVIDIA SD3.5 401 Unauthorized — check your apiKey in config.yaml"
+                if r.status_code == 500:
+                    return "[ERROR] NVIDIA SD3.5 HTTP 500 — inference server error. Try again in a few minutes."
+                if r.status_code != 200:
+                    return f"[ERROR] NVIDIA SD3.5 HTTP {r.status_code}: {r.text[:500]}"
+                data = r.json()
+
+            artifact = data.get('artifacts', [{}])[0]
+            finish = artifact.get('finishReason', '')
+            if finish == 'CONTENT_FILTERED':
+                return "⚠️ Image blocked by content filter. Try a different prompt."
+            b64 = artifact.get('base64', '')
+            if not b64:
+                return f"[ERROR] SD3.5 generation failed: {json.dumps(data)}"
+
+            logs_dir = self.core.config.get('paths', {}).get('logs', './logs')
+            os.makedirs(logs_dir, exist_ok=True)
+            fname = f"sd35_{int(_time.time())}.jpg"
+            path = os.path.join(logs_dir, fname)
+            with open(path, 'wb') as f:
+                f.write(_b64.b64decode(b64))
+            self.last_image_file = path
+            return f"✅ SD3.5 image generated: {path}\nModel: stable-diffusion-3.5-large\nPrompt: {prompt}"
+        except Exception as e:
+            return f"[ERROR] generate_image_sd35: {e}"
+
+    async def tool_list_dir(self, args):
+        """List directory contents with sizes and dates."""
+        import glob as _glob, stat as _stat
+        from datetime import datetime as _dt
+        path    = args.get('path', '.') or '.'
+        pattern = args.get('pattern', '*')
+        recurse = bool(args.get('recurse', False))
+        try:
+            base = os.path.abspath(path)
+            if not os.path.isdir(base):
+                return f"[ERROR] Not a directory: {base}"
+            search = os.path.join(base, '**', pattern) if recurse else os.path.join(base, pattern)
+            entries = _glob.glob(search, recursive=recurse)
+            if not entries:
+                return f"No files match '{pattern}' in {base}"
+            lines = [f"{'TYPE':<5} {'SIZE':>10}  {'MODIFIED':<20}  NAME"]
+            lines.append('-' * 70)
+            for e in sorted(entries)[:500]:
+                try:
+                    st   = os.stat(e)
+                    kind = 'DIR ' if os.path.isdir(e) else 'FILE'
+                    size = '' if os.path.isdir(e) else f"{st.st_size:,}"
+                    mtime = _dt.fromtimestamp(st.st_mtime).strftime('%Y-%m-%d %H:%M:%S')
+                    name = os.path.relpath(e, base)
+                    lines.append(f"{kind:<5} {size:>10}  {mtime:<20}  {name}")
+                except Exception:
+                    pass
+            if len(entries) > 500:
+                lines.append(f"... (showing 500 of {len(entries)} matches)")
+            return '\n'.join(lines)
+        except Exception as e:
+            return f"[ERROR] list_dir: {e}"
+
+    async def tool_find_files(self, args):
+        """Find files matching a glob pattern recursively."""
+        import glob as _glob
+        path    = args.get('path', '.') or '.'
+        pattern = args.get('pattern', '*')
+        limit   = int(args.get('limit', 100))
+        try:
+            base = os.path.abspath(path)
+            if '**' in pattern or '/' in pattern or '\\' in pattern:
+                search = os.path.join(base, pattern)
+            else:
+                search = os.path.join(base, '**', pattern)
+            results = _glob.glob(search, recursive=True)
+            results = [os.path.relpath(r, base) for r in sorted(results)]
+            total = len(results)
+            results = results[:limit]
+            if not results:
+                return f"No files found matching '{pattern}' under {base}"
+            out = '\n'.join(results)
+            if total > limit:
+                out += f"\n... ({total - limit} more results — increase limit to see all)"
+            return f"Found {total} file(s):\n{out}"
+        except Exception as e:
+            return f"[ERROR] find_files: {e}"
+
+    async def tool_hash_file(self, args):
+        """Compute a file's hash checksum."""
+        import hashlib as _hl
+        path = args.get('path', '')
+        algo = args.get('algorithm', 'sha256').lower()
+        algos = {'sha256': _hl.sha256, 'md5': _hl.md5, 'sha1': _hl.sha1}
+        if algo not in algos:
+            return f"[ERROR] Unsupported algorithm '{algo}'. Choose: sha256, md5, sha1"
+        try:
+            h = algos[algo]()
+            with open(path, 'rb') as f:
+                for chunk in iter(lambda: f.read(65536), b''):
+                    h.update(chunk)
+            size = os.path.getsize(path)
+            return f"{algo.upper()}: {h.hexdigest()}\nFile: {path}\nSize: {size:,} bytes"
+        except Exception as e:
+            return f"[ERROR] hash_file: {e}"
+
+    async def tool_diff_files(self, args):
+        """Show unified diff between two files or a file and a string."""
+        import difflib as _diff
+        path_a  = args.get('path_a', '')
+        path_b  = args.get('path_b', '')
+        text_b  = args.get('text_b', None)
+        context = int(args.get('context', 3))
+        try:
+            with open(path_a, 'r', encoding='utf-8', errors='replace') as f:
+                lines_a = f.readlines()
+            if path_b:
+                with open(path_b, 'r', encoding='utf-8', errors='replace') as f:
+                    lines_b = f.readlines()
+                label_b = path_b
+            elif text_b is not None:
+                lines_b = [l if l.endswith('\n') else l + '\n' for l in text_b.splitlines()]
+                label_b = '<new content>'
+            else:
+                return "[ERROR] Provide path_b or text_b to compare against."
+            diff = list(_diff.unified_diff(lines_a, lines_b, fromfile=path_a, tofile=label_b, n=context))
+            if not diff:
+                return "✅ Files are identical — no differences found."
+            return ''.join(diff)
+        except Exception as e:
+            return f"[ERROR] diff_files: {e}"
+
+    async def tool_zip_create(self, args):
+        """Create a ZIP archive from a file or directory."""
+        import zipfile as _zip, time as _time
+        source = args.get('source', '')
+        dest   = args.get('destination', '') or source.rstrip('/\\') + '.zip'
+        try:
+            source = os.path.abspath(source)
+            dest   = os.path.abspath(dest)
+            if not os.path.exists(source):
+                return f"[ERROR] Source does not exist: {source}"
+            with _zip.ZipFile(dest, 'w', compression=_zip.ZIP_DEFLATED) as zf:
+                if os.path.isdir(source):
+                    for root, dirs, files in os.walk(source):
+                        for file in files:
+                            fp = os.path.join(root, file)
+                            zf.write(fp, os.path.relpath(fp, os.path.dirname(source)))
+                else:
+                    zf.write(source, os.path.basename(source))
+            size = os.path.getsize(dest)
+            return f"✅ Created: {dest}\nSize: {size:,} bytes"
+        except Exception as e:
+            return f"[ERROR] zip_create: {e}"
+
+    async def tool_zip_extract(self, args):
+        """Extract a ZIP archive."""
+        import zipfile as _zip
+        source = args.get('source', '')
+        dest   = args.get('destination', '') or os.path.dirname(os.path.abspath(source))
+        try:
+            source = os.path.abspath(source)
+            dest   = os.path.abspath(dest)
+            os.makedirs(dest, exist_ok=True)
+            with _zip.ZipFile(source, 'r') as zf:
+                names = zf.namelist()
+                zf.extractall(dest)
+            return f"✅ Extracted {len(names)} files to: {dest}"
+        except Exception as e:
+            return f"[ERROR] zip_extract: {e}"
+
+    async def tool_image_info(self, args):
+        """Get image metadata without loading to AI."""
+        path = args.get('path', '')
+        try:
+            from PIL import Image as _Image
+            size = os.path.getsize(path)
+            with _Image.open(path) as img:
+                w, h   = img.size
+                fmt    = img.format or 'UNKNOWN'
+                mode   = img.mode
+                info   = img.info
+            exif_str = ''
+            if 'exif' in info:
+                exif_str = ' (EXIF data present)'
+            return (
+                f"File:       {path}\n"
+                f"Format:     {fmt}\n"
+                f"Dimensions: {w} x {h} px\n"
+                f"Color mode: {mode}\n"
+                f"File size:  {size:,} bytes ({size/1024:.1f} KB){exif_str}"
+            )
+        except ImportError:
+            # Fallback without PIL — just file size + extension
+            ext = os.path.splitext(path)[1].upper().lstrip('.')
+            size = os.path.getsize(path) if os.path.exists(path) else 0
+            return f"File: {path}\nFormat: {ext}\nFile size: {size:,} bytes\n(Install Pillow for full metadata: pip install Pillow)"
+        except Exception as e:
+            return f"[ERROR] image_info: {e}"
+
+    async def tool_clipboard_get(self, args):
+        """Read text from the OS clipboard."""
+        try:
+            import subprocess as _sp, sys as _sys
+            if _sys.platform == 'win32':
+                result = await asyncio.create_subprocess_exec(
+                    'powershell', '-Command', 'Get-Clipboard',
+                    stdout=_sp.PIPE, stderr=_sp.PIPE
+                )
+                stdout, _ = await result.communicate()
+                text = stdout.decode('utf-8', errors='replace').strip()
+            elif _sys.platform == 'darwin':
+                result = await asyncio.create_subprocess_exec(
+                    'pbpaste', stdout=_sp.PIPE, stderr=_sp.PIPE
+                )
+                stdout, _ = await result.communicate()
+                text = stdout.decode('utf-8', errors='replace').strip()
+            else:
+                # Linux — try xclip then xsel
+                try:
+                    result = await asyncio.create_subprocess_exec(
+                        'xclip', '-selection', 'clipboard', '-o',
+                        stdout=_sp.PIPE, stderr=_sp.PIPE
+                    )
+                    stdout, _ = await result.communicate()
+                    text = stdout.decode('utf-8', errors='replace').strip()
+                except FileNotFoundError:
+                    result = await asyncio.create_subprocess_exec(
+                        'xsel', '--clipboard', '--output',
+                        stdout=_sp.PIPE, stderr=_sp.PIPE
+                    )
+                    stdout, _ = await result.communicate()
+                    text = stdout.decode('utf-8', errors='replace').strip()
+            if not text:
+                return "(Clipboard is empty)"
+            return f"Clipboard content ({len(text)} chars):\n{text}"
+        except Exception as e:
+            return f"[ERROR] clipboard_get: {e}"
+
+    async def tool_clipboard_set(self, args):
+        """Write text to the OS clipboard."""
+        text = args.get('text', '')
+        try:
+            import subprocess as _sp, sys as _sys
+            if _sys.platform == 'win32':
+                proc = await asyncio.create_subprocess_exec(
+                    'powershell', '-Command', f'Set-Clipboard -Value @"\n{text}\n"@',
+                    stdout=_sp.PIPE, stderr=_sp.PIPE
+                )
+                await proc.communicate()
+            elif _sys.platform == 'darwin':
+                proc = await asyncio.create_subprocess_exec(
+                    'pbcopy', stdin=_sp.PIPE, stdout=_sp.PIPE, stderr=_sp.PIPE
+                )
+                await proc.communicate(input=text.encode('utf-8'))
+            else:
+                try:
+                    proc = await asyncio.create_subprocess_exec(
+                        'xclip', '-selection', 'clipboard',
+                        stdin=_sp.PIPE, stdout=_sp.PIPE, stderr=_sp.PIPE
+                    )
+                    await proc.communicate(input=text.encode('utf-8'))
+                except FileNotFoundError:
+                    proc = await asyncio.create_subprocess_exec(
+                        'xsel', '--clipboard', '--input',
+                        stdin=_sp.PIPE, stdout=_sp.PIPE, stderr=_sp.PIPE
+                    )
+                    await proc.communicate(input=text.encode('utf-8'))
+            return f"✅ Copied {len(text)} characters to clipboard."
+        except Exception as e:
+            return f"[ERROR] clipboard_set: {e}"
+
+    async def tool_notify(self, args):
+        """Send a desktop notification."""
+        import sys as _sys
+        title   = args.get('title', 'Galactic AI')
+        message = args.get('message', '')
+        sound   = bool(args.get('sound', False))
+        try:
+            if _sys.platform == 'win32':
+                # Use PowerShell toast on Windows 10/11
+                ps_script = f"""
+Add-Type -AssemblyName System.Windows.Forms
+$notify = New-Object System.Windows.Forms.NotifyIcon
+$notify.Icon = [System.Drawing.SystemIcons]::Information
+$notify.Visible = $true
+$notify.ShowBalloonTip(5000, '{title.replace("'", "")}', '{message.replace("'", "")}', [System.Windows.Forms.ToolTipIcon]::Info)
+Start-Sleep -Milliseconds 5500
+$notify.Dispose()
+""".strip()
+                import subprocess as _sp
+                proc = await asyncio.create_subprocess_exec(
+                    'powershell', '-Command', ps_script,
+                    stdout=_sp.PIPE, stderr=_sp.PIPE
+                )
+                await proc.communicate()
+            elif _sys.platform == 'darwin':
+                import subprocess as _sp
+                proc = await asyncio.create_subprocess_exec(
+                    'osascript', '-e',
+                    f'display notification "{message}" with title "{title}"',
+                    stdout=_sp.PIPE, stderr=_sp.PIPE
+                )
+                await proc.communicate()
+            else:
+                import subprocess as _sp
+                proc = await asyncio.create_subprocess_exec(
+                    'notify-send', title, message,
+                    stdout=_sp.PIPE, stderr=_sp.PIPE
+                )
+                await proc.communicate()
+            return f"✅ Notification sent: '{title}' — {message}"
+        except Exception as e:
+            return f"[ERROR] notify: {e}"
+
+    async def tool_window_list(self, args):
+        """List all open windows."""
+        import sys as _sys
+        try:
+            if _sys.platform == 'win32':
+                import ctypes, ctypes.wintypes as _wt
+                EnumWindows        = ctypes.windll.user32.EnumWindows
+                GetWindowTextW     = ctypes.windll.user32.GetWindowTextW
+                GetWindowTextLengthW = ctypes.windll.user32.GetWindowTextLengthW
+                IsWindowVisible    = ctypes.windll.user32.IsWindowVisible
+                GetWindowThreadProcessId = ctypes.windll.user32.GetWindowThreadProcessId
+                EnumWindowsProc = ctypes.WINFUNCTYPE(ctypes.c_bool, ctypes.POINTER(ctypes.c_int), ctypes.POINTER(ctypes.c_int))
+                windows = []
+                def callback(hwnd, lParam):
+                    if IsWindowVisible(hwnd):
+                        length = GetWindowTextLengthW(hwnd)
+                        if length > 0:
+                            buf = ctypes.create_unicode_buffer(length + 1)
+                            GetWindowTextW(hwnd, buf, length + 1)
+                            pid = ctypes.c_ulong()
+                            GetWindowThreadProcessId(hwnd, ctypes.byref(pid))
+                            windows.append((int(hwnd), buf.value, pid.value))
+                    return True
+                EnumWindows(EnumWindowsProc(callback), 0)
+                if not windows:
+                    return "No visible windows found."
+                lines = [f"{'HWND':>10}  {'PID':>7}  TITLE"]
+                lines.append('-' * 70)
+                for hwnd, title, pid in sorted(windows, key=lambda x: x[1].lower()):
+                    lines.append(f"{hwnd:>10}  {pid:>7}  {title[:60]}")
+                return '\n'.join(lines)
+            else:
+                import subprocess as _sp
+                proc = await asyncio.create_subprocess_exec(
+                    'wmctrl', '-l', stdout=_sp.PIPE, stderr=_sp.PIPE
+                )
+                stdout, _ = await proc.communicate()
+                return stdout.decode('utf-8', errors='replace').strip() or "No windows found (wmctrl output was empty)"
+        except Exception as e:
+            return f"[ERROR] window_list: {e}"
+
+    async def tool_window_focus(self, args):
+        """Bring a window to the foreground."""
+        import sys as _sys
+        title = args.get('title', '')
+        hwnd  = args.get('hwnd', None)
+        try:
+            if _sys.platform == 'win32':
+                import ctypes
+                if hwnd:
+                    target_hwnd = int(hwnd)
+                else:
+                    # Find by title substring
+                    EnumWindows = ctypes.windll.user32.EnumWindows
+                    GetWindowTextW = ctypes.windll.user32.GetWindowTextW
+                    GetWindowTextLengthW = ctypes.windll.user32.GetWindowTextLengthW
+                    IsWindowVisible = ctypes.windll.user32.IsWindowVisible
+                    EnumWindowsProc = ctypes.WINFUNCTYPE(ctypes.c_bool, ctypes.POINTER(ctypes.c_int), ctypes.POINTER(ctypes.c_int))
+                    found = []
+                    def callback(h, lParam):
+                        if IsWindowVisible(h):
+                            length = GetWindowTextLengthW(h)
+                            if length > 0:
+                                buf = ctypes.create_unicode_buffer(length + 1)
+                                GetWindowTextW(h, buf, length + 1)
+                                if title.lower() in buf.value.lower():
+                                    found.append((int(h), buf.value))
+                        return True
+                    EnumWindows(EnumWindowsProc(callback), 0)
+                    if not found:
+                        return f"[ERROR] No window found matching '{title}'"
+                    target_hwnd = found[0][0]
+                # Restore if minimized, then set foreground
+                ctypes.windll.user32.ShowWindow(target_hwnd, 9)  # SW_RESTORE
+                ctypes.windll.user32.SetForegroundWindow(target_hwnd)
+                return f"✅ Focused window HWND={target_hwnd}"
+            else:
+                import subprocess as _sp
+                cmd = ['wmctrl', '-a', title] if title else ['wmctrl', '-ia', str(hwnd)]
+                proc = await asyncio.create_subprocess_exec(*cmd, stdout=_sp.PIPE, stderr=_sp.PIPE)
+                _, stderr = await proc.communicate()
+                if proc.returncode != 0:
+                    return f"[ERROR] wmctrl: {stderr.decode().strip()}"
+                return f"✅ Window focused"
+        except Exception as e:
+            return f"[ERROR] window_focus: {e}"
+
+    async def tool_window_resize(self, args):
+        """Resize and/or move a window."""
+        import sys as _sys
+        title  = args.get('title', '')
+        hwnd   = args.get('hwnd', None)
+        x      = args.get('x', None)
+        y      = args.get('y', None)
+        width  = args.get('width', None)
+        height = args.get('height', None)
+        try:
+            if _sys.platform == 'win32':
+                import ctypes
+                if hwnd:
+                    target_hwnd = int(hwnd)
+                else:
+                    EnumWindows = ctypes.windll.user32.EnumWindows
+                    GetWindowTextW = ctypes.windll.user32.GetWindowTextW
+                    GetWindowTextLengthW = ctypes.windll.user32.GetWindowTextLengthW
+                    IsWindowVisible = ctypes.windll.user32.IsWindowVisible
+                    EnumWindowsProc = ctypes.WINFUNCTYPE(ctypes.c_bool, ctypes.POINTER(ctypes.c_int), ctypes.POINTER(ctypes.c_int))
+                    found = []
+                    def callback(h, lParam):
+                        if IsWindowVisible(h):
+                            length = GetWindowTextLengthW(h)
+                            if length > 0:
+                                buf = ctypes.create_unicode_buffer(length + 1)
+                                GetWindowTextW(h, buf, length + 1)
+                                if title.lower() in buf.value.lower():
+                                    found.append(int(h))
+                        return True
+                    EnumWindows(EnumWindowsProc(callback), 0)
+                    if not found:
+                        return f"[ERROR] No window found matching '{title}'"
+                    target_hwnd = found[0]
+                # Get current rect
+                import ctypes.wintypes as _wt
+                rect = _wt.RECT()
+                ctypes.windll.user32.GetWindowRect(target_hwnd, ctypes.byref(rect))
+                nx = x      if x      is not None else rect.left
+                ny = y      if y      is not None else rect.top
+                nw = width  if width  is not None else (rect.right - rect.left)
+                nh = height if height is not None else (rect.bottom - rect.top)
+                ctypes.windll.user32.MoveWindow(target_hwnd, int(nx), int(ny), int(nw), int(nh), True)
+                return f"✅ Window moved/resized: pos=({nx},{ny}) size={nw}x{nh}"
+            else:
+                import subprocess as _sp
+                if title:
+                    geo = ''
+                    if width and height:
+                        geo = f"{width}x{height}"
+                        if x is not None and y is not None:
+                            geo += f"+{x}+{y}"
+                    proc = await asyncio.create_subprocess_exec(
+                        'wmctrl', '-r', title, '-e', f"0,{x or -1},{y or -1},{width or -1},{height or -1}",
+                        stdout=_sp.PIPE, stderr=_sp.PIPE
+                    )
+                    _, stderr = await proc.communicate()
+                    if proc.returncode != 0:
+                        return f"[ERROR] wmctrl: {stderr.decode().strip()}"
+                    return "✅ Window resized"
+                return "[ERROR] Provide title or hwnd"
+        except Exception as e:
+            return f"[ERROR] window_resize: {e}"
+
+    async def tool_http_request(self, args):
+        """Make a raw HTTP request to any URL."""
+        method  = args.get('method', 'GET').upper()
+        url     = args.get('url', '')
+        headers = args.get('headers', {})
+        body_json = args.get('json', None)
+        body_data = args.get('data', None)
+        params  = args.get('params', None)
+        timeout = int(args.get('timeout', 30))
+        if not url:
+            return "[ERROR] http_request requires a 'url' argument."
+        try:
+            async with httpx.AsyncClient(timeout=timeout) as client:
+                kwargs = {'headers': headers or {}}
+                if params:
+                    kwargs['params'] = params
+                if body_json is not None:
+                    kwargs['json'] = body_json
+                elif body_data is not None:
+                    kwargs['content'] = body_data.encode() if isinstance(body_data, str) else body_data
+                r = await client.request(method, url, **kwargs)
+            ct = r.headers.get('content-type', '')
+            if 'application/json' in ct:
+                try:
+                    body = json.dumps(r.json(), indent=2)[:8000]
+                except Exception:
+                    body = r.text[:8000]
+            else:
+                body = r.text[:8000]
+            return (
+                f"HTTP {r.status_code} {r.reason_phrase}\n"
+                f"Content-Type: {ct}\n"
+                f"Headers: {dict(r.headers)}\n\n"
+                f"{body}"
+            )
+        except Exception as e:
+            return f"[ERROR] http_request: {e}"
+
+    async def tool_qr_generate(self, args):
+        """Generate a QR code and save it as a PNG image."""
+        text  = args.get('text', '')
+        size  = int(args.get('size', 10))
+        border = int(args.get('border', 4))
+        ec_map = {'L': 1, 'M': 0, 'Q': 3, 'H': 2}
+        ec    = ec_map.get(args.get('error_correction', 'M').upper(), 0)
+        if not text:
+            return "[ERROR] qr_generate requires 'text' argument."
+        try:
+            import qrcode as _qr
+            import time as _time
+            qr = _qr.QRCode(
+                version=None,
+                error_correction=ec,
+                box_size=size,
+                border=border,
+            )
+            qr.add_data(text)
+            qr.make(fit=True)
+            img = qr.make_image(fill_color='black', back_color='white')
+            logs_dir = self.core.config.get('paths', {}).get('logs', './logs')
+            os.makedirs(logs_dir, exist_ok=True)
+            fname = f"qr_{int(_time.time())}.png"
+            path  = os.path.join(logs_dir, fname)
+            img.save(path)
+            self.last_image_file = path
+            return f"✅ QR code saved to: {path}\nContent: {text[:80]}"
+        except ImportError:
+            return "[ERROR] qrcode library not installed. Run: pip install qrcode[pil]"
+        except Exception as e:
+            return f"[ERROR] qr_generate: {e}"
+
+    async def tool_env_get(self, args):
+        """Read environment variable(s)."""
+        name = args.get('name', '')
+        _SKIP = {'PATH', 'PYTHONPATH', 'APPDATA', 'LOCALAPPDATA', 'PROGRAMDATA',
+                 'COMSPEC', 'PROCESSOR_ARCHITECTURE', 'NUMBER_OF_PROCESSORS'}
+        if name:
+            val = os.environ.get(name)
+            if val is None:
+                return f"Environment variable '{name}' is not set."
+            return f"{name}={val}"
+        else:
+            lines = []
+            for k, v in sorted(os.environ.items()):
+                if any(secret in k.upper() for secret in ['KEY', 'SECRET', 'PASSWORD', 'TOKEN', 'PASS']):
+                    lines.append(f"{k}=<hidden>")
+                else:
+                    lines.append(f"{k}={v[:120]}")
+            return '\n'.join(lines)
+
+    async def tool_env_set(self, args):
+        """Set an environment variable for this session."""
+        name  = args.get('name', '')
+        value = args.get('value', '')
+        if not name:
+            return "[ERROR] env_set requires 'name' argument."
+        os.environ[name] = value
+        return f"✅ Set {name}={value}"
+
+    async def tool_system_info(self, args):
+        """Return detailed system hardware and OS information."""
+        import platform as _pl, time as _tm
+        try:
+            import psutil as _ps
+            cpu_count  = _ps.cpu_count(logical=True)
+            cpu_phys   = _ps.cpu_count(logical=False)
+            cpu_pct    = _ps.cpu_percent(interval=0.3)
+            mem        = _ps.virtual_memory()
+            disk       = _ps.disk_usage('/')
+            boot_time  = _ps.boot_time()
+            uptime_s   = int(_tm.time() - boot_time)
+            uptime_str = f"{uptime_s//3600}h {(uptime_s%3600)//60}m"
+            proc_count = len(_ps.pids())
+            ram_total  = f"{mem.total / (1024**3):.1f} GB"
+            ram_used   = f"{mem.used / (1024**3):.1f} GB ({mem.percent:.0f}%)"
+            disk_total = f"{disk.total / (1024**3):.1f} GB"
+            disk_used  = f"{disk.used / (1024**3):.1f} GB ({disk.percent:.0f}%)"
+            psutil_info = (
+                f"CPU:          {cpu_phys} physical / {cpu_count} logical cores @ {cpu_pct:.1f}% usage\n"
+                f"RAM:          {ram_used} / {ram_total}\n"
+                f"Disk (/):     {disk_used} / {disk_total}\n"
+                f"Uptime:       {uptime_str}\n"
+                f"Processes:    {proc_count} running\n"
+            )
+        except ImportError:
+            psutil_info = "(Install psutil for CPU/RAM stats: pip install psutil)\n"
+        import sys as _sys
+        return (
+            f"OS:           {_pl.system()} {_pl.release()} ({_pl.version()[:60]})\n"
+            f"Machine:      {_pl.machine()} / {_pl.processor()[:60]}\n"
+            f"Python:       {_sys.version.split()[0]} ({_sys.executable})\n"
+            + psutil_info
+        )
+
+    async def tool_kill_process_by_name(self, args):
+        """Kill processes by name substring."""
+        name  = args.get('name', '').lower()
+        force = bool(args.get('force', False))
+        if not name:
+            return "[ERROR] kill_process_by_name requires 'name' argument."
+        try:
+            import psutil as _ps
+            killed = []
+            for proc in _ps.process_iter(['pid', 'name', 'cmdline']):
+                try:
+                    pname = (proc.info['name'] or '').lower()
+                    if name in pname:
+                        if force:
+                            proc.kill()
+                        else:
+                            proc.terminate()
+                        killed.append(f"PID {proc.pid}: {proc.info['name']}")
+                except (_ps.NoSuchProcess, _ps.AccessDenied):
+                    pass
+            if not killed:
+                return f"No processes found matching '{name}'"
+            return f"✅ Terminated {len(killed)} process(es):\n" + '\n'.join(killed)
+        except ImportError:
+            # Fallback to taskkill / kill
+            import subprocess as _sp
+            import sys as _sys
+            if _sys.platform == 'win32':
+                flag = '/F' if force else ''
+                cmd = ['taskkill', '/IM', f'*{name}*', flag] if flag else ['taskkill', '/IM', f'*{name}*']
+                proc = await asyncio.create_subprocess_exec(*[c for c in cmd if c], stdout=_sp.PIPE, stderr=_sp.PIPE)
+                stdout, stderr = await proc.communicate()
+                return stdout.decode('utf-8', errors='replace').strip() or stderr.decode('utf-8', errors='replace').strip()
+            else:
+                sig = '-9' if force else '-15'
+                proc = await asyncio.create_subprocess_exec('pkill', sig, '-f', name, stdout=_sp.PIPE, stderr=_sp.PIPE)
+                stdout, stderr = await proc.communicate()
+                return f"pkill exit {proc.returncode}: {(stdout+stderr).decode(errors='replace').strip() or 'Done'}"
+        except Exception as e:
+            return f"[ERROR] kill_process_by_name: {e}"
+
+    async def tool_color_pick(self, args):
+        """Sample pixel color at screen coordinates."""
+        x = int(args.get('x', 0))
+        y = int(args.get('y', 0))
+        try:
+            import pyautogui as _pag
+            import colorsys as _cs
+            pixel = _pag.screenshot().getpixel((x, y))
+            r, g, b = pixel[0], pixel[1], pixel[2]
+            h, s, v = _cs.rgb_to_hsv(r/255, g/255, b/255)
+            return (
+                f"Pixel at ({x}, {y}):\n"
+                f"  Hex:  #{r:02X}{g:02X}{b:02X}\n"
+                f"  RGB:  rgb({r}, {g}, {b})\n"
+                f"  HSV:  hsl({h*360:.0f}°, {s*100:.0f}%, {v*100:.0f}%)"
+            )
+        except Exception as e:
+            return f"[ERROR] color_pick: {e}"
+
+    async def tool_text_transform(self, args):
+        """Transform text in various ways."""
+        import re as _re, json as _json, urllib.parse as _up, base64 as _b64, csv as _csv, io as _io
+        text      = args.get('text', '')
+        operation = args.get('operation', '').lower().replace(' ', '_')
+        pattern   = args.get('pattern', '')
+        try:
+            if operation == 'upper':
+                return text.upper()
+            elif operation == 'lower':
+                return text.lower()
+            elif operation == 'title':
+                return text.title()
+            elif operation == 'snake_case':
+                return _re.sub(r'[\s\-]+', '_', _re.sub(r'(?<!^)(?=[A-Z])', '_', text)).lower()
+            elif operation == 'camel_case':
+                parts = _re.split(r'[\s_\-]+', text)
+                return parts[0].lower() + ''.join(p.title() for p in parts[1:])
+            elif operation == 'base64_encode':
+                return _b64.b64encode(text.encode('utf-8')).decode('ascii')
+            elif operation == 'base64_decode':
+                return _b64.b64decode(text).decode('utf-8', errors='replace')
+            elif operation == 'url_encode':
+                return _up.quote(text, safe='')
+            elif operation == 'url_decode':
+                return _up.unquote(text)
+            elif operation == 'reverse':
+                return text[::-1]
+            elif operation == 'count':
+                lines = text.splitlines()
+                words = text.split()
+                return (f"Characters: {len(text):,}\n"
+                        f"Words:      {len(words):,}\n"
+                        f"Lines:      {len(lines):,}\n"
+                        f"Non-space:  {len(text.replace(' ','').replace('\n','')):,}")
+            elif operation == 'strip':
+                return text.strip()
+            elif operation == 'regex_extract':
+                if not pattern:
+                    return "[ERROR] regex_extract requires a 'pattern' argument."
+                matches = _re.findall(pattern, text)
+                if not matches:
+                    return "No matches found."
+                return f"Found {len(matches)} match(es):\n" + '\n'.join(str(m) for m in matches[:100])
+            elif operation == 'json_format':
+                try:
+                    parsed = _json.loads(text)
+                    return _json.dumps(parsed, indent=2, ensure_ascii=False)
+                except Exception as e:
+                    return f"[ERROR] Invalid JSON: {e}"
+            elif operation == 'csv_to_json':
+                reader = _csv.DictReader(_io.StringIO(text))
+                rows = list(reader)
+                return _json.dumps(rows, indent=2, ensure_ascii=False)
+            else:
+                ops = ['upper','lower','title','snake_case','camel_case','base64_encode','base64_decode',
+                       'url_encode','url_decode','reverse','count','strip','regex_extract','json_format','csv_to_json']
+                return f"[ERROR] Unknown operation '{operation}'. Available: {', '.join(ops)}"
+        except Exception as e:
+            return f"[ERROR] text_transform ({operation}): {e}"
 
 

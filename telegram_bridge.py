@@ -197,14 +197,19 @@ class TelegramBridge:
                 ("Gemini 2.0 Flash", "gemini-2.0-flash"),
             ],
             "nvidia": [
-                ("DeepSeek V3.2 🚀 [TITAN]", "deepseek-ai/deepseek-v3.2"),
-                ("Qwen3 480B Coder 🦾 [TITAN]", "qwen/qwen3-coder-480b-a35b-instruct"),
-                ("Llama 3.3 70B 🏛️", "meta/llama-3.3-70b-instruct"),
-                ("Llama 3.1 405B 🏛️", "meta/llama-3.1-405b-instruct"),
-                ("Nemotron 340B 🛡️", "nvidia/nemotron-4-340b-instruct"),
-                ("GLM-5 🛰️", "z-ai/glm5"),
-                ("Kimi K2.5 🌙", "moonshotai/kimi-k2.5"),
-                ("Mistral Large 2 🌊", "mistralai/mistral-large-2-instruct"),
+                ("GLM-5 (Thinking) 🧠", "z-ai/glm5"),
+                ("Kimi K2.5 (Thinking) 🌙", "moonshotai/kimi-k2.5"),
+                ("Qwen 3.5 397B (Thinking) 🦾", "qwen/qwen3.5-397b-a17b"),
+                ("Nemotron 30B (Reasoning) ⚛️", "nvidia/nemotron-3-nano-30b-a3b"),
+                ("Nemotron Nano VL 👁️", "nvidia/nemotron-nano-12b-v2-vl"),
+                ("StepFun 3.5 Flash ⚡️", "stepfun-ai/step-3.5-flash"),
+                ("MiniMax M2.1 🎯", "minimaxai/minimax-m2.1"),
+                ("DeepSeek V3.2 (Math) 🚀", "deepseek-ai/deepseek-v3.2"),
+                ("Llama 405B 🏛️", "meta/llama-3.1-405b-instruct"),
+                ("Phi-3.5 Vision (OCR) 👁️", "microsoft/phi-3.5-vision-instruct"),
+                ("Gemma 3 27B 🌌", "google/gemma-3-27b-it"),
+                ("Mistral Large 3 🌊", "mistralai/mistral-large-3-675b-instruct-2512"),
+                ("Qwen 480B Coder 🦾", "qwen/qwen3-coder-480b-a35b-instruct"),
             ],
             "xai": [
                 ("Grok 4 🧠 [LATEST]", "grok-4"),
@@ -291,9 +296,14 @@ class TelegramBridge:
                     ("Gemini 2.5 Pro 🦾", "gemini-2.5-pro"),
                 ],
                 "nvidia": [
-                    ("DeepSeek V3 🚀", "deepseek-ai/deepseek-v3.2"),
-                    ("Qwen 480B 🦾", "qwen/qwen3-coder-480b-a35b-instruct"),
-                    ("Llama 3.1 405B 🏛️", "meta/llama-3.1-405b-instruct")
+                    ("GLM-5 Thinking", "z-ai/glm5"),
+                    ("Kimi K2.5 Thinking", "moonshotai/kimi-k2.5"),
+                    ("Qwen 3.5 397B", "qwen/qwen3.5-397b-a17b"),
+                    ("Nemotron 30B", "nvidia/nemotron-3-nano-30b-a3b"),
+                    ("StepFun 3.5 Flash", "stepfun-ai/step-3.5-flash"),
+                    ("DeepSeek V3.2", "deepseek-ai/deepseek-v3.2"),
+                    ("Llama 405B", "meta/llama-3.1-405b-instruct"),
+                    ("Phi-3.5 Vision", "microsoft/phi-3.5-vision-instruct"),
                 ],
                 "xai": [
                     ("Grok 4 🧠", "grok-4"),
@@ -627,7 +637,15 @@ class TelegramBridge:
                     self.core.gateway.last_voice_file = None
                 except Exception as e:
                     await self.core.log(f"TTS Delivery Error: {e}", priority=1)
-            # Send text response (always — user sees text alongside any audio)
+            # Check if the AI generated an image — deliver it via send_photo
+            image_file = getattr(self.core.gateway, 'last_image_file', None)
+            if image_file and os.path.exists(image_file):
+                try:
+                    await self.send_photo(chat_id, image_file, caption=f"🎨 {os.path.basename(image_file)}")
+                    self.core.gateway.last_image_file = None
+                except Exception as e:
+                    await self.core.log(f"Image Delivery Error: {e}", priority=1)
+            # Send text response (always — user sees text alongside any audio/image)
             try:
                 await self.send_message(chat_id, response)
             except Exception as e:
