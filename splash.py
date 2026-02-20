@@ -5,7 +5,7 @@ import yaml, os
 
 def _get_version():
     try:
-        cfg_path = os.path.join(os.path.dirname(__file__), '..', 'config.yaml')
+        cfg_path = os.path.join(os.path.dirname(__file__), 'config.yaml')
         with open(cfg_path, 'r') as f:
             cfg = yaml.safe_load(f)
         return cfg.get('system', {}).get('version', '?')
