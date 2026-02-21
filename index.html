@@ -4,7 +4,7 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Galactic AI — Sovereign. Universal. Fast.</title>
-  <meta name="description" content="A local-first AI automation platform with true persistent memory, voice I/O, 92+ tools, 14 providers, and a real-time control deck. Runs on your machine. No subscriptions." />
+  <meta name="description" content="A local-first AI automation platform with true persistent memory, voice I/O, 100+ tools, 14 providers, and a real-time control deck. Runs on your machine. No subscriptions." />
   <style>
     :root {
       --bg: #0a0a0f;
@@ -90,7 +90,7 @@
     .hero p {
       font-size: 1.2rem;
       color: var(--muted);
-      max-width: 620px;
+      max-width: 640px;
       margin: 0 auto 2.5rem;
     }
     .hero-actions { display: flex; gap: 1rem; justify-content: center; flex-wrap: wrap; }
@@ -336,6 +336,25 @@
     .qs-comment { color: #4a5568; }
     .qs-cmd { color: var(--accent3); }
 
+    /* WHATS NEW BANNER */
+    .whats-new {
+      background: rgba(124,58,237,0.08);
+      border: 1px solid rgba(124,58,237,0.25);
+      border-radius: 10px;
+      padding: 1.25rem 1.75rem;
+      margin-bottom: 3rem;
+    }
+    .whats-new-label {
+      font-size: 0.7rem;
+      font-weight: 700;
+      letter-spacing: 0.1em;
+      color: var(--accent2);
+      margin-bottom: 0.5rem;
+    }
+    .whats-new ul { list-style: none; display: flex; flex-wrap: wrap; gap: 0.5rem 1.5rem; }
+    .whats-new ul li { font-size: 0.875rem; color: var(--muted); }
+    .whats-new ul li::before { content: '✦ '; color: var(--accent2); }
+
     /* CTA */
     .cta-section {
       text-align: center;
@@ -386,11 +405,11 @@
 
 <!-- HERO -->
 <div class="hero">
-  <div class="hero-badge">v0.9.0 — Ultimate Automation Suite · 92+ Tools</div>
+  <div class="hero-badge">v0.9.3 — Ultimate Automation Suite · 100+ Tools</div>
   <h1>Your AI that actually<br><span class="grad">does everything.</span></h1>
-  <p>A local-first AI automation platform with true persistent memory, voice I/O, 92+ tools, 14 providers, and a real-time control deck. Runs on your machine. No subscriptions. No cloud required.</p>
+  <p>A local-first AI automation platform with true persistent memory, voice I/O, 100+ tools, 14 providers, and a real-time control deck. Runs on your machine. No subscriptions. No cloud required.</p>
   <div class="hero-actions">
-    <a href="https://github.com/cmmchsvc-dev/Galactic-AI/releases/latest" class="btn-primary">Download v0.9.0</a>
+    <a href="https://github.com/cmmchsvc-dev/Galactic-AI/releases/latest" class="btn-primary">Download v0.9.3 Free</a>
     <a href="https://github.com/cmmchsvc-dev/Galactic-AI" class="btn-secondary">View on GitHub</a>
   </div>
   <p class="hero-sub">Free &amp; open source · Python 3.10+ · Windows / macOS / Linux</p>
@@ -398,7 +417,7 @@
 
 <!-- STATS BAR -->
 <div class="stats-bar">
-  <div class="stat"><span class="stat-num">92+</span><span class="stat-label">Built-in Tools</span></div>
+  <div class="stat"><span class="stat-num">100+</span><span class="stat-label">Built-in Tools</span></div>
   <div class="stat"><span class="stat-num">14</span><span class="stat-label">AI Providers</span></div>
   <div class="stat"><span class="stat-num">56</span><span class="stat-label">Browser Actions</span></div>
   <div class="stat"><span class="stat-num">100%</span><span class="stat-label">Local Mode Available</span></div>
@@ -445,14 +464,14 @@
 <span class="comment"># Written to automatically when the AI imprints</span>
 <span class="comment"># Editable directly in the Control Deck</span>
 
-<span class="entry">- 2025-02-18: User prefers concise replies</span>
-<span class="entry">- 2025-02-18 [truck]: Drives a 1967 F100</span>
-<span class="entry">- 2025-02-19: Working on Galactic AI project</span>
-<span class="entry">- 2025-02-19 [prefs]: Dark mode, no emojis</span>
-<span class="entry">- 2025-02-19: Deploying to GitHub releases</span>
+<span class="entry">- 2026-02-18: User prefers concise replies</span>
+<span class="entry">- 2026-02-18 [truck]: Drives a 1967 F100</span>
+<span class="entry">- 2026-02-19: Working on Galactic AI project</span>
+<span class="entry">- 2026-02-19 [prefs]: Dark mode, no emojis</span>
+<span class="entry">- 2026-02-19: Deploying to GitHub releases</span>
 
 <span class="comment"></span>
-<span class="comment"># IDENTITY.md, SOUL.md, USER.md also always loaded</span>
+<span class="comment"># IDENTITY.md, SOUL.md, USER.md, VAULT.md also loaded</span>
 <span class="comment"># Total token cost: size of your .md files, once.</span>
         </div>
         <p style="color:var(--muted);font-size:0.8rem;margin-top:0.75rem;text-align:center;">All .md files live on your machine. Edit them any time in the Memory tab.</p>
@@ -465,16 +484,35 @@
 <section id="features">
   <h2>Everything you need. Nothing you don't.</h2>
   <p class="section-sub">Built for people who want their AI to actually do things.</p>
+
+  <!-- What's New in v0.9.3 -->
+  <div class="whats-new">
+    <div class="whats-new-label">✦ NEW IN v0.9.3</div>
+    <ul>
+      <li>⚙️ Settings Tab — change models, voice, timeouts in-browser</li>
+      <li>🔐 VAULT.md — private credentials for automation tasks</li>
+      <li>🗣️ Voice Selector — switch TTS voice from the sidebar</li>
+      <li>🆕 GitHub Auto-Update Checker — notified when a new version drops</li>
+      <li>🔽 Model Dropdowns — no more typing model names</li>
+      <li>🔄 Auto-Fallback Toggle — on/off from the Settings tab</li>
+    </ul>
+  </div>
+
   <div class="feature-grid">
     <div class="feature-card">
       <span class="feature-icon">🧠</span>
-      <h3>Persistent Memory</h3>
-      <p>MEMORY.md, IDENTITY.md, SOUL.md, and USER.md are loaded into every prompt. The AI always knows who it is and who you are — even after a restart.</p>
+      <h3>Persistent Memory + VAULT</h3>
+      <p>MEMORY.md, IDENTITY.md, SOUL.md, USER.md, and VAULT.md are loaded into every prompt. The AI always knows who it is, who you are, and how to log into your services.</p>
+    </div>
+    <div class="feature-card">
+      <span class="feature-icon">⚙️</span>
+      <h3>Settings Tab</h3>
+      <p>Switch primary/fallback models from dropdowns, toggle auto-fallback, change TTS voice, tune the speak timeout and max ReAct turns — all saved live to config.yaml.</p>
     </div>
     <div class="feature-card">
       <span class="feature-icon">🎙️</span>
-      <h3>Voice I/O via Telegram</h3>
-      <p>Send voice messages, get voice replies. Powered by OpenAI Whisper (or free Groq Whisper) for transcription and ElevenLabs / gTTS for speech.</p>
+      <h3>Voice I/O + Voice Selector</h3>
+      <p>Send voice messages via Telegram, get voice replies. Choose from 7 voices (Guy, Aria, Jenny, Davis via Edge TTS — free; Nova, Byte via ElevenLabs) from the Quick Tools sidebar.</p>
     </div>
     <div class="feature-card">
       <span class="feature-icon">🌐</span>
@@ -484,22 +522,27 @@
     <div class="feature-card">
       <span class="feature-icon">🤖</span>
       <h3>ReAct Agent Loop</h3>
-      <p>Think → Act → Observe → Answer. The AI chains tool calls autonomously until the task is done — the same architecture used by frontier AI agents.</p>
+      <p>Think → Act → Observe → Answer. The AI chains tool calls autonomously until the task is done. Per-tool timeouts + a speak() wall-clock cap prevent runaway loops.</p>
     </div>
     <div class="feature-card">
       <span class="feature-icon">📱</span>
-      <h3>Telegram Bot</h3>
-      <p>Full control from your phone. Send commands, chat naturally, get voice replies. Messages sync with the web Control Deck in real-time.</p>
+      <h3>Telegram + Discord + Gmail</h3>
+      <p>Full control from your phone via Telegram. Plus Discord bot, WhatsApp, and Gmail inbox monitoring — all bridges included.</p>
     </div>
     <div class="feature-card">
       <span class="feature-icon">🖥️</span>
       <h3>Web Control Deck</h3>
-      <p>Chat, status telemetry, tool browser, plugin manager, memory editor, Ollama hub, live logs — all in a browser at localhost:17789.</p>
+      <p>Chat, Status, Models, Tools, Plugins, Memory, Settings, Ollama, and Logs — a full control panel at localhost:17789.</p>
     </div>
     <div class="feature-card">
       <span class="feature-icon">🔒</span>
       <h3>100% Local Mode</h3>
       <p>Run with Ollama and zero internet required. No data leaves your machine. No API keys. No tracking. Full capability offline.</p>
+    </div>
+    <div class="feature-card">
+      <span class="feature-icon">🆕</span>
+      <h3>Auto-Update Notifications</h3>
+      <p>Galactic AI checks GitHub every 6 hours and shows a dismissible banner when a new version is available. Run <code style="color:var(--accent3)">./update.ps1</code> to upgrade.</p>
     </div>
     <div class="feature-card">
       <span class="feature-icon">⚡</span>
@@ -508,8 +551,13 @@
     </div>
     <div class="feature-card">
       <span class="feature-icon">🔄</span>
+      <h3>Resilient Auto-Fallback</h3>
+      <p>Error-type-specific cooldowns (rate limit: 60s, auth error: 24h). Automatic recovery when providers come back. Toggle on/off from the Settings tab.</p>
+    </div>
+    <div class="feature-card">
+      <span class="feature-icon">🛡️</span>
       <h3>Safe Updates</h3>
-      <p>Run update.ps1 or update.sh to update code. Your config, API keys, memory files, and chat history are never touched.</p>
+      <p>Run update.ps1 or update.sh to update code. Your config, API keys, memory files, VAULT.md, and chat history are never touched.</p>
     </div>
   </div>
 </section>
@@ -526,12 +574,12 @@
     <div class="provider-pill"><span class="dot paid"></span>xAI Grok</div>
     <div class="provider-pill"><span class="dot free"></span>Groq (fast)</div>
     <div class="provider-pill"><span class="dot free"></span>Mistral</div>
-    <div class="provider-pill"><span class="dot free"></span>Cohere</div>
     <div class="provider-pill"><span class="dot free"></span>NVIDIA AI</div>
+    <div class="provider-pill"><span class="dot free"></span>DeepSeek</div>
     <div class="provider-pill"><span class="dot free"></span>Together AI</div>
     <div class="provider-pill"><span class="dot paid"></span>Perplexity</div>
-    <div class="provider-pill"><span class="dot free"></span>Fireworks AI</div>
-    <div class="provider-pill"><span class="dot free"></span>DeepSeek</div>
+    <div class="provider-pill"><span class="dot free"></span>HuggingFace</div>
+    <div class="provider-pill"><span class="dot free"></span>Cerebras</div>
     <div class="provider-pill"><span class="dot free"></span>OpenRouter</div>
     <div class="provider-pill"><span class="dot local"></span>Ollama (local)</div>
   </div>
@@ -545,7 +593,7 @@
 
 <!-- TOOLS -->
 <section id="tools">
-  <h2>92+ Built-In Tools</h2>
+  <h2>100+ Built-In Tools</h2>
   <p class="section-sub">The AI can use all of these autonomously, chaining them together to complete complex tasks.</p>
   <div class="tools-categories">
     <div class="tool-cat">
@@ -553,11 +601,11 @@
       <ul><li>read_file / write_file / edit_file</li><li>list_dir (rich listing)</li><li>find_files (glob search)</li><li>hash_file (SHA256/MD5)</li><li>diff_files (unified diff)</li><li>zip_create / zip_extract</li><li>image_info (dimensions/format)</li></ul>
     </div>
     <div class="tool-cat">
-      <h4>Shell & Process</h4>
-      <ul><li>exec_shell (PowerShell)</li><li>process_start / status / kill</li><li>kill_process_by_name</li><li>schedule_task / list_tasks</li><li>system_info (CPU/RAM/disk)</li><li>env_get / env_set</li></ul>
+      <h4>Shell &amp; Process</h4>
+      <ul><li>exec_shell (PowerShell/bash)</li><li>process_start / status / kill</li><li>kill_process_by_name</li><li>schedule_task / list_tasks</li><li>system_info (CPU/RAM/disk)</li><li>env_get / env_set</li></ul>
     </div>
     <div class="tool-cat">
-      <h4>Web & HTTP</h4>
+      <h4>Web &amp; HTTP</h4>
       <ul><li>web_search (DuckDuckGo)</li><li>web_fetch (read pages)</li><li>http_request (raw REST API)</li></ul>
     </div>
     <div class="tool-cat">
@@ -565,11 +613,11 @@
       <ul><li>memory_imprint → MEMORY.md</li><li>memory_search</li></ul>
     </div>
     <div class="tool-cat">
-      <h4>Vision, Audio & Image Gen</h4>
-      <ul><li>analyze_image (vision AI)</li><li>text_to_speech (ElevenLabs/edge-tts)</li><li>generate_image (FLUX.1)</li><li>generate_image_sd35 (SD 3.5)</li><li>color_pick (sample pixel color)</li></ul>
+      <h4>Vision, Audio &amp; Image Gen</h4>
+      <ul><li>analyze_image (vision AI)</li><li>text_to_speech (7 voices)</li><li>generate_image (Imagen 4)</li><li>generate_image_flux (FLUX.1)</li><li>generate_image_sd35 (SD 3.5)</li><li>color_pick (sample pixel)</li></ul>
     </div>
     <div class="tool-cat">
-      <h4>Clipboard & Notifications</h4>
+      <h4>Clipboard &amp; Notifications</h4>
       <ul><li>clipboard_get / clipboard_set</li><li>notify (desktop toast)</li><li>qr_generate (QR code images)</li><li>text_transform (15 operations)</li></ul>
     </div>
     <div class="tool-cat">
@@ -654,7 +702,7 @@
       <br>
       <div><span class="t-purple">Byte:</span> <span class="t-muted">On it. Let me search first...</span></div>
       <div><span class="t-muted">  [tool: web_search] "Playwright latest release"</span></div>
-      <div><span class="t-out">  → Found: Playwright v1.50.0 released Feb 2025...</span></div>
+      <div><span class="t-out">  → Found: Playwright v1.50.0 released Feb 2026...</span></div>
       <div><span class="t-muted">  [tool: web_fetch] https://playwright.dev/docs/release-notes</span></div>
       <div><span class="t-out">  → Fetched 8,400 chars. Parsing...</span></div>
       <div><span class="t-muted">  [tool: write_file] ./workspace/playwright-notes.md</span></div>
@@ -678,7 +726,7 @@
   <h2>Ready to run your own AI?</h2>
   <p>Free. Open source. Runs on your machine. No subscriptions, no cloud lock-in, no data leaks.</p>
   <div class="hero-actions">
-    <a href="https://github.com/cmmchsvc-dev/Galactic-AI/releases/latest" class="btn-primary">Download v0.9.0 Free</a>
+    <a href="https://github.com/cmmchsvc-dev/Galactic-AI/releases/latest" class="btn-primary">Download v0.9.3 Free</a>
     <a href="https://github.com/cmmchsvc-dev/Galactic-AI" class="btn-secondary">View Source on GitHub</a>
   </div>
   <p style="margin-top:1.5rem;color:var(--muted);font-size:0.875rem;">Windows · macOS · Linux · Chromebook · WSL2</p>
@@ -686,7 +734,7 @@
 
 <!-- FOOTER -->
 <footer>
-  <span>⭐ Galactic AI v0.8.0</span>
+  <span>⭐ Galactic AI v0.9.3</span>
   <a href="https://github.com/cmmchsvc-dev/Galactic-AI">GitHub</a>
   <a href="https://github.com/cmmchsvc-dev/Galactic-AI/releases">Releases</a>
   <a href="https://github.com/cmmchsvc-dev/Galactic-AI/blob/main/README.md">Docs</a>
