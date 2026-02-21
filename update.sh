@@ -23,7 +23,17 @@ set -e
 
 GITHUB_REPO="cmmchsvc-dev/Galactic-AI"
 GITHUB_API="https://api.github.com/repos/$GITHUB_REPO/releases"
-VERSION="${1:-latest}"
+FORCE=false
+VERSION="latest"
+
+# Parse arguments: --force / -f, or a version string
+for arg in "$@"; do
+    case "$arg" in
+        --force|-f) FORCE=true ;;
+        *)          VERSION="$arg" ;;
+    esac
+done
+
 INSTALL_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 echo ""
@@ -80,12 +90,16 @@ LATEST_VERSION=$(echo "$LATEST_TAG" | sed 's/^v//')
 
 echo "  Latest version    : $LATEST_TAG"
 
-if [ "$LATEST_VERSION" = "$CURRENT_VERSION" ]; then
+if [ "$LATEST_VERSION" = "$CURRENT_VERSION" ] && [ "$FORCE" = false ]; then
     echo ""
     echo "  You are already on the latest version (v$CURRENT_VERSION)."
-    echo "  To force a specific version: ./update.sh v0.7.0"
+    echo "  Use --force to re-download: ./update.sh --force"
+    echo "  Use a version to pin: ./update.sh v0.7.0"
     echo ""
     exit 0
+fi
+if [ "$FORCE" = true ] && [ "$LATEST_VERSION" = "$CURRENT_VERSION" ]; then
+    echo "  Force mode — re-downloading v$LATEST_VERSION..."
 fi
 
 echo "  Update available  : v$CURRENT_VERSION -> v$LATEST_VERSION"
