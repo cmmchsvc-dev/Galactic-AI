@@ -1,4 +1,4 @@
-# Galactic AI v0.7.0 — Python Dependencies
+# Galactic AI v0.9.1 — Python Dependencies
 # Install with: pip install -r requirements.txt
 
 # ─── Core web framework ───────────────────────────────────────────────────────

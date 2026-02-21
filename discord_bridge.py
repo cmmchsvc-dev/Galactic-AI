@@ -24,6 +24,11 @@ class DiscordBridge:
         self.admin_user_id = self.config.get('admin_user_id', '')
         self.start_time = time.time()
         self._processing = set()  # (channel_id, text) pairs currently in-flight — prevents duplicate sends
+        self._component = "Discord"
+
+    async def _log(self, message, priority=3):
+        """Route logs to the Discord component log file."""
+        await self.core.log(message, priority=priority, component=self._component)
 
         if HAS_DISCORD and self.bot_token:
             intents = discord.Intents.default()
@@ -49,13 +54,13 @@ class DiscordBridge:
 
         @self.bot.event
         async def on_ready():
-            await self.core.log(f"[Discord] Bot connected as {self.bot.user} (ID: {self.bot.user.id})", priority=1)
+            await self._log(f"[Discord] Bot connected as {self.bot.user} (ID: {self.bot.user.id})", priority=1)
             # Sync slash commands with Discord
             try:
                 synced = await self.bot.tree.sync()
-                await self.core.log(f"[Discord] Synced {len(synced)} slash commands.", priority=2)
+                await self._log(f"[Discord] Synced {len(synced)} slash commands.", priority=2)
             except Exception as e:
-                await self.core.log(f"[Discord] Slash command sync failed: {e}", priority=1)
+                await self._log(f"[Discord] Slash command sync failed: {e}", priority=1)
 
         @self.bot.event
         async def on_message(message):
@@ -123,7 +128,7 @@ class DiscordBridge:
                     await interaction.followup.send(
                         f"**Model switched** to `{provider}/{model}`"
                     )
-                    await self.core.log(f"[Discord] Model switched to {provider}/{model}", priority=2)
+                    await self._log(f"[Discord] Model switched to {provider}/{model}", priority=2)
                 else:
                     provider = self.core.gateway.llm.provider
                     model = self.core.gateway.llm.model
@@ -167,7 +172,7 @@ class DiscordBridge:
             provider = getattr(self.core.gateway.llm, 'provider', 'unknown')
             model = getattr(self.core.gateway.llm, 'model', 'unknown')
             t = self._get_speak_timeout()
-            await self.core.log(
+            await self._log(
                 f"[Discord] speak() timed out after {t:.0f}s for channel {channel_id} "
                 f"(provider={provider}, model={model})",
                 priority=1
@@ -177,7 +182,7 @@ class DiscordBridge:
                 f"The model is running slowly. Try a simpler question, or use `/model` to switch."
             )
         except Exception as e:
-            await self.core.log(f"[Discord] Processing error: {e}\n{traceback.format_exc()}", priority=1)
+            await self._log(f"[Discord] Processing error: {e}\n{traceback.format_exc()}", priority=1)
             response = f"**Error:** `{str(e)}`"
         finally:
             # Release dedup lock
@@ -204,7 +209,7 @@ class DiscordBridge:
                     )
                     self.core.gateway.last_voice_file = None
                 except Exception as e:
-                    await self.core.log(f"[Discord] Voice delivery error: {e}", priority=1)
+                    await self._log(f"[Discord] Voice delivery error: {e}", priority=1)
 
             # Deliver generated image if present
             image_file = getattr(self.core.gateway, 'last_image_file', None)
@@ -215,7 +220,7 @@ class DiscordBridge:
                     )
                     self.core.gateway.last_image_file = None
                 except Exception as e:
-                    await self.core.log(f"[Discord] Image delivery error: {e}", priority=1)
+                    await self._log(f"[Discord] Image delivery error: {e}", priority=1)
 
             # Send text response — chunk if it exceeds Discord's 2000-char limit
             if response:
@@ -224,7 +229,7 @@ class DiscordBridge:
                     for chunk in chunks:
                         await channel.send(chunk)
                 except Exception as e:
-                    await self.core.log(f"[Discord] Send error: {e}", priority=1)
+                    await self._log(f"[Discord] Send error: {e}", priority=1)
 
     # ──────────────────────────────────────────────
     #  Status report builder (shared by slash command)
@@ -311,13 +316,13 @@ class DiscordBridge:
         if not self.is_configured():
             return
         if not self.bot:
-            await self.core.log("[Discord] discord.py library not installed -- skipping. Run: pip install discord.py", priority=1)
+            await self._log("[Discord] discord.py library not installed -- skipping. Run: pip install discord.py", priority=1)
             return
         try:
-            await self.core.log("[Discord] Starting bot...", priority=1)
+            await self._log("[Discord] Starting bot...", priority=1)
             await self.bot.start(self.bot_token)
         except Exception as e:
-            await self.core.log(f"[Discord] Bot crashed: {e}\n{traceback.format_exc()}", priority=1)
+            await self._log(f"[Discord] Bot crashed: {e}\n{traceback.format_exc()}", priority=1)
 
     async def stop_bot(self):
         """Gracefully close the Discord bot connection."""

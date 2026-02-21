@@ -379,8 +379,11 @@ class BrowserExecutorPro(GalacticPlugin):
                 return {"status": "error", "message": "No page available"}
             
             if not path:
-                path = str(Path(self.core.config['paths']['logs']) / 'screenshot.png')
-            
+                images_dir = self.core.config.get('paths', {}).get('images', './images')
+                img_subdir = Path(images_dir) / 'browser'
+                img_subdir.mkdir(parents=True, exist_ok=True)
+                path = str(img_subdir / 'screenshot.png')
+
             await page.screenshot(path=path, full_page=full_page)
             await self.core.log(f"Screenshot: {path}", priority=2)
             return {"status": "success", "path": path}
@@ -749,7 +752,10 @@ class BrowserExecutorPro(GalacticPlugin):
                 await page.click(selector)
             download = await download_info.value
             
-            download_path = Path(self.core.config['paths']['logs']) / filename
+            images_dir = self.core.config.get('paths', {}).get('images', './images')
+            dl_dir = Path(images_dir) / 'downloads'
+            dl_dir.mkdir(parents=True, exist_ok=True)
+            download_path = dl_dir / filename
             await download.save_as(download_path)
             await self.core.log(f"Downloaded: {download_path}", priority=2)
             return {"status": "success", "path": str(download_path)}
@@ -887,8 +893,11 @@ class BrowserExecutorPro(GalacticPlugin):
                 return {"status": "error", "message": "No page available"}
             
             if not path:
-                path = str(Path(self.core.config['paths']['logs']) / 'page.pdf')
-            
+                images_dir = self.core.config.get('paths', {}).get('images', './images')
+                br_dir = Path(images_dir) / 'browser'
+                br_dir.mkdir(parents=True, exist_ok=True)
+                path = str(br_dir / 'page.pdf')
+
             await page.pdf(path=path)
             await self.core.log(f"PDF generated: {path}", priority=2)
             return {"status": "success", "path": path}

@@ -35,6 +35,11 @@ class GmailBridge:
         self._seen_uids: set[str] = set()
         self._imap: imaplib.IMAP4_SSL | None = None
         self._last_connect_attempt = 0.0
+        self._component = "Gmail"
+
+    async def _log(self, message, priority=3):
+        """Route logs to the Gmail component log file."""
+        await self.core.log(message, priority=priority, component=self._component)
 
     # ── IMAP connection management ────────────────────────────────────────
 
@@ -348,13 +353,13 @@ class GmailBridge:
 
     async def poll_loop(self):
         """Background loop that checks for new emails and dispatches notifications."""
-        await self.core.log("[Gmail] Bridge online -- polling inbox...", priority=1)
+        await self._log("[Gmail] Bridge online -- polling inbox...", priority=1)
 
         # Seed the seen set on startup so we don't re-notify old unreads
         try:
             await self._seed_seen_uids()
         except Exception as e:
-            await self.core.log(f"[Gmail] Seed failed (will retry): {e}", priority=2)
+            await self._log(f"[Gmail] Seed failed (will retry): {e}", priority=2)
 
         while self.running and self.core.running:
             try:
@@ -362,13 +367,13 @@ class GmailBridge:
                 for msg in new_messages:
                     await self._on_new_email(msg)
             except Exception as e:
-                await self.core.log(f"[Gmail] Poll error: {e}", priority=2)
+                await self._log(f"[Gmail] Poll error: {e}", priority=2)
                 self._imap_disconnect()
 
             await asyncio.sleep(self.check_interval)
 
         self._imap_disconnect()
-        await self.core.log("[Gmail] Bridge stopped.", priority=2)
+        await self._log("[Gmail] Bridge stopped.", priority=2)
 
     async def _seed_seen_uids(self):
         """Mark all current UNSEEN UIDs as 'seen' so we only notify on truly new arrivals."""
@@ -389,7 +394,7 @@ class GmailBridge:
         subject = msg.get("subject", "(no subject)")
         preview = msg.get("body", "")[:200]
 
-        await self.core.log(f"[Gmail] New email from {sender}: {subject}", priority=1)
+        await self._log(f"[Gmail] New email from {sender}: {subject}", priority=1)
 
         # Notify Control Deck (Web UI)
         try:
@@ -416,7 +421,7 @@ class GmailBridge:
                     )
                     await self.core.telegram.send_message(admin_chat_id, tg_text)
             except Exception as e:
-                await self.core.log(f"[Gmail] Telegram notification failed: {e}", priority=3)
+                await self._log(f"[Gmail] Telegram notification failed: {e}", priority=3)
 
     # ── Gateway Tool Wrappers ─────────────────────────────────────────────
     # These are called by the LLM tool registry in gateway_v2.py
@@ -431,7 +436,7 @@ class GmailBridge:
         if not subject:
             return "[ERROR] 'subject' is required."
         result = await self.send_email(to, subject, body, html=html)
-        await self.core.log(f"[Gmail] Tool: send_email -> {to}: {subject}", priority=2)
+        await self._log(f"[Gmail] Tool: send_email -> {to}: {subject}", priority=2)
         return result
 
     async def tool_read_email(self, args: dict) -> str:

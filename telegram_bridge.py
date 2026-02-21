@@ -20,7 +20,12 @@ class TelegramBridge:
         self.thinking_level = "LOW"
         self.verbose = False
         self.pending_api_key = {}  # {chat_id: {"provider": str, "model": str}}
-        
+        self._component = "Telegram"
+
+    async def _log(self, message, priority=3):
+        """Route logs to the Telegram component log file."""
+        await self.core.log(message, priority=priority, component=self._component)
+
     async def set_commands(self):
         commands = [
             {"command": "status", "description": "🛰️ System Telemetry"},
@@ -53,7 +58,7 @@ class TelegramBridge:
                 if caption: data["caption"] = caption
                 await self.client.post(url, data=data, files=files)
         except Exception as e:
-            await self.core.log(f"Telegram Photo Error: {e}", priority=1)
+            await self._log(f"Telegram Photo Error: {e}", priority=1)
 
     async def send_audio(self, chat_id, audio_path, caption=None):
         try:
@@ -64,7 +69,7 @@ class TelegramBridge:
                 if caption: data["caption"] = caption[:1024]  # Telegram caption limit
                 await self.client.post(url, data=data, files=files)
         except Exception as e:
-            await self.core.log(f"Telegram Audio Error: {e}", priority=1)
+            await self._log(f"Telegram Audio Error: {e}", priority=1)
 
     async def send_voice(self, chat_id, voice_path, caption=None):
         """Send an OGG voice message to Telegram (shows as voice note with waveform)."""
@@ -76,7 +81,7 @@ class TelegramBridge:
                 if caption: data["caption"] = caption[:1024]
                 await self.client.post(url, data=data, files=files)
         except Exception as e:
-            await self.core.log(f"Telegram Voice Error: {e}", priority=1)
+            await self._log(f"Telegram Voice Error: {e}", priority=1)
 
     async def _transcribe_audio(self, audio_path):
         """Transcribe audio using OpenAI Whisper API (preferred) or return None."""
@@ -95,10 +100,10 @@ class TelegramBridge:
                     if r.status_code == 200:
                         text = r.json().get('text', '').strip()
                         if text:
-                            await self.core.log(f"[STT] Whisper transcribed: {text[:80]}...", priority=2)
+                            await self._log(f"[STT] Whisper transcribed: {text[:80]}...", priority=2)
                             return text
             except Exception as e:
-                await self.core.log(f"Whisper STT error: {e}", priority=2)
+                await self._log(f"Whisper STT error: {e}", priority=2)
 
         # Try Groq Whisper (free, fast) — same OpenAI-compatible endpoint
         groq_key = self.core.config.get('providers', {}).get('groq', {}).get('apiKey', '')
@@ -115,10 +120,10 @@ class TelegramBridge:
                     if r.status_code == 200:
                         text = r.json().get('text', '').strip()
                         if text:
-                            await self.core.log(f"[STT] Groq Whisper transcribed: {text[:80]}...", priority=2)
+                            await self._log(f"[STT] Groq Whisper transcribed: {text[:80]}...", priority=2)
                             return text
             except Exception as e:
-                await self.core.log(f"Groq STT error: {e}", priority=2)
+                await self._log(f"Groq STT error: {e}", priority=2)
 
         return None  # No transcription available
 
@@ -558,7 +563,8 @@ class TelegramBridge:
         elif cmd == '/screenshot':
             browser = next((p for p in self.core.plugins if p.name == "BrowserExecutor"), None)
             if browser:
-                path = os.path.join(self.core.config['paths']['logs'], 'screenshot.png')
+                images_dir = self.core.config.get('paths', {}).get('images', './images')
+                path = os.path.join(images_dir, 'browser', 'screenshot.png')
                 await browser.take_screenshot(path)
                 await self.send_photo(chat_id, path, caption="📸 **Optics Snapshot captured.**")
             else:
@@ -610,7 +616,7 @@ class TelegramBridge:
                 await self.core.gateway.speak("open youtube")
 
     async def listen_loop(self):
-        await self.core.log("Telegram Bridge: Listening...", priority=1)
+        await self._log("Telegram Bridge: Listening...", priority=1)
         await self.set_commands()
         while self.core.running:
             try:
@@ -657,7 +663,7 @@ class TelegramBridge:
                         if hasattr(self.core, 'gateway'):
                             asyncio.create_task(self.process_and_respond(chat_id, text))
             except Exception as e:
-                await self.core.log(f"Bridge Loop Error: {e}", priority=1)
+                await self._log(f"Bridge Loop Error: {e}", priority=1)
             await asyncio.sleep(0.5)
 
     async def get_updates(self):
@@ -705,9 +711,9 @@ class TelegramBridge:
             if provider not in self.core.config['providers']:
                 self.core.config['providers'][provider] = {}
             self.core.config['providers'][provider]['apiKey'] = api_key
-            await self.core.log(f"Telegram Bridge: Saved API key for {provider}", priority=1)
+            await self._log(f"Telegram Bridge: Saved API key for {provider}", priority=1)
         except Exception as e:
-            await self.core.log(f"Telegram Bridge: Failed to save API key for {provider}: {e}", priority=1)
+            await self._log(f"Telegram Bridge: Failed to save API key for {provider}: {e}", priority=1)
 
     async def process_and_respond(self, chat_id, text):
         typing_task = None
@@ -721,7 +727,7 @@ class TelegramBridge:
             provider = getattr(self.core.gateway.llm, 'provider', 'unknown')
             model = getattr(self.core.gateway.llm, 'model', 'unknown')
             t = self._get_speak_timeout()
-            await self.core.log(
+            await self._log(
                 f"[Telegram] speak() timed out after {t:.0f}s for chat {chat_id} "
                 f"(provider={provider}, model={model})",
                 priority=1
@@ -732,7 +738,7 @@ class TelegramBridge:
                 f"Try a simpler task, or switch to a faster model with /model."
             )
         except Exception as e:
-            await self.core.log(f"Processing Error: {e}", priority=1)
+            await self._log(f"Processing Error: {e}", priority=1)
             response = f"🌌 **Byte Interference:** `{str(e)}`"
         finally:
             # ALWAYS cancel typing, even on errors
@@ -760,7 +766,7 @@ class TelegramBridge:
                     await self.send_audio(chat_id, voice_file, caption=response[:200] if response else None)
                     self.core.gateway.last_voice_file = None
                 except Exception as e:
-                    await self.core.log(f"TTS Delivery Error: {e}", priority=1)
+                    await self._log(f"TTS Delivery Error: {e}", priority=1)
             # Check if the AI generated an image — deliver it via send_photo
             image_file = getattr(self.core.gateway, 'last_image_file', None)
             if image_file and os.path.exists(image_file):
@@ -768,12 +774,12 @@ class TelegramBridge:
                     await self.send_photo(chat_id, image_file, caption=f"🎨 {os.path.basename(image_file)}")
                     self.core.gateway.last_image_file = None
                 except Exception as e:
-                    await self.core.log(f"Image Delivery Error: {e}", priority=1)
+                    await self._log(f"Image Delivery Error: {e}", priority=1)
             # Send text response (always — user sees text alongside any audio/image)
             try:
                 await self.send_message(chat_id, response)
             except Exception as e:
-                await self.core.log(f"Send Error: {e}", priority=1)
+                await self._log(f"Send Error: {e}", priority=1)
 
     async def _handle_document(self, chat_id, msg):
         """Download a Telegram document attachment, read its text, and send to the AI."""
@@ -819,17 +825,17 @@ class TelegramBridge:
             if caption:
                 full_msg += f"\n\n{caption}"
 
-            await self.core.log(f"[Telegram] User sent file: {file_name} ({file_size} bytes)", priority=2)
+            await self._log(f"[Telegram] User sent file: {file_name} ({file_size} bytes)", priority=2)
 
             response = await asyncio.wait_for(
                 self.core.gateway.speak(full_msg, chat_id=chat_id),
                 timeout=self._get_speak_timeout()
             )
         except asyncio.TimeoutError:
-            await self.core.log(f"[Telegram] Document speak() timed out for chat {chat_id}", priority=1)
+            await self._log(f"[Telegram] Document speak() timed out for chat {chat_id}", priority=1)
             response = "⏱ Took too long processing that file. Please try again."
         except Exception as e:
-            await self.core.log(f"Document Error: {e}", priority=1)
+            await self._log(f"Document Error: {e}", priority=1)
             response = f"🌌 **Byte Interference:** `{str(e)}`"
         finally:
             if typing_task and not typing_task.done():
@@ -850,7 +856,7 @@ class TelegramBridge:
             try:
                 await self.send_message(chat_id, response)
             except Exception as e:
-                await self.core.log(f"Send Error: {e}", priority=1)
+                await self._log(f"Send Error: {e}", priority=1)
 
     async def _handle_photo(self, chat_id, msg):
         """Download a Telegram photo, analyze it directly with vision, then relay to AI."""
@@ -877,7 +883,7 @@ class TelegramBridge:
             r = await self.client.get(download_url)
             raw = r.content
 
-            await self.core.log(f"[Telegram] User sent photo: {os.path.basename(file_path)} ({file_size} bytes)", priority=2)
+            await self._log(f"[Telegram] User sent photo: {os.path.basename(file_path)} ({file_size} bytes)", priority=2)
 
             # Analyze image immediately — no temp file, no race condition
             import base64
@@ -904,10 +910,10 @@ class TelegramBridge:
                 timeout=self._get_speak_timeout()
             )
         except asyncio.TimeoutError:
-            await self.core.log(f"[Telegram] Photo speak() timed out for chat {chat_id}", priority=1)
+            await self._log(f"[Telegram] Photo speak() timed out for chat {chat_id}", priority=1)
             response = "⏱ Took too long analyzing that image. Please try again."
         except Exception as e:
-            await self.core.log(f"Photo Error: {e}", priority=1)
+            await self._log(f"Photo Error: {e}", priority=1)
             response = f"🌌 **Byte Interference (Photo):** `{str(e)}`"
         finally:
             if typing_task and not typing_task.done():
@@ -928,7 +934,7 @@ class TelegramBridge:
             try:
                 await self.send_message(chat_id, response)
             except Exception as e:
-                await self.core.log(f"Send Error: {e}", priority=1)
+                await self._log(f"Send Error: {e}", priority=1)
 
     async def _handle_audio(self, chat_id, msg):
         """Download a Telegram audio/voice attachment, transcribe it, process, and reply with voice."""
@@ -970,7 +976,7 @@ class TelegramBridge:
                 temp_file.write(raw)
                 temp_file_path = temp_file.name
 
-            await self.core.log(f"[Telegram] User sent audio: {os.path.basename(temp_file_path)} ({file_size} bytes, {mime_type})", priority=2)
+            await self._log(f"[Telegram] User sent audio: {os.path.basename(temp_file_path)} ({file_size} bytes, {mime_type})", priority=2)
 
             # ─── Step 1: Transcribe using STT (Whisper/Groq) ───
             transcription = await self._transcribe_audio(temp_file_path)
@@ -1017,13 +1023,13 @@ class TelegramBridge:
                                 await self.send_audio(chat_id, voice_path, caption=response[:200])
                                 voice_reply_sent = True
                 except Exception as e:
-                    await self.core.log(f"Auto-TTS voice reply error: {e}", priority=2)
+                    await self._log(f"Auto-TTS voice reply error: {e}", priority=2)
 
         except asyncio.TimeoutError:
-            await self.core.log(f"[Telegram] Audio speak() timed out for chat {chat_id}", priority=1)
+            await self._log(f"[Telegram] Audio speak() timed out for chat {chat_id}", priority=1)
             response = "⏱ Took too long processing that voice message. Please try again."
         except Exception as e:
-            await self.core.log(f"Audio Error: {e}", priority=1)
+            await self._log(f"Audio Error: {e}", priority=1)
             response = f"🌌 **Byte Interference (Audio):** `{str(e)}`"
         finally:
             if typing_task and not typing_task.done():
@@ -1049,7 +1055,7 @@ class TelegramBridge:
                 try:
                     await self.send_message(chat_id, response)
                 except Exception as e:
-                    await self.core.log(f"Send Error: {e}", priority=1)
+                    await self._log(f"Send Error: {e}", priority=1)
 
     async def keep_typing(self, chat_id):
         """Keep sending typing indicator every 4 seconds, scaled to the active model's timeout."""
@@ -1059,7 +1065,7 @@ class TelegramBridge:
             while True:
                 # Safety timeout check
                 if time.time() - start_time > max_duration:
-                    await self.core.log(f"Typing indicator timeout after {max_duration}s", priority=1)
+                    await self._log(f"Typing indicator timeout after {max_duration}s", priority=1)
                     break
                 await self.send_typing(chat_id)
                 await asyncio.sleep(4)
@@ -1068,4 +1074,4 @@ class TelegramBridge:
             pass
         except Exception as e:
             # Log any unexpected errors but don't crash
-            await self.core.log(f"Typing indicator error: {e}", priority=1)
+            await self._log(f"Typing indicator error: {e}", priority=1)

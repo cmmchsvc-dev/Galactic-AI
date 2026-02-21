@@ -46,6 +46,7 @@ class GalacticWebDeck:
         self.app.router.add_get('/api/history', self.handle_history)
         self.app.router.add_get('/api/logs', self.handle_logs)
         self.app.router.add_get('/api/image/{filename}', self.handle_serve_image)
+        self.app.router.add_get('/api/images/{subfolder}/{filename}', self.handle_serve_image_sub)
         self.app.router.add_get('/api/traces', self.handle_traces)
         self.app.router.add_post('/api/save_key', self.handle_save_key)
         self.trace_buffer = []  # last 500 agent trace entries for persistence
@@ -335,7 +336,7 @@ body.glow-max .status-dot{box-shadow:0 0 14px var(--green),0 0 28px rgba(0,255,1
   <div class="login-box">
     <div style="font-size:2em;margin-bottom:8px">⬡</div>
     <h2>GALACTIC AI</h2>
-    <p>AUTOMATION SUITE v0.9.0</p>
+    <p>AUTOMATION SUITE v0.9.1</p>
     <input id="pw-input" type="password" placeholder="Enter passphrase" autocomplete="off">
     <button id="login-btn" onclick="doLogin()">ACCESS</button>
     <div id="login-err" style="display:none;color:var(--red);font-size:0.8em;margin-top:8px">Invalid passphrase</div>
@@ -652,7 +653,7 @@ body.glow-max .status-dot{box-shadow:0 0 14px var(--green),0 0 28px rgba(0,255,1
 <!-- TOP BAR -->
 <div id="topbar">
   <div class="logo">⬡ GALACTIC AI</div>
-  <div id="version-badge" style="font-size:0.65em;color:var(--dim);letter-spacing:1px;padding:2px 7px;border:1px solid var(--border);border-radius:10px;cursor:default" title="Galactic AI version">v0.9.0</div>
+  <div id="version-badge" style="font-size:0.65em;color:var(--dim);letter-spacing:1px;padding:2px 7px;border:1px solid var(--border);border-radius:10px;cursor:default" title="Galactic AI version">v0.9.1</div>
   <div id='ollama-pill' onclick='switchTab("models")'>
     <div class="status-dot" id="ollama-dot"></div>
     <span id="ollama-label">Ollama</span>
@@ -2526,6 +2527,28 @@ setInterval(() => {
             data = f.read()
         return web.Response(body=data, content_type=mime)
 
+    async def handle_serve_image_sub(self, request):
+        """GET /api/images/{subfolder}/{filename} — serve from images/<subfolder>/"""
+        import mimetypes
+        subfolder = request.match_info.get('subfolder', '')
+        filename = request.match_info.get('filename', '')
+        # Security: reject traversal characters in both path components
+        for part in (subfolder, filename):
+            if '..' in part or '/' in part or '\\' in part:
+                return web.Response(status=400, text='Invalid path')
+        images_dir = os.path.abspath(
+            self.core.config.get('paths', {}).get('images', './images')
+        )
+        candidate = os.path.abspath(os.path.join(images_dir, subfolder, filename))
+        if not candidate.startswith(images_dir + os.sep):
+            return web.Response(status=403, text='Forbidden')
+        if not os.path.exists(candidate):
+            return web.Response(status=404, text='Image not found')
+        mime = mimetypes.guess_type(filename)[0] or 'application/octet-stream'
+        with open(candidate, 'rb') as f:
+            data = f.read()
+        return web.Response(body=data, content_type=mime)
+
     async def handle_chat(self, request):
         """POST /api/chat — send message to the AI and get response.
         Accepts JSON body OR multipart/form-data with file attachments.
@@ -3186,17 +3209,37 @@ setInterval(() => {
             return web.json_response({'messages': [], 'error': str(e)})
 
     async def handle_logs(self, request):
-        """GET /api/logs — return last N system log lines for UI restore on page refresh."""
+        """GET /api/logs — return last N log lines for UI restore on page refresh.
+
+        Query params:
+          limit=200           — number of lines to return (default 200)
+          component=telegram  — if set, read the component daily log instead of system_log.txt
+                                Valid: gateway, telegram, web_deck, discord, gmail, whatsapp, core
+        """
         try:
+            import glob as _glob
             limit = int(request.query.get('limit', '200'))
+            component = request.query.get('component', '').strip().lower()
             logs_dir = self.core.config.get('paths', {}).get('logs', './logs')
-            log_file = os.path.join(logs_dir, 'system_log.txt')
+
+            if component:
+                VALID = {'gateway', 'telegram', 'web_deck', 'discord', 'gmail', 'whatsapp', 'core'}
+                if component not in VALID:
+                    return web.json_response({'logs': [], 'error': f'Unknown component: {component}'}, status=400)
+                # Find most recent daily log file for this component
+                matches = sorted(_glob.glob(os.path.join(logs_dir, f"{component}_*.log")), reverse=True)
+                if not matches:
+                    return web.json_response({'logs': [], 'component': component})
+                log_file = matches[0]
+            else:
+                log_file = os.path.join(logs_dir, 'system_log.txt')
+
             lines = []
             if os.path.exists(log_file):
                 with open(log_file, 'r', encoding='utf-8') as f:
                     lines = f.readlines()
                 lines = [l.rstrip('\n') for l in lines[-limit:]]
-            return web.json_response({'logs': lines})
+            return web.json_response({'logs': lines, 'component': component or 'system'})
         except Exception as e:
             return web.json_response({'logs': [], 'error': str(e)})
 

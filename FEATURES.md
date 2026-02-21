@@ -1,6 +1,6 @@
 # Galactic AI — Feature Reference
 
-Complete feature reference for Galactic AI Automation Suite **v0.9.0**.
+Complete feature reference for Galactic AI Automation Suite **v0.9.1**.
 
 ---
 

@@ -70,9 +70,10 @@ class DesktopTool:
             if save_path:
                 path = save_path
             else:
-                logs_dir = self.core.config.get('paths', {}).get('logs', './logs')
-                os.makedirs(logs_dir, exist_ok=True)
-                path = os.path.join(logs_dir, f"desktop_{int(time.time())}.png")
+                images_dir = self.core.config.get('paths', {}).get('images', './images')
+                img_subdir = os.path.join(images_dir, 'desktop')
+                os.makedirs(img_subdir, exist_ok=True)
+                path = os.path.join(img_subdir, f"desktop_{int(time.time())}.png")
 
             # Save full-resolution copy to disk
             await loop.run_in_executor(None, img.save, path)
