@@ -26,10 +26,10 @@ browser:
   engine: chromium
   headless: false
 elevenlabs:
-  api_key: ''
+  api_key: ""
   voice: Guy
 gateway:
-  api_key: ""  # Your active provider API key
+  api_key: ""
   model: gemini-2.5-flash
   provider: google
 model_overrides: {}
@@ -44,9 +44,22 @@ models:
   max_turns: 50
   primary_model: gemini-2.5-flash
   primary_provider: google
-  recovery_time_seconds: 9999
+  recovery_time_seconds: 300
   smart_routing: false
   streaming: true
+  speak_timeout: 600
+  fallback_cooldowns:
+    RATE_LIMIT: 60
+    SERVER_ERROR: 30
+    TIMEOUT: 10
+    AUTH_ERROR: 86400
+    QUOTA_EXHAUSTED: 3600
+tool_timeouts:
+  exec_shell: 120
+  execute_python: 60
+  generate_image: 180
+  generate_image_sd35: 180
+  generate_image_imagen: 180
 paths:
   logs: ./logs
   images: ./images
@@ -58,35 +71,35 @@ personality:
   name: Byte
 providers:
   anthropic:
-    apiKey: ""  # Get from https://console.anthropic.com/
+    apiKey: ""
     baseUrl: https://api.anthropic.com/v1
   deepseek:
-    apiKey: ""              # Get from https://platform.deepseek.com/api_keys
+    apiKey: ""
     baseUrl: https://api.deepseek.com/v1
   google:
-    apiKey: ""  # Get from https://aistudio.google.com/apikey
+    apiKey: ""
     baseUrl: https://generativelanguage.googleapis.com/v1beta
   groq:
-    apiKey: ""  # Get from https://console.groq.com/
+    apiKey: ""
     baseUrl: https://api.groq.com/openai/v1
   nvidia:
-    apiKey: ""  # Get from https://build.nvidia.com/
-    fluxApiKey: ""  # Get from https://build.nvidia.com/
-    fluxDevApiKey: ""  # Get from https://build.nvidia.com/
+    apiKey: ""
+    fluxApiKey: ""
+    fluxDevApiKey: ""
     baseUrl: https://integrate.api.nvidia.com/v1
     keys:
-      deepseek: ""  # Get from https://build.nvidia.com/
-      glm: ""  # Get from https://build.nvidia.com/
-      kimi: ""  # Get from https://build.nvidia.com/
-      qwen: ""  # Get from https://build.nvidia.com/
-      stepfun: ""  # Get from https://build.nvidia.com/
+      deepseek: ""
+      glm: ""
+      kimi: ""
+      qwen: ""
+      stepfun: ""
   ollama:
     baseUrl: http://127.0.0.1:11434/v1
   openai:
-    apiKey: ''
+    apiKey: ""
     baseUrl: https://api.openai.com/v1
   xai:
-    apiKey: ""  # Get from https://console.x.ai/
+    apiKey: ""
     baseUrl: https://api.x.ai/v1
 shell_tasks:
 - command: adb devices
@@ -97,15 +110,15 @@ system:
   heartbeat_interval: 5
   name: Galactic AI
   port: 9999
-  version: 0.9.1
+  version: 0.9.2
 gmail:
   email: ""
   app_password: ""
   check_interval: 60
   notify_telegram: true
 telegram:
-  admin_chat_id: ""  # Your Telegram user ID
-  bot_token: ""  # Get from @BotFather on Telegram
+  admin_chat_id: ""
+  bot_token: ""
   ollama_timeout_seconds: 600
   timeout_seconds: 180
 whatsapp:
@@ -125,5 +138,5 @@ webhooks:
 web:
   enabled: true
   host: 127.0.0.1
-  password_hash: 16c13d49e42cd306faa482fe68cef34ed189d6b1cf62c8e035598d096e6e539d
+  password_hash: ""
   port: 17789

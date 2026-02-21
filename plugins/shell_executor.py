@@ -17,26 +17,34 @@ class ShellPlugin(GalacticPlugin):
         super().__init__(core)
         self.name = "ShellExecutor"
 
-    async def execute(self, command):
+    async def execute(self, command, timeout=120):
         """Execute a shell command and return the output."""
         try:
             await self.core.log(f"DEBUG EXEC START: {command[:50]}...", priority=1)
-            
+
             # Use absolute path to powershell and simple execution
             process = await asyncio.create_subprocess_exec(
                 "powershell.exe", "-NoProfile", "-Command", command,
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE
             )
-            stdout, stderr = await process.communicate()
-            
+            try:
+                stdout, stderr = await asyncio.wait_for(
+                    process.communicate(), timeout=timeout
+                )
+            except asyncio.TimeoutError:
+                process.kill()
+                await process.wait()
+                await self.core.log(f"SHELL TIMEOUT: {command[:50]}... killed after {timeout}s", priority=1)
+                return f"[Timeout] Command exceeded {timeout}s and was killed."
+
             output = stdout.decode('utf-8', errors='ignore').strip()
             error = stderr.decode('utf-8', errors='ignore').strip()
-            
+
             if error:
                 await self.core.log(f"SHELL ERROR: {error}", priority=1)
                 return f"Error: {error}"
-                
+
             await self.core.log(f"Shell Success!", priority=2)
             return output
         except Exception as e:

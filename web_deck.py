@@ -239,6 +239,18 @@ body{background:var(--bg);color:var(--text);font-family:var(--font);height:100vh
 .stat-card:hover{border-color:var(--border-hi);box-shadow:0 4px 20px rgba(0,0,0,0.3)}
 .stat-card .val{font-size:2em;font-weight:800;color:var(--cyan);font-family:var(--mono);text-shadow:0 0 12px rgba(0,243,255,0.3)}
 .stat-card .lbl{font-size:0.76rem;color:var(--dim);margin-top:6px;letter-spacing:1px;text-transform:uppercase}
+.stat-card .val.small{font-size:1.1em}
+
+/* ── TOAST NOTIFICATIONS ──────────────────────────────────────────────── */
+#toast-container{position:fixed;top:60px;right:20px;z-index:9000;display:flex;flex-direction:column;gap:8px;pointer-events:none}
+.toast{pointer-events:auto;padding:12px 18px;border-radius:10px;font-size:0.85rem;font-family:var(--mono);color:#fff;backdrop-filter:blur(12px);box-shadow:0 4px 24px rgba(0,0,0,0.5);animation:toastIn .3s ease-out;max-width:420px;display:flex;align-items:center;gap:10px}
+.toast.warning{background:rgba(255,140,0,0.92);border:1px solid rgba(255,200,0,0.4)}
+.toast.success{background:rgba(0,180,80,0.92);border:1px solid rgba(0,255,136,0.4)}
+.toast.error{background:rgba(220,40,40,0.92);border:1px solid rgba(255,80,80,0.4)}
+.toast.info{background:rgba(0,160,255,0.88);border:1px solid rgba(0,200,255,0.4)}
+.toast.fadeout{animation:toastOut .4s ease-in forwards}
+@keyframes toastIn{from{opacity:0;transform:translateX(40px)}to{opacity:1;transform:translateX(0)}}
+@keyframes toastOut{from{opacity:1;transform:translateX(0)}to{opacity:0;transform:translateX(40px)}}
 
 /* ── MEMORY PANE ─────────────────────────────────────────────────────────── */
 #memory-pane{padding:18px;overflow-y:auto}
@@ -650,6 +662,9 @@ body.glow-max .status-dot{box-shadow:0 0 14px var(--green),0 0 28px rgba(0,255,1
   </div>
 </div>
 
+<!-- TOAST NOTIFICATIONS -->
+<div id="toast-container"></div>
+
 <!-- TOP BAR -->
 <div id="topbar">
   <div class="logo">⬡ GALACTIC AI</div>
@@ -926,18 +941,64 @@ body.glow-max .status-dot{box-shadow:0 0 14px var(--green),0 0 28px rgba(0,255,1
 
     <!-- STATUS -->
     <div class="tab-pane" id="tab-status">
-      <div id="status-pane">
+      <div id="status-pane" style="overflow-y:auto;padding-bottom:40px">
         <h3>📊 SYSTEM STATUS</h3>
+        <button class="btn secondary" onclick="refreshStatus()" style="margin-bottom:14px">Refresh Status</button>
+
+        <!-- Section 1: System Overview -->
+        <div style="font-size:0.72rem;letter-spacing:2px;color:var(--dim);margin:14px 0 8px;text-transform:uppercase">System Overview</div>
         <div class="stat-grid">
-          <div class="stat-card"><div class="val" id="st-uptime">--</div><div class="lbl">Uptime (s)</div></div>
+          <div class="stat-card"><div class="val" id="st-uptime">--</div><div class="lbl">Uptime</div></div>
+          <div class="stat-card"><div class="val" id="st-version">--</div><div class="lbl">Version</div></div>
+          <div class="stat-card"><div class="val" id="st-personality">--</div><div class="lbl">Personality</div></div>
           <div class="stat-card"><div class="val" id="st-tin">--</div><div class="lbl">Tokens In</div></div>
           <div class="stat-card"><div class="val" id="st-tout">--</div><div class="lbl">Tokens Out</div></div>
-          <div class="stat-card"><div class="val" id="st-model">--</div><div class="lbl">Active Model</div></div>
-          <div class="stat-card"><div class="val" id="st-provider">--</div><div class="lbl">Provider</div></div>
-          <div class="stat-card"><div class="val" id="st-ollama-models">--</div><div class="lbl">Ollama Models</div></div>
+          <div class="stat-card"><div class="val" id="st-tools">--</div><div class="lbl">Tools</div></div>
         </div>
-        <button class="btn secondary" onclick="refreshStatus()" style="margin-bottom:12px">Refresh Status</button>
+
+        <!-- Section 2: Model & AI -->
+        <div style="font-size:0.72rem;letter-spacing:2px;color:var(--dim);margin:18px 0 8px;text-transform:uppercase">Model & AI</div>
+        <div class="stat-grid">
+          <div class="stat-card"><div class="val" id="st-model" style="font-size:1.1em">--</div><div class="lbl">Active Model</div></div>
+          <div class="stat-card"><div class="val" id="st-provider">--</div><div class="lbl">Provider</div></div>
+          <div class="stat-card"><div class="val" id="st-mode">--</div><div class="lbl">Mode</div></div>
+          <div class="stat-card"><div class="val" id="st-max-turns">--</div><div class="lbl">Max Turns</div></div>
+          <div class="stat-card"><div class="val" id="st-streaming">--</div><div class="lbl">Streaming</div></div>
+          <div class="stat-card"><div class="val" id="st-auto-fb">--</div><div class="lbl">Auto-Fallback</div></div>
+        </div>
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:12px">
+          <div class="stat-card" style="text-align:left;padding:14px 18px">
+            <div class="lbl" style="margin-bottom:8px">Primary Model</div>
+            <div id="st-primary" style="font-family:var(--mono);font-size:0.9em;color:var(--green)">--</div>
+          </div>
+          <div class="stat-card" style="text-align:left;padding:14px 18px">
+            <div class="lbl" style="margin-bottom:8px">Fallback Model</div>
+            <div id="st-fallback" style="font-family:var(--mono);font-size:0.9em;color:var(--yellow)">--</div>
+          </div>
+        </div>
+
+        <!-- Fallback Chain -->
+        <div style="font-size:0.72rem;letter-spacing:2px;color:var(--dim);margin:18px 0 8px;text-transform:uppercase">Fallback Chain</div>
+        <div id="st-fallback-chain" style="margin-bottom:12px"></div>
+
+        <!-- Section 3: Connections -->
+        <div style="font-size:0.72rem;letter-spacing:2px;color:var(--dim);margin:18px 0 8px;text-transform:uppercase">Connections</div>
+        <div class="stat-grid" id="st-connections"></div>
+
+        <!-- Section 4: Providers -->
+        <div style="font-size:0.72rem;letter-spacing:2px;color:var(--dim);margin:18px 0 8px;text-transform:uppercase">Configured Providers</div>
+        <div class="stat-grid" id="st-providers"></div>
+
+        <!-- Section 5: Plugins -->
+        <div style="font-size:0.72rem;letter-spacing:2px;color:var(--dim);margin:18px 0 8px;text-transform:uppercase">Plugins</div>
         <div id="status-plugins-list"></div>
+
+        <!-- Section 6: Ollama -->
+        <div style="font-size:0.72rem;letter-spacing:2px;color:var(--dim);margin:18px 0 8px;text-transform:uppercase">Ollama</div>
+        <div class="stat-grid">
+          <div class="stat-card"><div class="val" id="st-ollama-status">--</div><div class="lbl">Status</div></div>
+          <div class="stat-card"><div class="val" id="st-ollama-models">--</div><div class="lbl">Models</div></div>
+        </div>
       </div>
     </div>
 
@@ -1419,6 +1480,10 @@ function connectWS() {
         tBtn.style.textShadow = '0 0 8px var(--pink)';
         setTimeout(() => { tBtn.style.color = ''; tBtn.style.textShadow = ''; }, 1800);
       }
+    } else if (p.type === 'model_fallback') {
+      // Fallback activation toast — show when primary model fails and chain kicks in
+      const fb = p.data || {};
+      showToast(`⚡ Fallback active: ${fb.fallback || '?'} (${fb.reason || 'error'})`, 'warning', 10000);
     }
   };
   socket.onclose = () => setTimeout(connectWS, 3000);
@@ -2123,29 +2188,121 @@ function setBrowserStatus(msg) {
   document.getElementById('browser-status').textContent = msg;
 }
 
-// Status
+// ── Toast Notification System ──────────────────────────────────────────
+function showToast(message, type='info', duration=6000) {
+  const container = document.getElementById('toast-container');
+  if (!container) return;
+  const toast = document.createElement('div');
+  toast.className = `toast ${type}`;
+  toast.textContent = message;
+  container.appendChild(toast);
+  setTimeout(() => {
+    toast.classList.add('fadeout');
+    setTimeout(() => toast.remove(), 500);
+  }, duration);
+}
+
+// ── Status ────────────────────────────────────────────────────────────
 async function refreshStatus() {
   try {
     const r = await fetch('/api/status');
     const d = await r.json();
-    document.getElementById('st-uptime').textContent = d.uptime || '--';
-    document.getElementById('st-tin').textContent = (d.tokens_in||0).toLocaleString();
-    document.getElementById('st-tout').textContent = (d.tokens_out||0).toLocaleString();
-    document.getElementById('st-model').textContent = (d.model?.model||'--').split('/').pop().substring(0,14);
-    document.getElementById('st-provider').textContent = d.model?.provider || '--';
-    document.getElementById('st-ollama-models').textContent = d.ollama?.model_count ?? '--';
+
+    // Section 1: System Overview
+    const el = id => document.getElementById(id);
+    el('st-uptime').textContent = d.uptime_formatted || '--';
+    el('st-version').textContent = d.version ? 'v'+d.version : '--';
+    el('st-personality').textContent = d.personality || '--';
+    el('st-tin').textContent = (d.tokens_in||0).toLocaleString();
+    el('st-tout').textContent = (d.tokens_out||0).toLocaleString();
+    el('st-tools').textContent = d.tool_count || '--';
+
+    // Section 2: Model & AI
+    const modelName = (d.model?.model||'--').split('/').pop();
+    el('st-model').textContent = modelName.substring(0, 22);
+    el('st-provider').textContent = d.model?.provider || '--';
+    const mode = d.model?.mode || 'primary';
+    el('st-mode').textContent = mode.toUpperCase();
+    el('st-mode').style.color = mode === 'primary' ? 'var(--green)' : 'var(--yellow)';
+    el('st-max-turns').textContent = d.max_turns || '--';
+    el('st-streaming').textContent = d.streaming ? 'ON' : 'OFF';
+    el('st-streaming').style.color = d.streaming ? 'var(--green)' : 'var(--dim)';
+    el('st-auto-fb').textContent = d.auto_fallback ? 'ON' : 'OFF';
+    el('st-auto-fb').style.color = d.auto_fallback ? 'var(--green)' : 'var(--dim)';
+    el('st-primary').textContent = d.primary_model || '--';
+    el('st-fallback').textContent = d.fallback_model || '--';
+
+    // Update topbar
     currentModelId = d.model?.model || '';
     currentProvider = d.model?.provider || '';
-    document.getElementById('model-badge').textContent = currentModelId.split('/').pop().substring(0,24) || 'No model';
-    if (d.version) document.getElementById('version-badge').textContent = 'v' + d.version;
-    const pl = document.getElementById('status-plugins-list');
-    if (pl && d.plugins) {
-      pl.innerHTML = '<div style="font-size:0.8em;color:var(--dim);margin-bottom:8px;letter-spacing:2px">PLUGIN STATUS</div>';
-      for (const [name, enabled] of Object.entries(d.plugins)) {
-        pl.innerHTML += `<div style="display:flex;align-items:center;gap:10px;padding:6px 10px;background:var(--bg3);border-radius:6px;margin-bottom:6px;font-size:0.83em"><span style="color:${enabled?'var(--green)':'var(--red)'}">${enabled?'●':'○'}</span><span>${name}</span><span style="margin-left:auto;color:var(--dim);font-size:0.75em">${enabled?'ACTIVE':'PAUSED'}</span></div>`;
+    el('model-badge').textContent = modelName.substring(0, 24) || 'No model';
+    if (d.version) el('version-badge').textContent = 'v' + d.version;
+
+    // Fallback Chain
+    const fcEl = el('st-fallback-chain');
+    if (fcEl && d.fallback_chain) {
+      if (d.fallback_chain.length === 0) {
+        fcEl.innerHTML = '<div style="color:var(--dim);font-size:0.83em;padding:8px 12px;background:var(--bg3);border-radius:8px">No fallback chain configured (add provider API keys to enable)</div>';
+      } else {
+        fcEl.innerHTML = d.fallback_chain.map((e,i) => {
+          const dot = e.available ? '🟢' : (e.failures > 0 ? '🔴' : '🟡');
+          const tier = 'T'+e.tier;
+          const fails = e.failures > 0 ? ` <span style="color:var(--red);font-size:0.75em">(${e.failures} fails)</span>` : '';
+          return `<div style="display:flex;align-items:center;gap:10px;padding:7px 12px;background:var(--bg3);border-radius:8px;margin-bottom:4px;font-size:0.83em;font-family:var(--mono)"><span>${dot}</span><span style="color:var(--dim);font-size:0.8em;min-width:22px">${tier}</span><span style="color:var(--text)">${e.provider}/<span style="color:var(--cyan)">${(e.model||'auto').split('/').pop()}</span></span>${fails}</div>`;
+        }).join('');
       }
     }
-  } catch(e) {}
+
+    // Section 3: Connections
+    const connEl = el('st-connections');
+    if (connEl) {
+      const bridges = [
+        {name:'Telegram', ok:d.telegram?.configured, detail:d.telegram?.admin_chat_id ? 'Chat: '+d.telegram.admin_chat_id : ''},
+        {name:'Discord', ok:d.discord?.configured, detail:''},
+        {name:'Gmail', ok:d.gmail?.configured, detail:d.gmail?.email && d.gmail.email !== '--' ? d.gmail.email : ''},
+        {name:'WhatsApp', ok:d.whatsapp?.configured, detail:''},
+        {name:'Ollama', ok:d.ollama?.online !== false, detail:(d.ollama?.model_count||0)+' models'},
+      ];
+      connEl.innerHTML = bridges.map(b => {
+        const icon = b.ok ? '<span style="color:var(--green)">✓</span>' : '<span style="color:var(--red)">✗</span>';
+        const sub = b.detail ? `<div style="font-size:0.72em;color:var(--dim);margin-top:2px">${b.detail}</div>` : '';
+        return `<div class="stat-card" style="text-align:left;padding:12px 16px"><div style="display:flex;align-items:center;gap:8px;font-size:0.92em">${icon} <strong>${b.name}</strong></div>${sub}</div>`;
+      }).join('');
+    }
+
+    // Section 4: Providers
+    const provEl = el('st-providers');
+    if (provEl && d.providers_configured) {
+      const health = d.provider_health || {};
+      provEl.innerHTML = Object.entries(d.providers_configured).map(([name, hasKey]) => {
+        const h = health[name];
+        let dot = hasKey ? '🟢' : '⚫';
+        if (h && h.cooldown_until) dot = '🟡';
+        if (h && h.failures > 2) dot = '🔴';
+        const label = hasKey ? 'Key set' : 'No key';
+        const labelColor = hasKey ? 'var(--green)' : 'var(--dim)';
+        return `<div class="stat-card" style="text-align:left;padding:12px 16px"><div style="display:flex;align-items:center;gap:8px;font-size:0.88em">${dot} <strong style="text-transform:capitalize">${name}</strong></div><div style="font-size:0.72em;color:${labelColor};margin-top:3px">${label}</div></div>`;
+      }).join('');
+    }
+
+    // Section 5: Plugins
+    const pl = el('status-plugins-list');
+    if (pl && d.plugins) {
+      pl.innerHTML = '';
+      for (const [name, enabled] of Object.entries(d.plugins)) {
+        pl.innerHTML += `<div style="display:flex;align-items:center;gap:10px;padding:7px 12px;background:var(--bg3);border-radius:6px;margin-bottom:5px;font-size:0.83em"><span style="color:${enabled?'var(--green)':'var(--red)'}">${enabled?'●':'○'}</span><span>${name}</span><span style="margin-left:auto;color:var(--dim);font-size:0.75em">${enabled?'ACTIVE':'PAUSED'}</span></div>`;
+      }
+      if (d.scheduled_tasks !== undefined) {
+        pl.innerHTML += `<div style="display:flex;align-items:center;gap:10px;padding:7px 12px;background:var(--bg3);border-radius:6px;margin-bottom:5px;font-size:0.83em"><span style="color:var(--cyan)">◆</span><span>Scheduler</span><span style="margin-left:auto;color:var(--dim);font-size:0.75em">${d.scheduled_tasks} tasks</span></div>`;
+      }
+    }
+
+    // Section 6: Ollama
+    el('st-ollama-status').textContent = (d.ollama?.online !== false) ? 'ONLINE' : 'OFFLINE';
+    el('st-ollama-status').style.color = (d.ollama?.online !== false) ? 'var(--green)' : 'var(--red)';
+    el('st-ollama-models').textContent = d.ollama?.model_count ?? '--';
+
+  } catch(e) { console.error('Status refresh error:', e); }
 }
 
 // Memory
@@ -2714,27 +2871,111 @@ setInterval(() => {
         """GET /api/status — full system status JSON."""
         import time
         uptime = int(time.time() - self.core.start_time)
+
+        # Format uptime as human readable
+        def _fmt_uptime(s):
+            d, rem = divmod(s, 86400)
+            h, rem = divmod(rem, 3600)
+            m, _ = divmod(rem, 60)
+            parts = []
+            if d: parts.append(f"{d}d")
+            if h: parts.append(f"{h}h")
+            parts.append(f"{m}m")
+            return " ".join(parts)
+
         plugin_statuses = {}
         for p in self.core.plugins:
             plugin_statuses[p.name] = getattr(p, 'enabled', True)
+
         ollama_status = {}
         if hasattr(self.core, 'ollama_manager'):
             ollama_status = self.core.ollama_manager.get_status()
+
         model_status = {}
-        if hasattr(self.core, 'model_manager'):
+        mm = getattr(self.core, 'model_manager', None)
+        if mm:
             model_status = {
                 'provider': self.core.gateway.llm.provider,
                 'model': self.core.gateway.llm.model,
-                'mode': self.core.model_manager.current_mode,
+                'mode': mm.current_mode,
             }
+
+        # Fallback chain + provider health
+        fallback_status = mm.get_fallback_status() if mm else {'chain': [], 'provider_health': {}}
+
+        # Provider key status (configured yes/no — NOT the keys themselves)
+        providers_configured = {}
+        for name, cfg in self.core.config.get('providers', {}).items():
+            if name == 'ollama':
+                providers_configured[name] = True  # Always "configured" (local)
+            elif isinstance(cfg, dict):
+                key = cfg.get('apiKey') or cfg.get('api_key') or ''
+                providers_configured[name] = bool(key and key.strip() and key.strip() != '""')
+
+        # Bridge statuses
+        tg_cfg = self.core.config.get('telegram', {})
+        discord_cfg = self.core.config.get('discord', {})
+        gmail_cfg = self.core.config.get('gmail', {})
+        wa_cfg = self.core.config.get('whatsapp', {})
+
+        # Model config
+        models_cfg = self.core.config.get('models', {})
+
         return web.json_response({
+            # Core stats
             'uptime': uptime,
-            'plugins': plugin_statuses,
-            'ollama': ollama_status,
-            'model': model_status,
+            'uptime_formatted': _fmt_uptime(uptime),
+            'version': self.core.config.get('system', {}).get('version', '0.9.2'),
+            'system_name': self.core.config.get('system', {}).get('name', 'Galactic AI'),
+            'personality': self.core.config.get('personality', {}).get('name', '--'),
             'tokens_in': self.core.gateway.total_tokens_in,
             'tokens_out': self.core.gateway.total_tokens_out,
-            'version': self.core.config.get('system', {}).get('version', '0.7.1'),
+
+            # Model info
+            'model': model_status,
+            'primary_model': f"{mm.primary_provider}/{mm.primary_model}" if mm else '--',
+            'fallback_model': f"{mm.fallback_provider}/{mm.fallback_model}" if mm else '--',
+            'auto_fallback': mm.auto_fallback_enabled if mm else False,
+            'smart_routing': models_cfg.get('smart_routing', False),
+            'streaming': models_cfg.get('streaming', True),
+            'max_turns': models_cfg.get('max_turns', 50),
+            'speak_timeout': models_cfg.get('speak_timeout', 600),
+
+            # Fallback chain + health
+            'fallback_chain': fallback_status.get('chain', []),
+            'provider_health': fallback_status.get('provider_health', {}),
+
+            # Providers
+            'providers_configured': providers_configured,
+
+            # Plugins
+            'plugins': plugin_statuses,
+
+            # Ollama
+            'ollama': ollama_status,
+
+            # Bridges
+            'telegram': {
+                'configured': bool(tg_cfg.get('bot_token')),
+                'admin_chat_id': str(tg_cfg.get('admin_chat_id', '')),
+            },
+            'discord': {
+                'configured': bool(discord_cfg.get('bot_token')),
+            },
+            'gmail': {
+                'configured': bool(gmail_cfg.get('email')),
+                'email': gmail_cfg.get('email', '--') or '--',
+            },
+            'whatsapp': {
+                'configured': bool(wa_cfg.get('phone_number_id')),
+            },
+
+            # Scheduler
+            'scheduled_tasks': len(getattr(self.core, 'scheduler', None) and getattr(self.core.scheduler, 'tasks', []) or []),
+            'scheduler_running': getattr(getattr(self.core, 'scheduler', None), 'running', False),
+
+            # Tool count
+            'tool_count': len(self.core.gateway.tools) if hasattr(self.core, 'gateway') else 0,
         })
 
     async def handle_plugin_toggle(self, request):

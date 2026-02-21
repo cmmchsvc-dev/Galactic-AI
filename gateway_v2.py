@@ -9,6 +9,8 @@ import uuid
 import httpx
 from datetime import datetime
 from personality import GalacticPersonality
+from model_manager import (TRANSIENT_ERRORS, PERMANENT_ERRORS,
+                           ERROR_RATE_LIMIT, ERROR_TIMEOUT, ERROR_AUTH)
 
 # Configure logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
@@ -1301,6 +1303,144 @@ class GalacticGateway:
                     "required": ["text", "operation"]
                 },
                 "fn": self.tool_text_transform
+            },
+
+            # ── New v0.9.2 tools ─────────────────────────────────────────
+            "execute_python": {
+                "description": "Execute Python code in a subprocess and return stdout/stderr. Use for data processing, calculations, CSV/JSON manipulation, or quick scripts. Timeout: 60s default.",
+                "parameters": {"type": "object", "properties": {
+                    "code": {"type": "string", "description": "Python code to execute"},
+                    "timeout": {"type": "integer", "description": "Timeout seconds (default: 60, max: 300)"},
+                }, "required": ["code"]},
+                "fn": self.tool_execute_python
+            },
+            "wait": {
+                "description": "Pause execution for a specified number of seconds. Use between actions that need settling time, or to wait before retrying something.",
+                "parameters": {"type": "object", "properties": {
+                    "seconds": {"type": "number", "description": "Seconds to wait (max: 300)"},
+                }, "required": ["seconds"]},
+                "fn": self.tool_wait
+            },
+            "send_telegram": {
+                "description": "Send a proactive message to a Telegram chat (defaults to admin). Useful for alerts, task completion notifications, and automation reports.",
+                "parameters": {"type": "object", "properties": {
+                    "message": {"type": "string", "description": "Message text (Markdown supported)"},
+                    "chat_id": {"type": "string", "description": "Chat ID (default: admin_chat_id from config)"},
+                    "image_path": {"type": "string", "description": "Optional path to image to attach"},
+                }, "required": ["message"]},
+                "fn": self.tool_send_telegram
+            },
+            "read_pdf": {
+                "description": "Extract text content from a PDF file. Returns plain text of all pages (or specific page range).",
+                "parameters": {"type": "object", "properties": {
+                    "path": {"type": "string", "description": "Path to PDF file"},
+                    "pages": {"type": "string", "description": "Page range: '1-5', '3', 'all' (default: all)"},
+                }, "required": ["path"]},
+                "fn": self.tool_read_pdf
+            },
+            "read_csv": {
+                "description": "Read CSV file and return contents as JSON rows with headers. Great for data analysis.",
+                "parameters": {"type": "object", "properties": {
+                    "path": {"type": "string", "description": "Path to CSV file"},
+                    "limit": {"type": "integer", "description": "Max rows to return (default: 200)"},
+                    "delimiter": {"type": "string", "description": "Delimiter character (default: comma)"},
+                }, "required": ["path"]},
+                "fn": self.tool_read_csv
+            },
+            "write_csv": {
+                "description": "Write JSON rows to a CSV file. Takes a list of dictionaries as rows.",
+                "parameters": {"type": "object", "properties": {
+                    "path": {"type": "string", "description": "Output CSV file path"},
+                    "rows": {"type": "array", "description": "Array of {key: value} objects"},
+                    "append": {"type": "boolean", "description": "Append to existing file (default: false)"},
+                }, "required": ["path", "rows"]},
+                "fn": self.tool_write_csv
+            },
+            "read_excel": {
+                "description": "Read Excel file (.xlsx) and return contents as JSON rows. Requires openpyxl.",
+                "parameters": {"type": "object", "properties": {
+                    "path": {"type": "string", "description": "Path to .xlsx file"},
+                    "sheet": {"type": "string", "description": "Sheet name (default: first sheet)"},
+                    "limit": {"type": "integer", "description": "Max rows to return (default: 100)"},
+                }, "required": ["path"]},
+                "fn": self.tool_read_excel
+            },
+            "regex_search": {
+                "description": "Search file contents using regex. Returns matching lines with file paths and line numbers. Faster and safer than exec_shell grep.",
+                "parameters": {"type": "object", "properties": {
+                    "pattern": {"type": "string", "description": "Regex pattern to search for"},
+                    "path": {"type": "string", "description": "File or directory to search in"},
+                    "file_pattern": {"type": "string", "description": "Glob to filter files, e.g. '*.py' (default: all)"},
+                    "limit": {"type": "integer", "description": "Max results (default: 50)"},
+                }, "required": ["pattern", "path"]},
+                "fn": self.tool_regex_search
+            },
+            "image_resize": {
+                "description": "Resize an image to specified dimensions. Supports PNG, JPEG, WebP, BMP.",
+                "parameters": {"type": "object", "properties": {
+                    "path": {"type": "string", "description": "Path to source image"},
+                    "width": {"type": "integer", "description": "Target width in pixels"},
+                    "height": {"type": "integer", "description": "Target height in pixels"},
+                    "output_path": {"type": "string", "description": "Output path (default: adds _resized suffix)"},
+                }, "required": ["path"]},
+                "fn": self.tool_image_resize
+            },
+            "image_convert": {
+                "description": "Convert image between formats (PNG, JPEG, WebP, BMP, TIFF).",
+                "parameters": {"type": "object", "properties": {
+                    "path": {"type": "string", "description": "Path to source image"},
+                    "format": {"type": "string", "description": "Target format: png, jpeg, webp, bmp"},
+                    "output_path": {"type": "string", "description": "Output path (default: same name, new extension)"},
+                    "quality": {"type": "integer", "description": "JPEG/WebP quality 1-100 (default: 85)"},
+                }, "required": ["path", "format"]},
+                "fn": self.tool_image_convert
+            },
+            "git_status": {
+                "description": "Run 'git status' in a directory. Returns working tree status.",
+                "parameters": {"type": "object", "properties": {
+                    "path": {"type": "string", "description": "Directory path (default: workspace)"},
+                }, "required": []},
+                "fn": self.tool_git_status
+            },
+            "git_diff": {
+                "description": "Run 'git diff' to show changes. Returns unified diff output.",
+                "parameters": {"type": "object", "properties": {
+                    "path": {"type": "string", "description": "Directory path (default: workspace)"},
+                    "staged": {"type": "boolean", "description": "Show staged changes only (default: false)"},
+                }, "required": []},
+                "fn": self.tool_git_diff
+            },
+            "git_log": {
+                "description": "Show recent git commit history.",
+                "parameters": {"type": "object", "properties": {
+                    "path": {"type": "string", "description": "Directory path (default: workspace)"},
+                    "count": {"type": "integer", "description": "Number of commits (default: 10)"},
+                }, "required": []},
+                "fn": self.tool_git_log
+            },
+            "git_commit": {
+                "description": "Stage files and create a git commit.",
+                "parameters": {"type": "object", "properties": {
+                    "path": {"type": "string", "description": "Directory path (default: workspace)"},
+                    "message": {"type": "string", "description": "Commit message"},
+                    "files": {"type": "array", "description": "Files to stage (default: all changed files)"},
+                }, "required": ["message"]},
+                "fn": self.tool_git_commit
+            },
+            "spawn_subagent": {
+                "description": "Spawn an isolated sub-agent to handle a task in the background. Returns a session ID to check later.",
+                "parameters": {"type": "object", "properties": {
+                    "task": {"type": "string", "description": "Task description for the sub-agent"},
+                    "agent_type": {"type": "string", "description": "Agent role: researcher, coder, analyst (default: researcher)"},
+                }, "required": ["task"]},
+                "fn": self.tool_spawn_subagent
+            },
+            "check_subagent": {
+                "description": "Check the status and result of a previously spawned sub-agent.",
+                "parameters": {"type": "object", "properties": {
+                    "session_id": {"type": "string", "description": "Session ID from spawn_subagent"},
+                }, "required": ["session_id"]},
+                "fn": self.tool_check_subagent
             },
         }
 
@@ -3120,8 +3260,9 @@ class GalacticGateway:
         system_prompt = self._build_system_prompt(context=context, is_ollama=is_ollama)
         messages = [{"role": "system", "content": system_prompt}] + self.history[-5:]
 
-        # 2. ReAct Loop
+        # 2. ReAct Loop (with wall-clock timeout)
         max_turns = int(self.config.get('models', {}).get('max_turns', 50))
+        speak_timeout = float(self.core.config.get('models', {}).get('speak_timeout', 600))
         turn_count = 0
         last_tool_call = None  # Track last (tool_name, json_args_str) to prevent duplicate calls
         # Tools that are legitimately called repeatedly with same args (snapshots, reads, etc.)
@@ -3132,135 +3273,346 @@ class GalacticGateway:
         await self._emit_trace("session_start", 0, session_id=trace_sid,
                                query=user_input[:500])
 
-        for _ in range(max_turns):
-            turn_count += 1
-            await self._emit_trace("turn_start", turn_count, session_id=trace_sid)
-            await self._send_telegram_typing_ping(chat_id)
-            response_text = await self._call_llm(messages)
+        # ── Inner function: entire ReAct loop wrapped with wall-clock timeout ──
+        async def _react_loop():
+            nonlocal turn_count, last_tool_call, messages
 
-            # Capture think-tag content before stripping (for Thinking tab)
-            think_match = re.search(r'<think>(.*?)</think>', response_text, re.DOTALL)
-            if think_match:
-                await self._emit_trace("thinking", turn_count, session_id=trace_sid,
-                                       content=think_match.group(1).strip()[:5000])
+            for _ in range(max_turns):
+                turn_count += 1
+                await self._emit_trace("turn_start", turn_count, session_id=trace_sid)
+                await self._send_telegram_typing_ping(chat_id)
+                response_text = await self._call_llm_resilient(messages)
 
-            # Emit raw LLM response
-            await self._emit_trace("llm_response", turn_count, session_id=trace_sid,
-                                   content=response_text[:3000])
+                # Capture think-tag content before stripping (for Thinking tab)
+                think_match = re.search(r'<think>(.*?)</think>', response_text, re.DOTALL)
+                if think_match:
+                    await self._emit_trace("thinking", turn_count, session_id=trace_sid,
+                                           content=think_match.group(1).strip()[:5000])
 
-            # Strip think-tags from final response text (Qwen3/DeepSeek-R1)
-            display_text = re.sub(r'<think>.*?</think>', '', response_text, flags=re.DOTALL).strip()
+                # Emit raw LLM response
+                await self._emit_trace("llm_response", turn_count, session_id=trace_sid,
+                                       content=response_text[:3000])
 
-            # Try to extract a tool call
-            tool_name, tool_args = self._extract_tool_call(response_text)
+                # Strip think-tags from final response text (Qwen3/DeepSeek-R1)
+                display_text = re.sub(r'<think>.*?</think>', '', response_text, flags=re.DOTALL).strip()
 
-            if tool_name is not None:
-                # Duplicate-call guard (prevents infinite loops with stubborn models)
-                # Exempt tools that are legitimately called repeatedly (snapshots, searches, etc.)
-                call_sig = f"{tool_name}:{json.dumps(tool_args, sort_keys=True)}"
-                if call_sig == last_tool_call and tool_name not in _DUPLICATE_EXEMPT:
-                    await self.core.log(
-                        f"⚠️ Duplicate tool call detected ({tool_name}), forcing final answer.",
-                        priority=2
-                    )
-                    await self._emit_trace("duplicate_blocked", turn_count, session_id=trace_sid,
-                                           tool=tool_name)
-                    # Force the model to give a final answer
-                    messages.append({"role": "assistant", "content": response_text})
-                    messages.append({
-                        "role": "user",
-                        "content": (
-                            "You already called that tool with those arguments. "
-                            "Please give your FINAL answer now in plain text — no more tool calls."
+                # Try to extract a tool call
+                tool_name, tool_args = self._extract_tool_call(response_text)
+
+                if tool_name is not None:
+                    # Duplicate-call guard (prevents infinite loops with stubborn models)
+                    # Exempt tools that are legitimately called repeatedly (snapshots, searches, etc.)
+                    call_sig = f"{tool_name}:{json.dumps(tool_args, sort_keys=True)}"
+                    if call_sig == last_tool_call and tool_name not in _DUPLICATE_EXEMPT:
+                        await self.core.log(
+                            f"⚠️ Duplicate tool call detected ({tool_name}), forcing final answer.",
+                            priority=2
                         )
-                    })
-                    last_tool_call = None
-                    continue
-                last_tool_call = call_sig
+                        await self._emit_trace("duplicate_blocked", turn_count, session_id=trace_sid,
+                                               tool=tool_name)
+                        # Force the model to give a final answer
+                        messages.append({"role": "assistant", "content": response_text})
+                        messages.append({
+                            "role": "user",
+                            "content": (
+                                "You already called that tool with those arguments. "
+                                "Please give your FINAL answer now in plain text — no more tool calls."
+                            )
+                        })
+                        last_tool_call = None
+                        continue
+                    last_tool_call = call_sig
 
-                # Fuzzy tool name match: handle "browser.navigate" → "browser_navigate" etc.
-                if tool_name not in self.tools:
-                    normalized = tool_name.replace(".", "_").replace("-", "_").lower()
-                    if normalized in self.tools:
-                        tool_name = normalized
+                    # Fuzzy tool name match: handle "browser.navigate" → "browser_navigate" etc.
+                    if tool_name not in self.tools:
+                        normalized = tool_name.replace(".", "_").replace("-", "_").lower()
+                        if normalized in self.tools:
+                            tool_name = normalized
+                        else:
+                            # Try prefix match (e.g. model said "navigate" and we have "browser_navigate")
+                            matches = [t for t in self.tools if t.endswith(f"_{normalized}") or t == normalized]
+                            if len(matches) == 1:
+                                tool_name = matches[0]
+
+                    await self.core.log(f"🛠️ Executing: {tool_name} {tool_args}", priority=2)
+
+                    if tool_name in self.tools:
+                        # Emit tool_call trace before executing
+                        await self._emit_trace("tool_call", turn_count, session_id=trace_sid,
+                                               tool=tool_name,
+                                               args=tool_args if isinstance(tool_args, dict) else str(tool_args)[:1000])
+                        tool_timeout = self._get_tool_timeout(tool_name)
+                        try:
+                            result = await asyncio.wait_for(
+                                self.tools[tool_name]["fn"](tool_args),
+                                timeout=tool_timeout
+                            )
+                            await self._send_telegram_typing_ping(chat_id)
+                            await self._emit_trace("tool_result", turn_count, session_id=trace_sid,
+                                                   tool=tool_name, result=str(result)[:3000], success=True)
+                        except asyncio.TimeoutError:
+                            result = f"[Tool Timeout] {tool_name} exceeded {tool_timeout}s limit and was killed."
+                            await self.core.log(f"⏱ Tool timeout: {tool_name} after {tool_timeout}s", priority=1)
+                            await self._emit_trace("tool_result", turn_count, session_id=trace_sid,
+                                                   tool=tool_name, result=result, success=False)
+                        except Exception as e:
+                            result = f"[Tool Error] {tool_name} raised: {type(e).__name__}: {e}"
+                            await self._emit_trace("tool_result", turn_count, session_id=trace_sid,
+                                                   tool=tool_name, result=str(result)[:3000], success=False)
+
+                        # Track TTS output so callers (telegram_bridge) can send the audio file
+                        if tool_name == "text_to_speech" and "[VOICE]" in str(result):
+                            voice_match = re.search(r'Generated speech.*?:\s*(.+\.mp3)', str(result))
+                            if voice_match:
+                                self.last_voice_file = voice_match.group(1).strip()
+
+                        messages.append({"role": "assistant", "content": response_text})
+                        messages.append({"role": "user", "content": f"Tool Output: {result}"})
+                        continue  # Loop back to LLM with result
                     else:
-                        # Try prefix match (e.g. model said "navigate" and we have "browser_navigate")
-                        matches = [t for t in self.tools if t.endswith(f"_{normalized}") or t == normalized]
-                        if len(matches) == 1:
-                            tool_name = matches[0]
+                        await self._emit_trace("tool_not_found", turn_count, session_id=trace_sid,
+                                               tool=tool_name)
+                        tool_list_hint = ", ".join(list(self.tools.keys())[:20]) + "..."
+                        messages.append({"role": "assistant", "content": response_text})
+                        messages.append({
+                            "role": "user",
+                            "content": (
+                                f"Error: Tool '{tool_name}' not found. "
+                                f"Available tools include: {tool_list_hint} "
+                                f"Please use the exact tool name from the list, then try again."
+                            )
+                        })
+                        continue
 
-                await self.core.log(f"🛠️ Executing: {tool_name} {tool_args}", priority=2)
+                # No tool call detected → this is the final answer
+                # Use display_text (think-tags stripped) for the history and relay
+                await self._emit_trace("final_answer", turn_count, session_id=trace_sid,
+                                       content=display_text[:3000])
+                self.history.append({"role": "assistant", "content": display_text})
+                # Only emit "thought" to the web UI if this is a web chat request.
+                # Telegram calls are handled by process_and_respond which emits
+                # "chat_from_telegram" — emitting "thought" here too causes duplicates.
+                if not chat_id:
+                    await self.core.relay.emit(2, "thought", display_text)
 
-                if tool_name in self.tools:
-                    # Emit tool_call trace before executing
-                    await self._emit_trace("tool_call", turn_count, session_id=trace_sid,
-                                           tool=tool_name,
-                                           args=tool_args if isinstance(tool_args, dict) else str(tool_args)[:1000])
+                self.total_tokens_out += len(display_text) // 4
+
+                # Persist to JSONL
+                source = "telegram" if chat_id else "web"
+                self._log_chat("assistant", display_text, source=source)
+
+                return display_text
+
+            # Hit max turns
+            await self._emit_trace("session_abort", turn_count, session_id=trace_sid,
+                                   reason="max_turns_exceeded")
+            error_msg = (
+                f"[ABORT] Hit maximum tool call limit ({max_turns} turns). "
+                f"Used {turn_count} tool calls but couldn't form a final answer. "
+                f"Try simplifying your query or asking for specific info."
+            )
+            self.total_tokens_out += len(error_msg) // 4
+            self.history.append({"role": "assistant", "content": error_msg})
+            self._log_chat("assistant", error_msg, source="telegram" if chat_id else "web")
+            return error_msg
+
+        # ── Execute the ReAct loop with wall-clock timeout ──
+        try:
+            return await asyncio.wait_for(_react_loop(), timeout=speak_timeout)
+        except asyncio.TimeoutError:
+            await self._emit_trace("session_abort", turn_count, session_id=trace_sid,
+                                   reason="speak_timeout")
+            timeout_msg = (
+                f"⏱ Task exceeded the maximum execution time ({int(speak_timeout)}s). "
+                f"Completed {turn_count} turns before timeout. "
+                f"Try breaking your request into smaller steps."
+            )
+            self.total_tokens_out += len(timeout_msg) // 4
+            self.history.append({"role": "assistant", "content": timeout_msg})
+            self._log_chat("assistant", timeout_msg, source="telegram" if chat_id else "web")
+            return timeout_msg
+
+    # ── Tool timeout defaults ────────────────────────────────────────
+    _TOOL_TIMEOUTS = {
+        'exec_shell': 120, 'execute_python': 60, 'open_browser': 60,
+        'web_fetch': 30, 'web_search': 15, 'browser_click': 30,
+        'browser_type': 15, 'browser_wait': 60, 'browser_extract': 30,
+        'browser_snapshot': 30, 'browser_fill_form': 30,
+        'browser_execute_js': 30, 'browser_pdf': 30,
+        'desktop_screenshot': 15, 'desktop_click': 10, 'desktop_type': 15,
+        'generate_image': 180, 'generate_image_sd35': 180,
+        'generate_image_imagen': 180, 'analyze_image': 60,
+        'text_to_speech': 30, 'spawn_subagent': 5, 'memory_search': 10,
+        'memory_imprint': 10, 'wait': 310, 'read_file': 10, 'write_file': 10,
+        'edit_file': 10, 'find_files': 30, 'list_dir': 10,
+        'read_pdf': 30, 'read_csv': 15, 'read_excel': 15, 'write_csv': 15,
+        'regex_search': 30, 'send_telegram': 15,
+        'git_status': 15, 'git_diff': 15, 'git_commit': 30, 'git_log': 15,
+        'image_resize': 15, 'image_convert': 15, 'http_request': 60,
+    }
+
+    def _get_tool_timeout(self, tool_name):
+        """Per-tool timeout: config override > built-in default > 60s."""
+        overrides = self.core.config.get('tool_timeouts', {})
+        return overrides.get(tool_name, self._TOOL_TIMEOUTS.get(tool_name, 60))
+
+    # ── Resilient LLM call with fallback chain ───────────────────────
+
+    async def _call_llm_resilient(self, messages):
+        """
+        Wrapper around _call_llm that detects [ERROR] responses and
+        transparently retries / walks the fallback chain.
+        On the happy path (no error), this adds zero overhead.
+        """
+        result = await self._call_llm(messages)
+
+        # Happy path — no error
+        if not isinstance(result, str) or not result.startswith("[ERROR]"):
+            return result
+
+        # Error detected — check if fallback is enabled
+        model_mgr = getattr(self.core, 'model_manager', None)
+        if not model_mgr or not model_mgr.auto_fallback_enabled:
+            return result  # Fallback disabled — return error as-is
+
+        error_type = model_mgr.classify_error(result)
+        await self.core.log(
+            f"⚠️ LLM error ({error_type}): {self.llm.provider}/{self.llm.model} — {result[:150]}",
+            priority=1
+        )
+
+        # For transient errors, retry the SAME model once with a short delay
+        if error_type in TRANSIENT_ERRORS:
+            delay = 2.0 if error_type == ERROR_RATE_LIMIT else 1.0
+            await asyncio.sleep(delay)
+            retry = await self._call_llm(messages)
+            if not isinstance(retry, str) or not retry.startswith("[ERROR]"):
+                await self.core.log(f"✅ Retry succeeded for {self.llm.provider}", priority=2)
+                return retry
+
+        # Record the failure on the current provider
+        model_mgr._record_provider_failure(self.llm.provider, error_type)
+
+        # Walk the fallback chain
+        return await self._walk_fallback_chain(messages, error_type)
+
+    async def _walk_fallback_chain(self, messages, original_error_type):
+        """
+        Try each model in the fallback chain until one succeeds.
+        Provider/model is restored to the original state after every attempt.
+        """
+        model_mgr = self.core.model_manager
+
+        # Save current (user-selected) state — ALWAYS restored at end
+        orig_provider = self.llm.provider
+        orig_model    = self.llm.model
+        orig_key      = self.llm.api_key
+
+        chain = model_mgr.fallback_chain
+        last_error = None
+
+        async with model_mgr._fallback_lock:
+            # Check shortcut cache — if a fallback worked recently, try it first
+            if model_mgr._last_successful_fallback:
+                fb_p, fb_m, fb_ts = model_mgr._last_successful_fallback
+                if (datetime.now() - fb_ts).total_seconds() < 60:
+                    # Try the cached fallback first
+                    self.llm.provider = fb_p
+                    self.llm.model = fb_m
+                    model_mgr._set_api_key(fb_p)
                     try:
-                        result = await self.tools[tool_name]["fn"](tool_args)
-                        await self._send_telegram_typing_ping(chat_id)
-                        await self._emit_trace("tool_result", turn_count, session_id=trace_sid,
-                                               tool=tool_name, result=str(result)[:3000], success=True)
-                    except Exception as e:
-                        result = f"[Tool Error] {tool_name} raised: {type(e).__name__}: {e}"
-                        await self._emit_trace("tool_result", turn_count, session_id=trace_sid,
-                                               tool=tool_name, result=str(result)[:3000], success=False)
+                        result = await self._call_llm(messages)
+                        if not isinstance(result, str) or not result.startswith("[ERROR]"):
+                            model_mgr._record_provider_success(fb_p)
+                            model_mgr._last_successful_fallback = (fb_p, fb_m, datetime.now())
+                            await self.core.log(
+                                f"⚡ Fallback cache hit: {fb_p}/{fb_m} (orig: {orig_provider}/{orig_model})",
+                                priority=2
+                            )
+                            await self.core.relay.emit(2, "model_fallback", {
+                                "original": f"{orig_provider}/{orig_model}",
+                                "fallback": f"{fb_p}/{fb_m}",
+                                "reason": original_error_type,
+                            })
+                            # Restore original state
+                            self.llm.provider = orig_provider
+                            self.llm.model = orig_model
+                            self.llm.api_key = orig_key
+                            return result
+                    except Exception:
+                        pass
 
-                    # Track TTS output so callers (telegram_bridge) can send the audio file
-                    if tool_name == "text_to_speech" and "[VOICE]" in str(result):
-                        voice_match = re.search(r'Generated speech.*?:\s*(.+\.mp3)', str(result))
-                        if voice_match:
-                            self.last_voice_file = voice_match.group(1).strip()
+            # Walk the full chain
+            for entry in chain:
+                provider = entry['provider']
+                model    = entry['model']
 
-                    messages.append({"role": "assistant", "content": response_text})
-                    messages.append({"role": "user", "content": f"Tool Output: {result}"})
-                    continue  # Loop back to LLM with result
-                else:
-                    await self._emit_trace("tool_not_found", turn_count, session_id=trace_sid,
-                                           tool=tool_name)
-                    tool_list_hint = ", ".join(list(self.tools.keys())[:20]) + "..."
-                    messages.append({"role": "assistant", "content": response_text})
-                    messages.append({
-                        "role": "user",
-                        "content": (
-                            f"Error: Tool '{tool_name}' not found. "
-                            f"Available tools include: {tool_list_hint} "
-                            f"Please use the exact tool name from the list, then try again."
-                        )
-                    })
+                # Skip the provider that just failed
+                if provider == orig_provider and model == orig_model:
                     continue
 
-            # No tool call detected → this is the final answer
-            # Use display_text (think-tags stripped) for the history and relay
-            await self._emit_trace("final_answer", turn_count, session_id=trace_sid,
-                                   content=display_text[:3000])
-            self.history.append({"role": "assistant", "content": display_text})
-            # Only emit "thought" to the web UI if this is a web chat request.
-            # Telegram calls are handled by process_and_respond which emits
-            # "chat_from_telegram" — emitting "thought" here too causes duplicates.
-            if not chat_id:
-                await self.core.relay.emit(2, "thought", display_text)
+                # Skip providers in cooldown
+                if not model_mgr._is_provider_available(provider):
+                    continue
 
-            self.total_tokens_out += len(display_text) // 4
+                # Skip Ollama if offline (avoid 180s timeout on dead server)
+                if provider == 'ollama':
+                    ollama_mgr = getattr(self.core, 'ollama_manager', None)
+                    if ollama_mgr:
+                        healthy = await ollama_mgr.health_check()
+                        if not healthy:
+                            continue
 
-            # Persist to JSONL
-            source = "telegram" if chat_id else "web"
-            self._log_chat("assistant", display_text, source=source)
+                # Swap to fallback
+                self.llm.provider = provider
+                self.llm.model = model
+                model_mgr._set_api_key(provider)
 
-            return display_text
+                await self.core.log(f"🔄 Fallback → trying {provider}/{model}...", priority=2)
 
-        # Hit max turns
-        await self._emit_trace("session_abort", turn_count, session_id=trace_sid,
-                               reason="max_turns_exceeded")
-        error_msg = (
-            f"[ABORT] Hit maximum tool call limit ({max_turns} turns). "
-            f"Used {turn_count} tool calls but couldn't form a final answer. "
-            f"Try simplifying your query or asking for specific info."
+                try:
+                    result = await self._call_llm(messages)
+
+                    if not isinstance(result, str) or not result.startswith("[ERROR]"):
+                        # Success!
+                        model_mgr._record_provider_success(provider)
+                        model_mgr._last_successful_fallback = (provider, model, datetime.now())
+                        await self.core.log(
+                            f"✅ Fallback SUCCESS: {provider}/{model} "
+                            f"(original: {orig_provider}/{orig_model})",
+                            priority=1
+                        )
+                        await self.core.relay.emit(2, "model_fallback", {
+                            "original": f"{orig_provider}/{orig_model}",
+                            "fallback": f"{provider}/{model}",
+                            "reason": original_error_type,
+                        })
+                        # Restore original model for next call
+                        self.llm.provider = orig_provider
+                        self.llm.model = orig_model
+                        self.llm.api_key = orig_key
+                        return result
+                    else:
+                        # This fallback also failed
+                        fb_error = model_mgr.classify_error(result)
+                        model_mgr._record_provider_failure(provider, fb_error)
+                        last_error = result
+
+                except Exception as e:
+                    last_error = f"[ERROR] Fallback {provider}: {e}"
+                    model_mgr._record_provider_failure(provider, "UNKNOWN")
+
+            # All exhausted — restore and return failure
+            self.llm.provider = orig_provider
+            self.llm.model = orig_model
+            self.llm.api_key = orig_key
+
+        total_tried = len(chain) + 1  # +1 for original
+        return (
+            f"[Galactic] All {total_tried} models in the fallback chain failed. "
+            f"Last error: {(last_error or 'unknown')[:200]}. "
+            f"Check API keys and service status, or try again in a few minutes."
         )
-        self.total_tokens_out += len(error_msg) // 4
-        self.history.append({"role": "assistant", "content": error_msg})
-        self._log_chat("assistant", error_msg, source="telegram" if chat_id else "web")
-        return error_msg
 
     async def _call_llm(self, messages):
         """
@@ -4611,4 +4963,360 @@ $notify.Dispose()
         except Exception as e:
             return f"[ERROR] text_transform ({operation}): {e}"
 
+    # ── New v0.9.2 Tool Implementations ──────────────────────────────
 
+    async def tool_execute_python(self, args):
+        """Execute Python code in a subprocess."""
+        code = args.get('code', '')
+        timeout = min(int(args.get('timeout', 60)), 300)
+        if not code.strip():
+            return "[ERROR] No code provided."
+        import tempfile
+        tmp = None
+        try:
+            tmp = tempfile.NamedTemporaryFile(mode='w', suffix='.py', delete=False, encoding='utf-8')
+            tmp.write(code)
+            tmp.close()
+            proc = await asyncio.create_subprocess_exec(
+                'python', tmp.name,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+            )
+            try:
+                stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=timeout)
+            except asyncio.TimeoutError:
+                proc.kill()
+                await proc.wait()
+                return f"[Timeout] Python script exceeded {timeout}s and was killed."
+            out = stdout.decode('utf-8', errors='ignore').strip()
+            err = stderr.decode('utf-8', errors='ignore').strip()
+            result = ""
+            if out:
+                result += f"STDOUT:\n{out}\n"
+            if err:
+                result += f"STDERR:\n{err}\n"
+            if proc.returncode != 0:
+                result += f"Exit code: {proc.returncode}"
+            return result or "Script completed with no output."
+        except Exception as e:
+            return f"[ERROR] execute_python: {e}"
+        finally:
+            if tmp:
+                try:
+                    os.unlink(tmp.name)
+                except Exception:
+                    pass
+
+    async def tool_wait(self, args):
+        """Pause execution."""
+        seconds = min(float(args.get('seconds', 1)), 300)
+        await asyncio.sleep(seconds)
+        return f"Waited {seconds:.1f} seconds."
+
+    async def tool_send_telegram(self, args):
+        """Send a proactive Telegram message."""
+        message = args.get('message', '')
+        chat_id = args.get('chat_id', '') or str(self.core.config.get('telegram', {}).get('admin_chat_id', ''))
+        image_path = args.get('image_path', '')
+        if not chat_id:
+            return "[ERROR] No chat_id provided and no admin_chat_id in config."
+        if not message:
+            return "[ERROR] No message provided."
+        try:
+            tg = getattr(self.core, 'telegram', None)
+            if not tg:
+                return "[ERROR] Telegram bridge not available."
+            if image_path and os.path.exists(image_path):
+                await tg.send_photo(int(chat_id), image_path, caption=message)
+                return f"Sent photo + message to Telegram chat {chat_id}."
+            else:
+                await tg.send_message(int(chat_id), message)
+                return f"Sent message to Telegram chat {chat_id}."
+        except Exception as e:
+            return f"[ERROR] send_telegram: {e}"
+
+    async def tool_read_pdf(self, args):
+        """Extract text from a PDF file."""
+        path = args.get('path', '')
+        pages_arg = args.get('pages', 'all')
+        if not path or not os.path.exists(path):
+            return f"[ERROR] File not found: {path}"
+        try:
+            try:
+                import pdfplumber
+                with pdfplumber.open(path) as pdf:
+                    total = len(pdf.pages)
+                    page_range = self._parse_page_range(pages_arg, total)
+                    texts = []
+                    for i in page_range:
+                        page = pdf.pages[i]
+                        text = page.extract_text()
+                        if text:
+                            texts.append(f"--- Page {i+1} ---\n{text}")
+                    return "\n\n".join(texts) if texts else "[INFO] No text content found in PDF."
+            except ImportError:
+                pass
+            try:
+                import PyPDF2
+                reader = PyPDF2.PdfReader(path)
+                total = len(reader.pages)
+                page_range = self._parse_page_range(pages_arg, total)
+                texts = []
+                for i in page_range:
+                    text = reader.pages[i].extract_text()
+                    if text:
+                        texts.append(f"--- Page {i+1} ---\n{text}")
+                return "\n\n".join(texts) if texts else "[INFO] No text content found in PDF."
+            except ImportError:
+                return "[ERROR] Install pdfplumber or PyPDF2: pip install pdfplumber"
+        except Exception as e:
+            return f"[ERROR] read_pdf: {e}"
+
+    def _parse_page_range(self, spec, total):
+        """Parse page range like '1-5', '3', 'all'."""
+        if not spec or spec.lower() == 'all':
+            return range(total)
+        if '-' in spec:
+            parts = spec.split('-')
+            start = max(0, int(parts[0]) - 1)
+            end = min(total, int(parts[1]))
+            return range(start, end)
+        return [int(spec) - 1]
+
+    async def tool_read_csv(self, args):
+        """Read a CSV file and return as JSON rows."""
+        import csv as _csv
+        path = args.get('path', '')
+        limit = int(args.get('limit', 200))
+        delimiter = args.get('delimiter', ',')
+        if not path or not os.path.exists(path):
+            return f"[ERROR] File not found: {path}"
+        try:
+            with open(path, 'r', encoding='utf-8-sig') as f:
+                reader = _csv.DictReader(f, delimiter=delimiter)
+                rows = []
+                for i, row in enumerate(reader):
+                    if i >= limit:
+                        break
+                    rows.append(dict(row))
+            return json.dumps({"total_rows": len(rows), "columns": list(rows[0].keys()) if rows else [], "rows": rows}, indent=2)
+        except Exception as e:
+            return f"[ERROR] read_csv: {e}"
+
+    async def tool_write_csv(self, args):
+        """Write rows to a CSV file."""
+        import csv as _csv
+        path = args.get('path', '')
+        rows = args.get('rows', [])
+        append = args.get('append', False)
+        if not path:
+            return "[ERROR] No path provided."
+        if not rows:
+            return "[ERROR] No rows provided."
+        try:
+            mode = 'a' if append else 'w'
+            file_exists = os.path.exists(path) and append
+            with open(path, mode, newline='', encoding='utf-8') as f:
+                writer = _csv.DictWriter(f, fieldnames=rows[0].keys())
+                if not file_exists:
+                    writer.writeheader()
+                writer.writerows(rows)
+            return f"Wrote {len(rows)} rows to {path}."
+        except Exception as e:
+            return f"[ERROR] write_csv: {e}"
+
+    async def tool_read_excel(self, args):
+        """Read an Excel (.xlsx) file."""
+        path = args.get('path', '')
+        sheet = args.get('sheet', None)
+        limit = int(args.get('limit', 100))
+        if not path or not os.path.exists(path):
+            return f"[ERROR] File not found: {path}"
+        try:
+            import openpyxl
+            wb = openpyxl.load_workbook(path, read_only=True, data_only=True)
+            ws = wb[sheet] if sheet and sheet in wb.sheetnames else wb.active
+            rows = list(ws.iter_rows(values_only=True))
+            if not rows:
+                return "[INFO] Empty spreadsheet."
+            headers = [str(h) if h else f"col_{i}" for i, h in enumerate(rows[0])]
+            data = []
+            for row in rows[1:limit+1]:
+                data.append({headers[i]: (str(v) if v is not None else '') for i, v in enumerate(row)})
+            wb.close()
+            return json.dumps({"sheets": wb.sheetnames if hasattr(wb, 'sheetnames') else [], "columns": headers, "rows": data, "total_rows": len(data)}, indent=2)
+        except ImportError:
+            return "[ERROR] Install openpyxl: pip install openpyxl"
+        except Exception as e:
+            return f"[ERROR] read_excel: {e}"
+
+    async def tool_regex_search(self, args):
+        """Search files with regex."""
+        import fnmatch as _fn
+        pattern = args.get('pattern', '')
+        search_path = args.get('path', '.')
+        file_pattern = args.get('file_pattern', '*')
+        limit = int(args.get('limit', 50))
+        if not pattern:
+            return "[ERROR] No pattern provided."
+        try:
+            compiled = re.compile(pattern, re.IGNORECASE)
+        except re.error as e:
+            return f"[ERROR] Invalid regex: {e}"
+        results = []
+        try:
+            if os.path.isfile(search_path):
+                files = [search_path]
+            else:
+                files = []
+                for root, dirs, fnames in os.walk(search_path):
+                    for fn in fnames:
+                        if _fn.fnmatch(fn, file_pattern):
+                            files.append(os.path.join(root, fn))
+                    if len(files) > 5000:
+                        break
+            for fpath in files:
+                try:
+                    with open(fpath, 'r', encoding='utf-8', errors='ignore') as f:
+                        for line_no, line in enumerate(f, 1):
+                            if compiled.search(line):
+                                results.append(f"{fpath}:{line_no}: {line.rstrip()[:200]}")
+                                if len(results) >= limit:
+                                    return f"Found {len(results)} matches (limit reached):\n" + "\n".join(results)
+                except (PermissionError, IsADirectoryError):
+                    continue
+            return f"Found {len(results)} matches:\n" + "\n".join(results) if results else "No matches found."
+        except Exception as e:
+            return f"[ERROR] regex_search: {e}"
+
+    async def tool_image_resize(self, args):
+        """Resize an image."""
+        path = args.get('path', '')
+        width = args.get('width')
+        height = args.get('height')
+        output = args.get('output_path', '')
+        if not path or not os.path.exists(path):
+            return f"[ERROR] File not found: {path}"
+        try:
+            from PIL import Image
+            img = Image.open(path)
+            orig_w, orig_h = img.size
+            new_w = int(width) if width else orig_w
+            new_h = int(height) if height else orig_h
+            resized = img.resize((new_w, new_h), Image.LANCZOS)
+            out_path = output or os.path.splitext(path)[0] + f"_{new_w}x{new_h}" + os.path.splitext(path)[1]
+            resized.save(out_path)
+            return f"Resized {orig_w}x{orig_h} → {new_w}x{new_h}. Saved to: {out_path}"
+        except ImportError:
+            return "[ERROR] Pillow not installed. Run: pip install Pillow"
+        except Exception as e:
+            return f"[ERROR] image_resize: {e}"
+
+    async def tool_image_convert(self, args):
+        """Convert image format."""
+        path = args.get('path', '')
+        fmt = args.get('format', 'png').lower()
+        output = args.get('output_path', '')
+        quality = int(args.get('quality', 85))
+        if not path or not os.path.exists(path):
+            return f"[ERROR] File not found: {path}"
+        try:
+            from PIL import Image
+            img = Image.open(path)
+            if fmt in ('jpeg', 'jpg') and img.mode in ('RGBA', 'LA', 'P'):
+                img = img.convert('RGB')
+            out_path = output or os.path.splitext(path)[0] + '.' + ('jpg' if fmt == 'jpeg' else fmt)
+            save_kwargs = {}
+            if fmt in ('jpeg', 'jpg', 'webp'):
+                save_kwargs['quality'] = quality
+            img.save(out_path, **save_kwargs)
+            return f"Converted to {fmt.upper()}. Saved to: {out_path}"
+        except ImportError:
+            return "[ERROR] Pillow not installed. Run: pip install Pillow"
+        except Exception as e:
+            return f"[ERROR] image_convert: {e}"
+
+    async def _git_exec(self, cmd_args, cwd=None):
+        """Helper to run a git command."""
+        cwd = cwd or self.core.config.get('paths', {}).get('workspace', '.')
+        proc = await asyncio.create_subprocess_exec(
+            'git', *cmd_args, cwd=cwd,
+            stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE,
+        )
+        stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=30)
+        out = stdout.decode('utf-8', errors='ignore').strip()
+        err = stderr.decode('utf-8', errors='ignore').strip()
+        if proc.returncode != 0 and err:
+            return f"[git error] {err}"
+        return out or err or "(no output)"
+
+    async def tool_git_status(self, args):
+        path = args.get('path')
+        return await self._git_exec(['status', '--short'], cwd=path)
+
+    async def tool_git_diff(self, args):
+        path = args.get('path')
+        cmd = ['diff', '--stat']
+        if args.get('staged'):
+            cmd.append('--cached')
+        return await self._git_exec(cmd, cwd=path)
+
+    async def tool_git_log(self, args):
+        path = args.get('path')
+        count = str(int(args.get('count', 10)))
+        return await self._git_exec(['log', f'--oneline', f'-{count}'], cwd=path)
+
+    async def tool_git_commit(self, args):
+        path = args.get('path')
+        message = args.get('message', 'Auto-commit by Galactic AI')
+        files = args.get('files', [])
+        cwd = path or self.core.config.get('paths', {}).get('workspace', '.')
+        if files:
+            for f in files:
+                await self._git_exec(['add', f], cwd=cwd)
+        else:
+            await self._git_exec(['add', '-A'], cwd=cwd)
+        return await self._git_exec(['commit', '-m', message], cwd=cwd)
+
+    async def tool_spawn_subagent(self, args):
+        """Spawn a background sub-agent."""
+        task = args.get('task', '')
+        agent_type = args.get('agent_type', 'researcher')
+        if not task:
+            return "[ERROR] No task provided."
+        plugin = None
+        for p in self.core.plugins:
+            if 'SubAgent' in p.__class__.__name__:
+                plugin = p
+                break
+        if not plugin:
+            return "[ERROR] SubAgentPlugin not loaded."
+        try:
+            session_id = await plugin.spawn(task, agent_id=agent_type)
+            return f"Sub-agent spawned. Session ID: {session_id}. Use check_subagent to get results."
+        except Exception as e:
+            return f"[ERROR] spawn_subagent: {e}"
+
+    async def tool_check_subagent(self, args):
+        """Check sub-agent status."""
+        session_id = args.get('session_id', '')
+        if not session_id:
+            return "[ERROR] No session_id provided."
+        plugin = None
+        for p in self.core.plugins:
+            if 'SubAgent' in p.__class__.__name__:
+                plugin = p
+                break
+        if not plugin:
+            return "[ERROR] SubAgentPlugin not loaded."
+        session = plugin.active_sessions.get(session_id)
+        if not session:
+            return f"[ERROR] Session {session_id} not found."
+        result = {
+            "id": session.id,
+            "agent": session.agent_id,
+            "task": session.task[:100],
+            "status": session.status,
+            "result": (session.result or "")[:2000] if session.status == "completed" else None,
+        }
+        return json.dumps(result, indent=2)
