@@ -1,0 +1,112 @@
+# ─── NEVER COMMIT — Personal installation ────────────────────────────────────
+# Your private dev install (has real API keys, personal data)
+galactic-core/
+galactic-core_BACKUP*/
+
+# Releases (large binary archives, not source)
+releases/
+
+# Personal workspace files (memory, identity — not for public repo)
+MEMORY.md
+USER.md
+IDENTITY.md
+SOUL.md
+TOOLS.md
+HEARTBEAT.md
+AGENTS.md
+TOOLS.md.bak
+
+# ─── NEVER COMMIT — Credentials & sensitive config ───────────────────────────
+# NOTE: config.yaml IS tracked (public template with empty keys)
+# but personal copies should never be staged
+*.env
+.env
+*.key
+*.token
+*.secret
+
+# ─── NEVER COMMIT — Logs & runtime state ─────────────────────────────────────
+logs/
+*.jsonl
+memory_*.json
+checked_jobs.json
+checked_posts.json
+processed_emails.json
+processed_emails.log
+debug_core.log
+*.db
+*.sqlite
+
+# ─── NEVER COMMIT — Personal projects & unrelated files ──────────────────────
+PocketAgent/
+app/
+src/
+context/
+leads/
+leads_*/
+ai-creator-kit/
+ai-creator-kit-extracted/
+ai-creator-kit.zip
+business-planner-bundle.zip
+side-hustler-pack/
+printable-planners/
+data-dealer-outreach/
+memory/
+watch/
+workspace/
+.gradle/
+.openclaw/
+.claude/
+
+# ─── NEVER COMMIT — Personal scripts & data ──────────────────────────────────
+blast_agency_outreach.py
+blast_buyers.txt
+buyers_list.txt
+texas_buyers.txt
+send_*.py
+check_automation.py
+email_watchdog.py
+freelance_snipe.py
+mailer.js
+claudeClient.js
+build_release.py
+setup_llama.sh
+gumroad-upload.sh
+data_dealer_log.csv
+migration_report.txt
+modelfile_hermes
+reddit_post.txt
+viral-*.md
+viral-*.txt
+social-media-promo.md
+*.csv
+*.bat
+*.html
+!index.html
+*.jpg
+*.svg
+*.docx
+*.txt
+test*.py
+test*.html
+test*.pdf
+serve_website.py
+build.gradle.kts
+etsy-*.html
+etsy-*.jpg
+gumroad-*.html
+gumroad-*.md
+galactic_ai_website.html
+*-shop-icon.*
+*.zip
+
+# ─── OS & IDE ─────────────────────────────────────────────────────────────────
+.DS_Store
+Thumbs.db
+desktop.ini
+.vscode/
+.idea/
+*.swp
+__pycache__/
+*.pyc
+*.pyo
