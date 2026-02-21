@@ -4,6 +4,21 @@ All notable changes to Galactic AI are documented here.
 
 ---
 
+## [v1.0.5] — 2026-02-21
+
+### Added
+- **🔌 Agent Loop Circuit Breaker** — After 3 consecutive tool failures (errors or timeouts), the AI is forced to stop calling tools and explain the situation to the user instead of spiraling through all 50 turns
+- **⚠️ Progressive Backpressure** — At 50% and 80% of the tool-turn budget, the AI receives nudge messages telling it to wrap up and deliver results, preventing runaway automation sessions
+- **🔄 Tool Repetition Guard** — If the same tool is called 4+ times in a 6-call window without progress, the AI is instructed to change strategy or explain the problem
+- **🔒 Model Lock During Active Tasks** — Switching models via the Control Deck while the AI is mid-task now queues the switch instead of disrupting the active conversation (applied automatically after the task completes)
+- **🎯 Smart Routing Restoration** — When smart routing temporarily switches to a specialized model (e.g., Qwen Coder for coding tasks), the original model is now automatically restored after the request completes
+
+### Fixed
+- **Agent timeout spiral** — Complex tasks (like script creation) could burn through all 50 tool turns without converging, hitting the 600s wall-clock timeout. The new anti-spin guardrails (circuit breaker, backpressure, repetition guard) prevent this pattern
+- **Smart routing model leak** — `auto_route()` switched the model but never restored it, so the specialized model stuck around for subsequent unrelated requests
+
+---
+
 ## [v1.0.4] — 2026-02-21
 
 ### Fixed

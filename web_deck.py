@@ -3579,6 +3579,25 @@ setInterval(() => {
             model = data.get('model', '')
             if not provider or not model:
                 return web.json_response({'error': 'provider and model required'}, status=400)
+
+            # If the AI is actively processing a task, queue the switch instead
+            # of disrupting it mid-conversation (prevents smart-routing breakage)
+            if getattr(self.core.gateway, '_speaking', False):
+                self.core.gateway._queued_switch = (provider, model)
+                # Still persist as new primary so it survives restarts
+                if hasattr(self.core, 'model_manager'):
+                    self.core.model_manager.primary_provider = provider
+                    self.core.model_manager.primary_model = model
+                    self.core.model_manager.current_mode = 'primary'
+                    await self.core.model_manager._save_config()
+                await self.core.log(
+                    f"🔄 Model switch queued (task in progress): {model}", priority=2
+                )
+                return web.json_response({
+                    'ok': True, 'queued': True, 'provider': provider, 'model': model,
+                    'message': 'Model switch queued — will apply after current task completes'
+                })
+
             self.core.gateway.llm.provider = provider
             self.core.gateway.llm.model = model
             if hasattr(self.core, 'model_manager'):
