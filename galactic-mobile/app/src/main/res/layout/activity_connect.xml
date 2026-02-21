@@ -172,7 +172,7 @@
             android:layout_marginBottom="12dp" />
 
         <!-- Connect button -->
-        <Button
+        <androidx.appcompat.widget.AppCompatButton
             android:id="@+id/btn_connect"
             android:layout_width="match_parent"
             android:layout_height="52dp"
@@ -182,19 +182,21 @@
             android:textSize="16sp"
             android:letterSpacing="0.1"
             android:background="@drawable/btn_gradient"
-            android:layout_marginBottom="14dp" />
+            android:layout_marginBottom="14dp"
+            android:stateListAnimator="@null" />
 
         <!-- QR Scan button -->
-        <Button
+        <androidx.appcompat.widget.AppCompatButton
             android:id="@+id/btn_scan_qr"
             android:layout_width="match_parent"
             android:layout_height="48dp"
-            android:text="SCAN QR CODE"
+            android:text="📷  SCAN QR CODE"
             android:textColor="@color/cyan"
             android:textSize="14sp"
             android:letterSpacing="0.05"
             android:background="@drawable/input_bg"
-            android:layout_marginBottom="24dp" />
+            android:layout_marginBottom="24dp"
+            android:stateListAnimator="@null" />
 
     </LinearLayout>
 </ScrollView>

@@ -142,13 +142,17 @@ class ConnectActivity : AppCompatActivity() {
     }
 
     private fun launchQrScanner() {
-        IntentIntegrator(this)
-            .setDesiredBarcodeFormats(IntentIntegrator.QR_CODE)
-            .setPrompt("Scan QR code from Galactic-AI Settings tab")
-            .setCameraId(0)
-            .setBeepEnabled(false)
-            .setOrientationLocked(true)
-            .initiateScan()
+        try {
+            IntentIntegrator(this)
+                .setDesiredBarcodeFormats(IntentIntegrator.QR_CODE)
+                .setPrompt("Scan QR code from Galactic-AI Settings tab")
+                .setCameraId(0)
+                .setBeepEnabled(false)
+                .setOrientationLocked(true)
+                .initiateScan()
+        } catch (e: Exception) {
+            showError("Failed to open QR scanner: ${e.message}")
+        }
     }
 
     @Deprecated("Deprecated in Java")
