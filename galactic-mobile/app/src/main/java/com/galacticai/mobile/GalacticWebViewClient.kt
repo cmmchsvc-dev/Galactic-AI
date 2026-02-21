@@ -29,6 +29,13 @@ class GalacticWebViewClient(
 
     override fun onPageFinished(view: WebView?, url: String?) {
         super.onPageFinished(view, url)
+        // Mark as Android WebView — disables mic button (getUserMedia needs HTTPS/localhost)
+        view?.evaluateJavascript(
+            "window.GALACTIC_ANDROID = true;" +
+            "var micBtn = document.getElementById('voice-btn');" +
+            "if (micBtn) { micBtn.style.display = 'none'; }",
+            null
+        )
         if (!hasInjectedToken && storage.jwtToken.isNotBlank()) {
             // Inject JWT token into localStorage so the web UI can use it
             val escapedToken = storage.jwtToken.replace("'", "\\'")

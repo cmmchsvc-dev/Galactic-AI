@@ -2753,6 +2753,12 @@ function toggleVoiceInput() {
 
 async function startVoiceInput() {
   const btn = document.getElementById('voice-btn');
+  // MediaRecorder requires a secure context (HTTPS or localhost).
+  // In the Android WebView over plain HTTP, navigator.mediaDevices is undefined.
+  if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+    showToast('Mic unavailable: use the PC browser for voice input, or type your message.', 'error', 4000);
+    return;
+  }
   try {
     const stream = await navigator.mediaDevices.getUserMedia({audio: true});
     _voiceChunks = [];
