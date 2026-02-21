@@ -344,6 +344,24 @@ class GalacticCore:
         await self.setup_systems()
         await self.imprint_workspace()
 
+        # Remote access warning
+        web_cfg = self.config.get('web', {})
+        if web_cfg.get('remote_access', False):
+            port = web_cfg.get('port', 17789)
+            await self.log(f"REMOTE ACCESS ENABLED — Galactic AI is accessible from the network on port {port}", priority=1)
+            # Auto-generate JWT secret if missing
+            if not web_cfg.get('jwt_secret'):
+                from remote_access import generate_api_secret
+                web_cfg['jwt_secret'] = generate_api_secret()
+                self.config['web'] = web_cfg
+                try:
+                    import yaml
+                    cfg_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'config.yaml')
+                    with open(cfg_path, 'w', encoding='utf-8') as f:
+                        yaml.dump(self.config, f, default_flow_style=False, allow_unicode=True)
+                except Exception:
+                    pass
+
         # Start Bridge (Socket Server)
         server = await asyncio.start_server(self.handle_client, '127.0.0.1', self.config['system']['port'])
 

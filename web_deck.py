@@ -13,7 +13,34 @@ class GalacticWebDeck:
         self.port = self.config.get('port', 18789)
         self.host = self.config.get('host', '127.0.0.1')
         self.password_hash = self.config.get('password_hash')
-        self.app = web.Application()
+        self.remote_access = self.config.get('remote_access', False)
+        self.jwt_secret = self.config.get('jwt_secret', '')
+        self.cert_fingerprint = ''
+
+        # Remote access: override host to 0.0.0.0, set up TLS & middleware
+        if self.remote_access:
+            self.host = '0.0.0.0'
+            if not self.jwt_secret:
+                from remote_access import generate_api_secret
+                self.jwt_secret = generate_api_secret()
+                cfg = core.config
+                if 'web' not in cfg:
+                    cfg['web'] = {}
+                cfg['web']['jwt_secret'] = self.jwt_secret
+                self._save_config(cfg)
+
+        # Build app with middleware
+        middlewares = []
+        if self.remote_access and self.password_hash:
+            from remote_access import create_auth_middleware, RateLimiter, create_cors_middleware
+            rate_limit = self.config.get('rate_limit', 60)
+            self.rate_limiter = RateLimiter(general_limit=rate_limit)
+            middlewares.append(create_auth_middleware(self.password_hash, self.jwt_secret, self.rate_limiter))
+            allowed_origins = self.config.get('allowed_origins', [])
+            if allowed_origins:
+                middlewares.append(create_cors_middleware(allowed_origins))
+
+        self.app = web.Application(middlewares=middlewares)
         self.app.router.add_get('/', self.handle_index)
         self.app.router.add_post('/login', self.handle_login)
         self.app.router.add_post('/api/setup', self.handle_setup)
@@ -53,6 +80,10 @@ class GalacticWebDeck:
         self.app.router.add_post('/api/settings/models', self.handle_settings_models)
         self.app.router.add_post('/api/settings/voice', self.handle_settings_voice)
         self.app.router.add_post('/api/settings/system', self.handle_settings_system)
+        # Mobile / Remote access endpoints
+        self.app.router.add_get('/api/qr_pair', self.handle_qr_pair)
+        self.app.router.add_post('/api/tts', self.handle_tts)
+        self.app.router.add_post('/api/stt', self.handle_stt)
         self.trace_buffer = []  # last 500 agent trace entries for persistence
         
     async def handle_index(self, request):
@@ -1129,6 +1160,48 @@ body.glow-max .status-dot{box-shadow:0 0 14px var(--green),0 0 28px rgba(0,255,1
           </div>
         </div>
 
+        <!-- Section 4: Mobile Pairing -->
+        <div class="model-config-box" style="margin-top:18px">
+          <h4>📱 MOBILE APP PAIRING</h4>
+          <div style="font-size:0.78em;color:var(--dim);margin-bottom:10px">
+            Scan this QR code with Galactic-AI Mobile to connect instantly.
+            <br>Remote access must be enabled in config.yaml (<code style="color:var(--cyan)">remote_access: true</code>).
+          </div>
+          <div id="qr-pair-container" style="text-align:center;padding:14px">
+            <div id="qr-pair-img" style="display:inline-block;background:var(--bg);border:2px solid var(--cyan);border-radius:12px;padding:16px;box-shadow:0 0 30px rgba(0,243,255,0.1)">
+              <div style="color:var(--dim);font-size:0.82em;padding:20px">Loading QR code...</div>
+            </div>
+            <div id="qr-pair-info" style="margin-top:10px;font-size:0.78em;color:var(--dim)"></div>
+          </div>
+          <div style="margin-top:8px;text-align:center">
+            <button class="btn secondary" onclick="loadPairingQR()">Refresh QR Code</button>
+          </div>
+        </div>
+
+        <!-- Section 5: Display -->
+        <div class="model-config-box" style="margin-top:18px">
+          <h4>DISPLAY</h4>
+          <div style="display:flex;gap:18px;flex-wrap:wrap;align-items:center">
+            <label style="display:flex;align-items:center;gap:8px;font-size:0.88em;cursor:pointer">
+              <span>Font Size</span>
+              <input type="range" id="ds-fontsize" min="13" max="26" value="17" style="accent-color:var(--cyan);width:120px;cursor:pointer" oninput="applyFontSize(this.value)">
+              <span id="ds-fontsize-label" style="font-size:0.78em;color:var(--dim);min-width:30px">17px</span>
+            </label>
+            <label style="display:flex;align-items:center;gap:8px;font-size:0.88em;cursor:pointer">
+              <input type="checkbox" id="crt-toggle" onchange="applyCRT(this.checked)" style="accent-color:var(--cyan);width:18px;height:18px;cursor:pointer">
+              <span>CRT Scanlines</span>
+            </label>
+            <label style="display:flex;align-items:center;gap:8px;font-size:0.88em;cursor:pointer">
+              <span>Glow</span>
+              <select id="ds-glow" onchange="applyGlow(this.value)" style="padding:5px 8px;background:var(--bg);border:1px solid var(--border);border-radius:5px;color:var(--text);font-size:0.85em;cursor:pointer">
+                <option value="0">Off</option>
+                <option value="1">Medium</option>
+                <option value="2" selected>Max</option>
+              </select>
+            </label>
+          </div>
+        </div>
+
       </div>
     </div>
 
@@ -1196,10 +1269,24 @@ let autoScroll = true;
 let allLogs = [];
 let httpChatPending = false;  // suppresses WS 'thought' dupes while HTTP /api/chat in flight
 
+// Auth helper — adds JWT Bearer header to all fetch calls
+function authHeaders(extra) {
+  const h = Object.assign({}, extra || {});
+  if (token) h['Authorization'] = 'Bearer ' + token;
+  return h;
+}
+async function authFetch(url, opts) {
+  opts = opts || {};
+  opts.headers = authHeaders(opts.headers);
+  const r = await fetch(url, opts);
+  if (r.status === 401) { localStorage.removeItem('gal_token'); token = ''; document.getElementById('login-overlay').style.display = 'flex'; }
+  return r;
+}
+
 // ── Setup Wizard ─────────────────────────────────────────────────────────────
 async function checkSetup() {
   try {
-    const r = await fetch('/api/check_setup');
+    const r = await authFetch('/api/check_setup');
     const d = await r.json();
     if (d.needs_setup) {
       showSetupWizard(d);
@@ -1364,7 +1451,7 @@ async function swSave() {
   }
 
   try {
-    const r = await fetch('/api/setup', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(payload)});
+    const r = await authFetch('/api/setup', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(payload)});
     const d = await r.json();
     if (d.ok) {
       // After setup, save token from new password and go to main UI
@@ -1456,7 +1543,7 @@ async function swCheckOpenClaw() {
   document.getElementById('sw-oc-not-found').style.display = 'none';
   document.getElementById('sw-oc-found').style.display = 'none';
   try {
-    const r = await fetch('/api/check_openclaw');
+    const r = await authFetch('/api/check_openclaw');
     const d = await r.json();
     document.getElementById('sw-oc-checking').style.display = 'none';
     if (d.found && d.files && d.files.length) {
@@ -1487,7 +1574,7 @@ async function swMigrateOpenClaw() {
   btn.textContent = '⏳ Importing...';
   btn.disabled = true;
   try {
-    const r = await fetch('/api/migrate_openclaw', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({files})});
+    const r = await authFetch('/api/migrate_openclaw', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({files})});
     const d = await r.json();
     const resultEl = document.getElementById('sw-oc-result');
     resultEl.style.display = '';
@@ -1526,7 +1613,7 @@ document.getElementById('pw-input').addEventListener('keydown', e => { if (e.key
 // Init
 async function loadTraceHistory() {
   try {
-    const r = await fetch('/api/traces');
+    const r = await authFetch('/api/traces');
     const d = await r.json();
     (d.traces || []).forEach(t => handleAgentTrace(t));
   } catch(e) { console.error('loadTraceHistory:', e); }
@@ -1547,6 +1634,7 @@ async function init() {
   populateSettingsProviders();
   populatePmoDropdown();
   loadSettingsValues();
+  loadPairingQR();
   // Restore the last active tab (defaults to 'chat' if none saved)
   const savedTab = localStorage.getItem('gal_activeTab') || 'chat';
   switchTab(savedTab);
@@ -1555,7 +1643,8 @@ async function init() {
 
 // WebSocket
 function connectWS() {
-  socket = new WebSocket(`ws://${location.host}/stream?token=${token}`);
+  const wsProt = location.protocol === 'https:' ? 'wss:' : 'ws:';
+  socket = new WebSocket(`${wsProt}//${location.host}/stream?token=${token}`);
   socket.onmessage = e => {
     const p = JSON.parse(e.data);
     if (p.type === 'stream_chunk') {
@@ -1648,7 +1737,7 @@ function appendBotImage(url) {
 
 async function loadChatHistory() {
   try {
-    const r = await fetch('/api/history?limit=50');
+    const r = await authFetch('/api/history?limit=50');
     const d = await r.json();
     const msgs = d.messages || [];
     if (msgs.length > 0) {
@@ -1664,7 +1753,7 @@ async function loadChatHistory() {
 
 async function loadLogHistory() {
   try {
-    const r = await fetch('/api/logs?limit=200');
+    const r = await authFetch('/api/logs?limit=200');
     const d = await r.json();
     (d.logs || []).forEach(l => addLog(l));
   } catch(e) { console.error('loadLogHistory:', e); }
@@ -1783,19 +1872,19 @@ async function sendChatMain() {
           fd.append('message', msg);
           fd.append('images_json', JSON.stringify(images));
           for (const f of textFiles) fd.append('files', f);
-          r = await fetch('/api/chat', {method:'POST', body: fd});
+          r = await authFetch('/api/chat', {method:'POST', body: fd});
         } else {
-          r = await fetch('/api/chat', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(body)});
+          r = await authFetch('/api/chat', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(body)});
         }
       } else {
         // Text files only — multipart
         const fd = new FormData();
         fd.append('message', msg);
         for (const f of textFiles) fd.append('files', f);
-        r = await fetch('/api/chat', {method:'POST', body: fd});
+        r = await authFetch('/api/chat', {method:'POST', body: fd});
       }
     } else {
-      r = await fetch('/api/chat', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({message: msg})});
+      r = await authFetch('/api/chat', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({message: msg})});
     }
     const d = await r.json();
     stream.style.display = 'none'; stream.textContent = '';
@@ -1832,7 +1921,7 @@ function quickTool(name) {
 
 // Tools Tab
 async function loadTools() {
-  const r = await fetch('/api/tools');
+  const r = await authFetch('/api/tools');
   const d = await r.json();
   allToolsData = d.tools || [];
   document.getElementById('tool-count-badge').textContent = allToolsData.length;
@@ -1927,7 +2016,7 @@ async function runTool() {
   resEl.style.display = 'block';
   resEl.textContent = '⏳ Running...';
   try {
-    const r = await fetch('/api/tool_invoke', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({tool: currentTool.name, args})});
+    const r = await authFetch('/api/tool_invoke', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({tool: currentTool.name, args})});
     const d = await r.json();
     resEl.textContent = typeof d.result === 'string' ? d.result : JSON.stringify(d.result || d.error, null, 2);
   } catch(err) { resEl.textContent = 'Error: ' + err.message; }
@@ -1935,7 +2024,7 @@ async function runTool() {
 
 // Plugins
 async function loadPlugins() {
-  const r = await fetch('/api/plugins');
+  const r = await authFetch('/api/plugins');
   const d = await r.json();
   const icons = {SniperPlugin:'🎯', WatchdogPlugin:'👁', ShellPlugin:'💻', BrowserExecutorPro:'🌐', SubAgentPlugin:'🤖'};
   const descs = {SniperPlugin:'Lead prospecting & Reddit hunting', WatchdogPlugin:'Email monitoring & alerting', ShellPlugin:'PowerShell command execution', BrowserExecutorPro:'Full Playwright browser automation (54 tools)', SubAgentPlugin:'Multi-agent task orchestration'};
@@ -1962,7 +2051,7 @@ async function loadPlugins() {
 }
 
 async function togglePlugin(name, enabled) {
-  await fetch('/api/plugin_toggle', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({name, enabled})});
+  await authFetch('/api/plugin_toggle', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({name, enabled})});
 }
 
 // Models
@@ -2071,7 +2160,7 @@ let currentProvider = '', currentModelId = '';
 
 async function loadOllamaStatus() {
   try {
-    const r = await fetch('/api/ollama_status');
+    const r = await authFetch('/api/ollama_status');
     const d = await r.json();
     updateOllamaHealth(d);
   } catch(e) {}
@@ -2103,7 +2192,7 @@ function renderOllamaModels(models) {
 
 async function refreshOllama() {
   await loadOllamaStatus();
-  const r = await fetch('/api/ollama_models');
+  const r = await authFetch('/api/ollama_models');
   const d = await r.json();
   if (d.models) renderOllamaModels(d.models);
 }
@@ -2136,7 +2225,7 @@ function renderModelGrid() {
 let pendingKeySwitch = null;
 
 async function switchModel(provider, modelId, btn) {
-  const r = await fetch('/api/switch_model', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({provider, model: modelId})});
+  const r = await authFetch('/api/switch_model', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({provider, model: modelId})});
   const d = await r.json();
   if (d.ok) {
     currentProvider = provider;
@@ -2163,7 +2252,7 @@ async function submitApiKey() {
   const key = document.getElementById('key-input').value.trim();
   if (!key) { document.getElementById('key-input').style.borderColor = 'var(--red)'; return; }
   if (!pendingKeySwitch) return;
-  const r = await fetch('/api/save_key', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({provider: pendingKeySwitch.provider, api_key: key})});
+  const r = await authFetch('/api/save_key', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({provider: pendingKeySwitch.provider, api_key: key})});
   const d = await r.json();
   if (d.ok) {
     document.getElementById('key-modal').classList.remove('open');
@@ -2201,7 +2290,7 @@ async function applyModelConfig() {
   const maxTokens = document.getElementById('cfg-max-tokens').value.trim();
   const contextWindow = document.getElementById('cfg-context-window').value.trim();
   try {
-    const r = await fetch('/api/model_config', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({max_tokens: maxTokens || 0, context_window: contextWindow || 0})});
+    const r = await authFetch('/api/model_config', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({max_tokens: maxTokens || 0, context_window: contextWindow || 0})});
     const d = await r.json();
     if (d.ok) {
       addLog('[Web] Token config saved — max_tokens: ' + (d.max_tokens || 'default') + ', context_window: ' + (d.context_window || 'auto'));
@@ -2214,7 +2303,7 @@ async function applyModelConfig() {
 // ── Per-Model Overrides ────────────────────────────────────────────────────────
 async function pmoLoad() {
   try {
-    const r = await fetch('/api/model_overrides');
+    const r = await authFetch('/api/model_overrides');
     const d = await r.json();
     pmoRender(d.overrides || {});
   } catch(e) { console.error('pmoLoad:', e); }
@@ -2272,7 +2361,7 @@ async function pmoSave() {
   const maxTokens = parseInt(document.getElementById('pmo-max-tokens').value) || 0;
   const contextWindow = parseInt(document.getElementById('pmo-context-window').value) || 0;
   try {
-    const r = await fetch('/api/model_overrides', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({model, max_tokens: maxTokens, context_window: contextWindow})});
+    const r = await authFetch('/api/model_overrides', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({model, max_tokens: maxTokens, context_window: contextWindow})});
     const d = await r.json();
     if (d.ok) {
       addLog(`[Web] Override saved for ${model}: max_tokens=${maxTokens||'global'}, context_window=${contextWindow||'global'}`);
@@ -2289,7 +2378,7 @@ async function pmoSave() {
 
 async function pmoDelete(model) {
   try {
-    const r = await fetch('/api/model_overrides', {method:'DELETE', headers:{'Content-Type':'application/json'}, body: JSON.stringify({model})});
+    const r = await authFetch('/api/model_overrides', {method:'DELETE', headers:{'Content-Type':'application/json'}, body: JSON.stringify({model})});
     const d = await r.json();
     if (d.ok) {
       addLog(`[Web] Override removed for ${model}`);
@@ -2303,7 +2392,7 @@ async function browserNav() {
   const url = document.getElementById('browser-url').value.trim();
   if (!url) return;
   setBrowserStatus('Navigating to ' + url + '...');
-  const r = await fetch('/api/browser_cmd', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({command:'navigate', args:{url}})});
+  const r = await authFetch('/api/browser_cmd', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({command:'navigate', args:{url}})});
   const d = await r.json();
   setBrowserStatus(JSON.stringify(d.result || d.error));
 }
@@ -2311,7 +2400,7 @@ async function browserNav() {
 async function browserCmd(cmd, extraArgs) {
   setBrowserStatus('Running: ' + cmd + '...');
   try {
-    const r = await fetch('/api/browser_cmd', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({command: cmd, args: extraArgs || {}})});
+    const r = await authFetch('/api/browser_cmd', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({command: cmd, args: extraArgs || {}})});
     const d = await r.json();
     if (cmd === 'screenshot_quick' && d.result?.path) {
       const img = document.getElementById('browser-screenshot');
@@ -2343,7 +2432,7 @@ function showToast(message, type='info', duration=6000) {
 // ── Status ────────────────────────────────────────────────────────────
 async function refreshStatus() {
   try {
-    const r = await fetch('/api/status');
+    const r = await authFetch('/api/status');
     const d = await r.json();
 
     // Section 1: System Overview
@@ -2533,7 +2622,7 @@ function populatePmoDropdown() {
 
 async function loadSettingsValues() {
   try {
-    const r = await fetch('/api/status');
+    const r = await authFetch('/api/status');
     const d = await r.json();
     // Model settings
     const prim = (d.primary_model || '/').split('/');
@@ -2580,7 +2669,7 @@ async function saveModelSettings() {
   if (!primProv || !primModel) { showToast('Select a primary model', 'error', 3000); return; }
   if (!fbProv || !fbModel) { showToast('Select a fallback model', 'error', 3000); return; }
   try {
-    const r = await fetch('/api/settings/models', {
+    const r = await authFetch('/api/settings/models', {
       method: 'POST', headers: {'Content-Type':'application/json'},
       body: JSON.stringify({
         primary_provider: primProv, primary_model: primModel,
@@ -2603,7 +2692,7 @@ async function saveModelSettings() {
 async function saveVoiceSettings() {
   const voice = document.getElementById('set-voice').value;
   try {
-    const r = await fetch('/api/settings/voice', {
+    const r = await authFetch('/api/settings/voice', {
       method: 'POST', headers: {'Content-Type':'application/json'},
       body: JSON.stringify({voice})
     });
@@ -2619,7 +2708,7 @@ async function saveVoiceSettings() {
 
 async function saveQuickVoice(voice) {
   try {
-    await fetch('/api/settings/voice', {
+    await authFetch('/api/settings/voice', {
       method: 'POST', headers: {'Content-Type':'application/json'},
       body: JSON.stringify({voice})
     });
@@ -2634,7 +2723,7 @@ function testVoice() {
   const voice = document.getElementById('set-voice').value;
   const msg = `Hello! I am ${voice}, your AI assistant's voice.`;
   // Send as a chat command to trigger TTS
-  fetch('/api/tool_invoke', {
+  authFetch('/api/tool_invoke', {
     method: 'POST', headers: {'Content-Type':'application/json'},
     body: JSON.stringify({tool: 'text_to_speech', args: {text: msg, voice: voice}})
   }).then(r => r.json()).then(d => {
@@ -2645,7 +2734,7 @@ function testVoice() {
 
 async function saveSystemSettings() {
   try {
-    const r = await fetch('/api/settings/system', {
+    const r = await authFetch('/api/settings/system', {
       method: 'POST', headers: {'Content-Type':'application/json'},
       body: JSON.stringify({
         update_check_interval: parseInt(document.getElementById('set-update-interval').value) || 21600,
@@ -2670,10 +2759,39 @@ function showUpdateBanner(info) {
   if (topbar) topbar.after(banner);
 }
 
+// Mobile Pairing QR
+async function loadPairingQR() {
+  const container = document.getElementById('qr-pair-img');
+  const info = document.getElementById('qr-pair-info');
+  if (!container) return;
+  try {
+    const r = await authFetch('/api/qr_pair');
+    if (r.headers.get('content-type')?.includes('image/png')) {
+      const blob = await r.blob();
+      const url = URL.createObjectURL(blob);
+      container.innerHTML = '<img src="' + url + '" style="max-width:220px;border-radius:8px" alt="QR Pairing Code">';
+      info.textContent = 'Scan with Galactic-AI Mobile to connect';
+    } else {
+      const d = await r.json();
+      if (d.host) {
+        container.innerHTML = '<div style="padding:16px;font-size:0.82em;color:var(--cyan)">' +
+          'Host: ' + d.host + ':' + d.port + '<br>' +
+          (d.fingerprint ? 'Cert: ' + d.fingerprint.substring(0,16) + '...' : '') +
+          '</div>';
+        info.innerHTML = d.note || '';
+      } else {
+        container.innerHTML = '<div style="padding:16px;color:var(--dim)">QR unavailable: ' + (d.error || 'unknown error') + '</div>';
+      }
+    }
+  } catch(e) {
+    container.innerHTML = '<div style="padding:16px;color:var(--dim)">Enable remote_access in config.yaml</div>';
+  }
+}
+
 // Memory
 async function loadFileList() {
   try {
-    const r = await fetch('/api/files');
+    const r = await authFetch('/api/files');
     const d = await r.json();
     const sel = document.getElementById('mem-file-select');
     sel.innerHTML = '<option value="">-- select file --</option>';
@@ -2691,7 +2809,7 @@ async function loadFileList() {
 async function loadMemFile(name) {
   if (!name) return;
   try {
-    const r = await fetch('/api/file?name=' + encodeURIComponent(name));
+    const r = await authFetch('/api/file?name=' + encodeURIComponent(name));
     const d = await r.json();
     if (d.error) { document.getElementById('mem-editor').value = '// Error: ' + d.error; return; }
     document.getElementById('mem-editor').value = d.content || '';
@@ -2703,7 +2821,7 @@ async function saveMemFile() {
   const content = document.getElementById('mem-editor').value;
   if (!name) return alert('Select a file first');
   try {
-    await fetch('/api/file', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({name, content})});
+    await authFetch('/api/file', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({name, content})});
     addLog('[Web] Saved: ' + name);
   } catch(e) { alert('Save failed: ' + e.message); }
 }
@@ -3605,11 +3723,22 @@ setInterval(() => {
                     yaml.dump(cfg, f, default_flow_style=False, allow_unicode=True)
             except Exception as e:
                 pass  # Non-fatal — hash saved in memory
-            return web.json_response({'success': True, 'token': h, 'first_run': True})
+            # Return JWT if remote access is enabled, otherwise legacy hash token
+            token_resp = self._make_token_response(h)
+            token_resp['first_run'] = True
+            return web.json_response(token_resp)
 
         if h == self.password_hash:
-            return web.json_response({'success': True, 'token': h})
+            return web.json_response(self._make_token_response(h))
         return web.json_response({'success': False, 'error': 'Invalid passphrase'}, status=401)
+
+    def _make_token_response(self, password_hash):
+        """Build login response with JWT (remote mode) or legacy hash token."""
+        if self.remote_access and self.jwt_secret:
+            from remote_access import create_jwt
+            jwt_token, expires = create_jwt(password_hash, self.jwt_secret)
+            return {'success': True, 'token': jwt_token, 'expires': expires, 'jwt': True}
+        return {'success': True, 'token': password_hash}
 
     async def handle_setup(self, request):
         """POST /api/setup — first-run configuration: save API keys, passwords, provider, etc."""
@@ -3912,7 +4041,12 @@ setInterval(() => {
         await ws.prepare(request)
         
         token = request.query.get('token')
-        if token != self.password_hash:
+        # Accept either legacy password hash or JWT token
+        token_valid = (token == self.password_hash)
+        if not token_valid and self.jwt_secret:
+            from remote_access import verify_jwt
+            token_valid = verify_jwt(token, self.jwt_secret)
+        if not token_valid:
             await ws.close(code=4001)
             return ws
 
@@ -4127,9 +4261,152 @@ setInterval(() => {
         await self.core.log(f"File saved via Web Deck: {filename}", priority=2)
         return web.json_response({'success': True})
 
+    # ── Mobile / Remote Access Endpoints ────────────────────────────────────────
+
+    async def handle_qr_pair(self, request):
+        """GET /api/qr_pair — returns QR code PNG for mobile app pairing."""
+        try:
+            import socket
+            # Detect local IP
+            try:
+                s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+                s.connect(('8.8.8.8', 80))
+                local_ip = s.getsockname()[0]
+                s.close()
+            except Exception:
+                local_ip = '127.0.0.1'
+
+            from remote_access import generate_pairing_qr
+            png_data = generate_pairing_qr(local_ip, self.port, self.cert_fingerprint)
+            if png_data:
+                return web.Response(body=png_data, content_type='image/png')
+            # Fallback: return JSON pairing data if qrcode lib not installed
+            return web.json_response({
+                'host': local_ip,
+                'port': self.port,
+                'fingerprint': self.cert_fingerprint,
+                'app': 'galactic-ai',
+                'note': 'Install qrcode library for QR image: pip install qrcode[pil]'
+            })
+        except Exception as e:
+            return web.json_response({'error': str(e)}, status=500)
+
+    async def handle_tts(self, request):
+        """POST /api/tts — text-to-speech via server-side engines. Returns MP3 audio."""
+        try:
+            data = await request.json()
+            text = data.get('text', '').strip()
+            voice = data.get('voice', 'Guy')
+            if not text:
+                return web.json_response({'error': 'No text provided'}, status=400)
+            if len(text) > 5000:
+                return web.json_response({'error': 'Text too long (max 5000 chars)'}, status=400)
+
+            result = await self.core.gateway.tool_text_to_speech({'text': text, 'voice': voice})
+            if '[VOICE]' in str(result):
+                import re
+                m = re.search(r'Generated speech.*?:\s*(.+\.mp3)', str(result))
+                if m:
+                    audio_path = m.group(1).strip()
+                    if os.path.exists(audio_path):
+                        with open(audio_path, 'rb') as f:
+                            audio_data = f.read()
+                        return web.Response(body=audio_data, content_type='audio/mpeg',
+                                           headers={'Content-Disposition': 'inline; filename="tts.mp3"'})
+            return web.json_response({'error': 'TTS generation failed', 'detail': str(result)}, status=500)
+        except Exception as e:
+            return web.json_response({'error': str(e)}, status=500)
+
+    async def handle_stt(self, request):
+        """POST /api/stt — speech-to-text via Whisper (OpenAI or Groq fallback).
+        Accepts multipart form with 'audio' file field.
+        """
+        try:
+            reader = await request.multipart()
+            audio_data = None
+            filename = 'audio.wav'
+            async for part in reader:
+                if part.name == 'audio':
+                    filename = part.filename or 'audio.wav'
+                    audio_data = await part.read()
+                    break
+
+            if not audio_data:
+                return web.json_response({'error': 'No audio file provided'}, status=400)
+
+            # Save temp file for transcription
+            logs_dir = self.core.config.get('paths', {}).get('logs', './logs')
+            os.makedirs(logs_dir, exist_ok=True)
+            temp_path = os.path.join(logs_dir, f'stt_temp_{int(time.time())}.wav')
+            with open(temp_path, 'wb') as f:
+                f.write(audio_data)
+
+            transcription = None
+            try:
+                # Try OpenAI Whisper
+                openai_key = self.core.config.get('providers', {}).get('openai', {}).get('apiKey', '')
+                if openai_key:
+                    import httpx
+                    async with httpx.AsyncClient(timeout=30) as client:
+                        with open(temp_path, 'rb') as af:
+                            resp = await client.post(
+                                'https://api.openai.com/v1/audio/transcriptions',
+                                headers={'Authorization': f'Bearer {openai_key}'},
+                                files={'file': (filename, af, 'audio/wav')},
+                                data={'model': 'whisper-1'}
+                            )
+                        if resp.status_code == 200:
+                            transcription = resp.json().get('text', '')
+                # Fallback: Groq Whisper
+                if not transcription:
+                    groq_key = self.core.config.get('providers', {}).get('groq', {}).get('apiKey', '')
+                    if groq_key:
+                        import httpx
+                        async with httpx.AsyncClient(timeout=30) as client:
+                            with open(temp_path, 'rb') as af:
+                                resp = await client.post(
+                                    'https://api.groq.com/openai/v1/audio/transcriptions',
+                                    headers={'Authorization': f'Bearer {groq_key}'},
+                                    files={'file': (filename, af, 'audio/wav')},
+                                    data={'model': 'whisper-large-v3'}
+                                )
+                            if resp.status_code == 200:
+                                transcription = resp.json().get('text', '')
+            finally:
+                try:
+                    os.remove(temp_path)
+                except Exception:
+                    pass
+
+            if transcription:
+                return web.json_response({'text': transcription})
+            return web.json_response({'error': 'Transcription failed — no Whisper API key configured'}, status=500)
+        except Exception as e:
+            return web.json_response({'error': str(e)}, status=500)
+
     async def run(self):
         runner = web.AppRunner(self.app, access_log=None)
         await runner.setup()
-        site = web.TCPSite(runner, self.host, self.port)
+
+        ssl_ctx = None
+        protocol = 'http'
+        if self.remote_access:
+            try:
+                from remote_access import generate_self_signed_cert, create_ssl_context
+                cert_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'certs')
+                cert_path, key_path, fingerprint = generate_self_signed_cert(cert_dir)
+                self.cert_fingerprint = fingerprint
+                ssl_ctx = create_ssl_context(cert_path, key_path)
+                protocol = 'https'
+                await self.core.log(f"TLS certificate loaded — fingerprint: {fingerprint[:16]}...", priority=1)
+            except Exception as e:
+                await self.core.log(f"TLS setup failed ({e}) — running without encryption", priority=1)
+
+        site = web.TCPSite(runner, self.host, self.port, ssl_context=ssl_ctx)
         await site.start()
-        # await self.core.log(f"Galactic Web Deck Active at http://{self.host}:{self.port}", priority=1)
+
+        if self.remote_access:
+            await self.core.log(
+                f"REMOTE ACCESS ENABLED — Control Deck at {protocol}://{self.host}:{self.port}",
+                priority=1
+            )

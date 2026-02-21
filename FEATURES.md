@@ -1,6 +1,6 @@
 # Galactic AI — Feature Reference
 
-Complete feature reference for Galactic AI Automation Suite **v0.9.3**.
+Complete feature reference for Galactic AI Automation Suite **v1.0.0**.
 
 ---
 
@@ -541,6 +541,77 @@ Galactic AI also checks GitHub for new releases automatically (every 6 hours by 
 
 ---
 
+## Remote Access
+
+Enable secure remote connections to Galactic AI from any device on your LAN or the internet.
+
+### Setup
+Set `web.remote_access: true` in `config.yaml`. On next startup, Galactic AI:
+- Binds to `0.0.0.0` instead of localhost
+- Auto-generates a self-signed TLS certificate (`certs/cert.pem`, `certs/key.pem`)
+- Serves over HTTPS on port 17789
+- Requires JWT authentication on all API endpoints
+- Logs a startup warning that remote access is active
+
+### Security Layers
+
+| Layer | Mechanism | Details |
+|---|---|---|
+| Transport | TLS 1.2+ | Auto-generated self-signed certificate |
+| Authentication | JWT (HMAC-SHA256) | 24-hour expiry, signed with auto-generated secret |
+| API Protection | Auth middleware | Every `/api/*` route requires valid JWT |
+| Brute Force | Rate limiting | 5 login attempts/min, 60 API calls/min per IP |
+| CORS | Whitelist | Configurable `allowed_origins` in config.yaml |
+| WebSocket | WSS + JWT | Encrypted transport with token validation |
+
+### Voice API (for mobile clients)
+- `POST /api/tts` — text-to-speech via ElevenLabs/edge-tts/gTTS pipeline, returns MP3 audio
+- `POST /api/stt` — speech-to-text via OpenAI Whisper (Groq Whisper fallback), accepts multipart audio upload
+
+### QR Code Pairing
+- `GET /api/qr_pair` — returns a QR code PNG encoding `{"host":"<ip>","port":17789,"fingerprint":"<cert_sha256>"}`
+- Displayed in the PC Control Deck Settings tab as a "Mobile Pairing" card
+- Android app scans QR, auto-fills connection details, and pins the TLS certificate fingerprint
+
+---
+
+## Galactic-AI Mobile (Android)
+
+Native Android companion app for accessing the full Control Deck from your phone.
+
+### Architecture
+Hybrid WebView app — the existing web Control Deck renders inside a native Kotlin shell. This reuses 100% of the existing UI (all 10 tabs, CRT effects, themes) with zero double-maintenance. The native shell handles what WebView can't: TLS cert pinning, biometric auth, secure credential storage, voice I/O, and connection management.
+
+### Components
+
+| Class | Purpose |
+|---|---|
+| `SplashActivity` | Animated launch screen (2s, cyberpunk themed) |
+| `ConnectActivity` | Connection setup with QR scanner and manual entry |
+| `MainActivity` | Full-screen WebView host with voice overlay |
+| `GalacticWebViewClient` | TLS cert pinning (TOFU), JWT injection, styled error pages |
+| `SecureStorage` | EncryptedSharedPreferences (AES-256, Android Keystore) |
+| `ConnectionManager` | Login, health check, exponential backoff reconnect |
+| `BiometricHelper` | Fingerprint/face/PIN authentication (AndroidX Biometric) |
+| `VoiceManager` | STT (Android SpeechRecognizer) + TTS (server-side + local fallback) |
+
+### Features
+- Full Control Deck with all 10 tabs
+- QR code pairing — scan from PC Settings tab to connect instantly
+- Voice I/O — hands-free speech-to-text and text-to-speech
+- Biometric/PIN lock for app access
+- TLS certificate pinning with TOFU (Trust On First Use) model
+- AES-256 encrypted credential storage (Android Keystore backed)
+- Auto-reconnect on network changes with exponential backoff
+- Hardware-accelerated WebView for smooth CRT scanline effects
+- CRT effects, glow levels, and the full cyberpunk theme on mobile
+
+### Requirements
+- Android 8.0+ (API 26)
+- Galactic-AI v1.0.0+ running on PC with `remote_access: true`
+
+---
+
 ## Configuration Reference
 
 | Key | Description |
@@ -577,6 +648,10 @@ Galactic AI also checks GitHub for new releases automatically (every 6 hours by 
 | `personality.user_context` | User context (custom mode) |
 | `web.port` | Web UI port (default: 17789) |
 | `web.password_hash` | SHA-256 password hash (set via setup wizard) |
+| `web.remote_access` | Enable remote access mode (default: false) |
+| `web.jwt_secret` | Auto-generated JWT signing secret (64-char hex) |
+| `web.rate_limit` | API rate limit per IP per minute (default: 60) |
+| `web.allowed_origins` | CORS whitelist (empty = same-origin only) |
 | `system.version` | Current version string |
 | `system.update_check_interval` | GitHub update check interval in seconds (default: 21600 = 6h, 0 = disabled) |
 | `models.speak_timeout` | Wall-clock timeout for entire ReAct loop in seconds (default: 600) |
@@ -596,7 +671,8 @@ Galactic AI also checks GitHub for new releases automatically (every 6 hours by 
 | macOS (Intel & Apple Silicon) | Fully supported |
 | WSL2 | Supported |
 | Chromebook (Linux mode) | See CHROMEBOOK.md |
+| Android 8.0+ (mobile app) | Galactic-AI Mobile companion app |
 
 ---
 
-**v0.9.3** — Galactic AI Automation Suite
+**v1.0.0** — Galactic AI Automation Suite
