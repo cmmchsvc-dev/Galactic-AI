@@ -92,6 +92,10 @@ class ModelManager:
         self.cooldown_config = model_config.get('fallback_cooldowns', {})
         self.fallback_chain = self._load_fallback_chain(model_config)
 
+        # ── Smart routing state (restored after each speak() call) ──
+        self._routed = False           # True if auto_route() switched the model
+        self._pre_route_state = None   # {'provider', 'model', 'api_key'} before routing
+
     # ─────────────────────────────────────────────────────────────────
     # Error Classification
     # ─────────────────────────────────────────────────────────────────
@@ -503,6 +507,14 @@ class ModelManager:
                 return  # No Ollama models available, skip
 
         if model:
+            # Save current state so speak() can restore after the request
+            self._pre_route_state = {
+                'provider': self.core.gateway.llm.provider,
+                'model': self.core.gateway.llm.model,
+                'api_key': getattr(self.core.gateway.llm, 'api_key', 'NONE'),
+            }
+            self._routed = True
+
             self.core.gateway.llm.provider = provider
             self.core.gateway.llm.model = model
             self._set_api_key(provider)

@@ -70,6 +70,11 @@ class GalacticGateway:
             model=self.model,
             api_key=self.api_key
         )
+
+        # Anti-spin: flag indicating an active speak() call is in progress
+        self._speaking = False
+        # Queued model switch: if user switches model during active speak(), apply after
+        self._queued_switch = None
         
         # Tool Registry
         self.tools = {}
@@ -3198,8 +3203,12 @@ class GalacticGateway:
                 f"- When you have enough information: STOP using tools and give a complete answer\n"
                 f"- For SIMPLE tasks (write file, read file, single command): use 1 tool then ANSWER immediately\n"
                 f"- For 'systems check' queries: gather 2-3 key metrics then ANSWER, don't exhaust all tools\n"
-                f"- For COMPLEX tasks (multi-step automation): you can use up to 10 tools\n"
-                f"- NEVER verify what you just did - trust the tool output and respond to the user!\n"
+                f"- For COMPLEX tasks (multi-step automation): plan your approach FIRST, then execute. Target under 15 tool calls\n"
+                f"- NEVER verify what you just did — trust the tool output and respond to the user!\n"
+                f"- If a tool fails or times out: do NOT retry the same approach. Explain the failure and try a different strategy\n"
+                f"- If you write a file: deliver it to the user. Do NOT immediately run it to test — let the user verify\n"
+                f"- NEVER launch long-running background processes via exec_shell — they timeout after 120s. Write the script and tell the user how to run it\n"
+                f"- If stuck after 3+ failed attempts: STOP. Tell the user what you tried, what went wrong, and ask for guidance\n"
                 f"Context: {context}"
             )
 
@@ -3280,6 +3289,15 @@ class GalacticGateway:
         # Tools that are legitimately called repeatedly with same args (snapshots, reads, etc.)
         _DUPLICATE_EXEMPT = {'browser_snapshot', 'web_search', 'read_file', 'memory_search', 'generate_image'}
 
+        # ── Anti-spin guardrails ──
+        consecutive_failures = 0   # Consecutive tool errors/timeouts
+        recent_tools = []          # Rolling window of last 6 tool names
+        _nudge_half_sent = False   # Track whether 50% nudge was sent
+        _nudge_80_sent = False     # Track whether 80% nudge was sent
+
+        # Mark that the gateway is actively processing (prevents model switching mid-task)
+        self._speaking = True
+
         # Unique session ID for tracing this speak() invocation
         trace_sid = str(uuid.uuid4())[:8]
         await self._emit_trace("session_start", 0, session_id=trace_sid,
@@ -3288,10 +3306,43 @@ class GalacticGateway:
         # ── Inner function: entire ReAct loop wrapped with wall-clock timeout ──
         async def _react_loop():
             nonlocal turn_count, last_tool_call, messages
+            nonlocal consecutive_failures, recent_tools, _nudge_half_sent, _nudge_80_sent
 
             for _ in range(max_turns):
                 turn_count += 1
                 await self._emit_trace("turn_start", turn_count, session_id=trace_sid)
+
+                # ── Progressive backpressure: nudge the AI to wrap up ──
+                half_mark = max_turns // 2
+                eighty_mark = int(max_turns * 0.8)
+                if turn_count == half_mark and not _nudge_half_sent:
+                    _nudge_half_sent = True
+                    messages.append({
+                        "role": "user",
+                        "content": (
+                            f"⚠️ You've used {turn_count} of {max_turns} tool turns. "
+                            f"Start wrapping up — deliver what you have so far."
+                        )
+                    })
+                    await self.core.log(
+                        f"⚠️ Agent nudge: {turn_count}/{max_turns} turns used (50%)",
+                        priority=2
+                    )
+                elif turn_count == eighty_mark and not _nudge_80_sent:
+                    _nudge_80_sent = True
+                    messages.append({
+                        "role": "user",
+                        "content": (
+                            f"🛑 {turn_count}/{max_turns} turns used. "
+                            f"Give your FINAL answer NOW. Summarize what you accomplished "
+                            f"and what remains to be done."
+                        )
+                    })
+                    await self.core.log(
+                        f"🛑 Agent nudge: {turn_count}/{max_turns} turns used (80%)",
+                        priority=1
+                    )
+
                 await self._send_telegram_typing_ping(chat_id)
                 response_text = await self._call_llm_resilient(messages)
 
@@ -3378,8 +3429,62 @@ class GalacticGateway:
                             if voice_match:
                                 self.last_voice_file = voice_match.group(1).strip()
 
+                        # ── Anti-spin: track consecutive failures ──
+                        result_str = str(result)
+                        if result_str.startswith("[Tool Error]") or result_str.startswith("[Tool Timeout]"):
+                            consecutive_failures += 1
+                        else:
+                            consecutive_failures = 0
+
+                        # ── Anti-spin: track tool-type repetition ──
+                        recent_tools.append(tool_name)
+                        if len(recent_tools) > 6:
+                            recent_tools.pop(0)
+
                         messages.append({"role": "assistant", "content": response_text})
                         messages.append({"role": "user", "content": f"Tool Output: {result}"})
+
+                        # ── Circuit breaker: 3+ consecutive failures ──
+                        if consecutive_failures >= 3:
+                            await self.core.log(
+                                f"🔌 Circuit breaker: {consecutive_failures} consecutive tool failures",
+                                priority=1
+                            )
+                            await self._emit_trace("circuit_breaker", turn_count, session_id=trace_sid,
+                                                   failures=consecutive_failures)
+                            messages.append({
+                                "role": "user",
+                                "content": (
+                                    f"⚠️ {consecutive_failures} consecutive tool failures. "
+                                    f"STOP calling tools. Explain to the user what you were trying to do, "
+                                    f"what went wrong, and suggest next steps or ask for guidance."
+                                )
+                            })
+                            consecutive_failures = 0  # Reset after intervention
+
+                        # ── Tool-type repetition guard ──
+                        if len(recent_tools) >= 5:
+                            from collections import Counter
+                            tool_counts = Counter(recent_tools)
+                            most_common_tool, most_common_count = tool_counts.most_common(1)[0]
+                            if most_common_count >= 4 and most_common_tool not in _DUPLICATE_EXEMPT:
+                                await self.core.log(
+                                    f"🔄 Tool repetition guard: {most_common_tool} called "
+                                    f"{most_common_count}x in last {len(recent_tools)} turns",
+                                    priority=1
+                                )
+                                await self._emit_trace("repetition_guard", turn_count, session_id=trace_sid,
+                                                       tool=most_common_tool, count=most_common_count)
+                                messages.append({
+                                    "role": "user",
+                                    "content": (
+                                        f"You've called {most_common_tool} {most_common_count} times in the "
+                                        f"last {len(recent_tools)} turns without resolving the issue. "
+                                        f"Try a completely different approach or explain the situation to the user."
+                                    )
+                                })
+                                recent_tools.clear()  # Reset after intervention
+
                         continue  # Loop back to LLM with result
                     else:
                         await self._emit_trace("tool_not_found", turn_count, session_id=trace_sid,
@@ -3443,6 +3548,40 @@ class GalacticGateway:
             self.history.append({"role": "assistant", "content": timeout_msg})
             self._log_chat("assistant", timeout_msg, source="telegram" if chat_id else "web")
             return timeout_msg
+        finally:
+            # ── Always clear speaking flag and restore smart routing ──
+            self._speaking = False
+
+            # Restore model if smart routing switched it for this request
+            if model_mgr and getattr(model_mgr, '_routed', False):
+                pre = getattr(model_mgr, '_pre_route_state', None)
+                if pre:
+                    self.llm.provider = pre['provider']
+                    self.llm.model = pre['model']
+                    self.llm.api_key = pre['api_key']
+                    await self.core.log(
+                        f"🔄 Smart routing restored: {pre['provider']}/{pre['model']}",
+                        priority=3
+                    )
+                model_mgr._routed = False
+
+            # Apply any queued model switch that arrived while we were speaking
+            queued = getattr(self, '_queued_switch', None)
+            if queued:
+                q_provider, q_model = queued
+                self._queued_switch = None
+                if model_mgr:
+                    model_mgr.primary_provider = q_provider
+                    model_mgr.primary_model = q_model
+                    model_mgr.current_mode = 'primary'
+                    self.llm.provider = q_provider
+                    self.llm.model = q_model
+                    model_mgr._set_api_key(q_provider)
+                    await model_mgr._save_config()
+                    await self.core.log(
+                        f"🔄 Queued model switch applied: {q_provider}/{q_model}",
+                        priority=2
+                    )
 
     # ── Tool timeout defaults ────────────────────────────────────────
     _TOOL_TIMEOUTS = {
