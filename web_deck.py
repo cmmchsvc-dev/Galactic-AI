@@ -764,7 +764,7 @@ body.glow-max .status-dot{box-shadow:0 0 14px var(--green),0 0 28px rgba(0,255,1
           </div>
           <div id="chat-attach-bar" style="display:none;padding:4px 16px 0;border-top:1px solid var(--border);background:var(--bg2)"></div>
           <div id="chat-input-row" style="display:flex;gap:8px;padding:12px 16px;border-top:1px solid var(--border);flex-shrink:0;background:var(--bg2)">
-            <input type="file" id="chat-file-input" multiple accept=".txt,.md,.py,.js,.ts,.json,.yaml,.yml,.xml,.html,.css,.csv,.log,.toml,.ini,.cfg,.sh,.ps1,.bat,.rs,.go,.java,.c,.cpp,.h,.hpp,.rb,.php,.sql,.r,.swift,.kt,.dart,.env,.conf,.properties" style="display:none" onchange="handleFileAttach(this)">
+            <input type="file" id="chat-file-input" multiple accept=".txt,.md,.py,.js,.ts,.json,.yaml,.yml,.xml,.html,.css,.csv,.log,.toml,.ini,.cfg,.sh,.ps1,.bat,.rs,.go,.java,.c,.cpp,.h,.hpp,.rb,.php,.sql,.r,.swift,.kt,.dart,.env,.conf,.properties,.jpg,.jpeg,.png,.gif,.webp,.bmp,.tiff,.tif,.heic,.heif,.avif,.svg,image/*" style="display:none" onchange="handleFileAttach(this)">
             <button id="attach-btn" onclick="document.getElementById('chat-file-input').click()" title="Attach files" style="padding:10px 12px;background:var(--bg3);border:1px solid var(--border);border-radius:10px;color:var(--dim);cursor:pointer;font-size:1.1em;transition:border .2s,color .2s" onmouseover="this.style.borderColor='var(--cyan)';this.style.color='var(--cyan)'" onmouseout="this.style.borderColor='var(--border)';this.style.color='var(--dim)'">📎</button>
             <textarea id="chat-input-main" placeholder="Message Byte... (Enter to send, Shift+Enter for newline)" style="flex:1;background:var(--bg3);border:1px solid var(--border);border-radius:10px;padding:10px 14px;color:var(--text);font-family:var(--font);font-size:0.9em;resize:none;height:44px;max-height:200px;overflow-y:auto;outline:none;transition:border .2s" onkeydown="handleKeyMain(event)" oninput="autoResize(this)"></textarea>
             <button id="send-btn-main" onclick="sendChatMain()" style="padding:10px 22px;background:linear-gradient(135deg,var(--cyan),var(--pink));border:none;border-radius:10px;color:#000;font-weight:700;cursor:pointer;font-size:0.9em">Send ▶</button>
@@ -1491,10 +1491,24 @@ function appendUserMsg(text, ts) {
 
 // ─── File Attachment State ───
 let pendingFiles = [];
+const IMAGE_TYPES = new Set(['image/jpeg','image/jpg','image/png','image/gif','image/webp','image/bmp','image/tiff','image/heic','image/heif','image/avif','image/svg+xml']);
+
+function isImageFile(f) {
+  return IMAGE_TYPES.has(f.type) || /\.(jpg|jpeg|png|gif|webp|bmp|tiff?|heic|heif|avif|svg)$/i.test(f.name);
+}
+
+function fileToBase64(f) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(reader.result); // data:image/png;base64,...
+    reader.onerror = reject;
+    reader.readAsDataURL(f);
+  });
+}
 
 function handleFileAttach(input) {
   for (const f of input.files) {
-    if (f.size > 5 * 1024 * 1024) { appendBotMsg('[File too large] ' + f.name + ' exceeds 5 MB limit.'); continue; }
+    if (f.size > 20 * 1024 * 1024) { appendBotMsg('[File too large] ' + f.name + ' exceeds 20 MB limit.'); continue; }
     pendingFiles.push(f);
   }
   input.value = '';
@@ -1513,11 +1527,14 @@ function renderAttachBar() {
   bar.style.flexWrap = 'wrap';
   bar.style.gap = '6px';
   bar.style.alignItems = 'center';
-  bar.innerHTML = pendingFiles.map((f, i) =>
-    '<span style="display:inline-flex;align-items:center;gap:4px;padding:3px 10px;background:var(--bg3);border:1px solid var(--border);border-radius:8px;font-size:0.78em;color:var(--cyan)">' +
-    '📄 ' + escHtml(f.name) + ' <span style="font-size:0.75em;color:var(--dim)">(' + (f.size < 1024 ? f.size + 'B' : (f.size/1024).toFixed(1) + 'KB') + ')</span>' +
-    '<span onclick="removeAttachment(' + i + ')" style="cursor:pointer;color:var(--red);margin-left:4px;font-weight:700" title="Remove">&times;</span></span>'
-  ).join('');
+  bar.innerHTML = pendingFiles.map((f, i) => {
+    const isImg = isImageFile(f);
+    const icon = isImg ? '🖼️' : '📄';
+    const sizeStr = f.size < 1024 ? f.size + 'B' : f.size < 1024*1024 ? (f.size/1024).toFixed(1) + 'KB' : (f.size/1024/1024).toFixed(1) + 'MB';
+    return '<span style="display:inline-flex;align-items:center;gap:4px;padding:3px 10px;background:var(--bg3);border:1px solid ' + (isImg ? 'var(--cyan)' : 'var(--border)') + ';border-radius:8px;font-size:0.78em;color:var(--cyan)">' +
+      icon + ' ' + escHtml(f.name) + ' <span style="font-size:0.75em;color:var(--dim)">(' + sizeStr + ')</span>' +
+      '<span onclick="removeAttachment(' + i + ')" style="cursor:pointer;color:var(--red);margin-left:4px;font-weight:700" title="Remove">&times;</span></span>';
+  }).join('');
 }
 
 // ─── Drag & Drop ───
@@ -1558,10 +1575,35 @@ async function sendChatMain() {
   try {
     let r;
     if (filesToSend.length) {
-      const fd = new FormData();
-      fd.append('message', msg);
-      for (const f of filesToSend) fd.append('files', f);
-      r = await fetch('/api/chat', {method:'POST', body: fd});
+      // Separate images from text files
+      const imgFiles = filesToSend.filter(f => isImageFile(f));
+      const textFiles = filesToSend.filter(f => !isImageFile(f));
+
+      if (imgFiles.length > 0) {
+        // Encode images as base64 and send as JSON (vision-capable)
+        const images = await Promise.all(imgFiles.map(async f => ({
+          name: f.name,
+          data: await fileToBase64(f),   // full data URL: data:image/png;base64,...
+          mime: f.type || 'image/jpeg'
+        })));
+        const body = { message: msg, images };
+        // Attach any text files as context too
+        if (textFiles.length) {
+          const fd = new FormData();
+          fd.append('message', msg);
+          fd.append('images_json', JSON.stringify(images));
+          for (const f of textFiles) fd.append('files', f);
+          r = await fetch('/api/chat', {method:'POST', body: fd});
+        } else {
+          r = await fetch('/api/chat', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(body)});
+        }
+      } else {
+        // Text files only — multipart
+        const fd = new FormData();
+        fd.append('message', msg);
+        for (const f of textFiles) fd.append('files', f);
+        r = await fetch('/api/chat', {method:'POST', body: fd});
+      }
     } else {
       r = await fetch('/api/chat', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({message: msg})});
     }
@@ -1808,6 +1850,11 @@ const ALL_MODELS = {
   ],
   '\ud83c\udfaf MiniMax': [
     {name:'MiniMax M2.1 \ud83c\udfaf [via NVIDIA]', id:'minimaxai/minimax-m2.1', provider:'nvidia'},
+  ],
+  '\ud83d\uddbc\ufe0f Google Imagen': [
+    {name:'Imagen 4 Ultra \u2b50 (best quality)', id:'imagen-4-ultra', provider:'google'},
+    {name:'Imagen 4 \ud83d\uddbc\ufe0f (standard)', id:'imagen-4', provider:'google'},
+    {name:'Imagen 4 Fast \u26a1\ufe0f (quick)', id:'imagen-4-fast', provider:'google'},
   ],
   '\ud83c\udfa8 FLUX (Image Gen)': [
     {name:'FLUX.1 Schnell \u26a1\ufe0f (fast)', id:'black-forest-labs/flux.1-schnell', provider:'nvidia'},
@@ -2551,15 +2598,20 @@ setInterval(() => {
 
     async def handle_chat(self, request):
         """POST /api/chat — send message to the AI and get response.
-        Accepts JSON body OR multipart/form-data with file attachments.
+
+        Accepts:
+          - JSON body: {message, images?: [{name, data, mime}]}
+          - multipart/form-data: message field + files parts (text) + optional images_json field
+        Images are sent as base64 data URLs and forwarded to the LLM as vision content.
         """
+        import base64 as _b64, json as _json
         try:
             user_msg = ''
             file_context = ''
+            attached_images = []  # list of {name, mime, b64} dicts
 
             content_type = request.content_type or ''
             if 'multipart/form-data' in content_type:
-                # File upload mode
                 reader = await request.multipart()
                 while True:
                     part = await reader.next()
@@ -2567,46 +2619,92 @@ setInterval(() => {
                         break
                     if part.name == 'message':
                         user_msg = (await part.text()).strip()
+                    elif part.name == 'images_json':
+                        # Pre-encoded images from the frontend
+                        try:
+                            imgs = _json.loads(await part.text())
+                            for img in imgs:
+                                data_url = img.get('data', '')
+                                if ',' in data_url:
+                                    b64 = data_url.split(',', 1)[1]
+                                    attached_images.append({
+                                        'name': img.get('name', 'image'),
+                                        'mime': img.get('mime', 'image/jpeg'),
+                                        'b64': b64,
+                                    })
+                        except Exception:
+                            pass
                     elif part.name == 'files':
                         filename = part.filename or 'unnamed'
-                        raw = await part.read(5 * 1024 * 1024)
+                        raw = await part.read(20 * 1024 * 1024)
                         try:
                             text = raw.decode('utf-8', errors='replace')
                         except Exception:
                             text = '[Binary file — could not decode]'
-                        # Truncate extremely large files to avoid blowing up context
                         if len(text) > 100000:
                             text = text[:100000] + '\n\n... [truncated — file exceeds 100K characters]'
                         file_context += f"\n\n[Attached file: {filename}]\n---\n{text}\n---\n"
             else:
-                # Standard JSON mode
                 data = await request.json()
                 user_msg = data.get('message', '').strip()
+                # Images sent as JSON: [{name, data (data URL), mime}]
+                for img in data.get('images', []):
+                    data_url = img.get('data', '')
+                    if ',' in data_url:
+                        b64 = data_url.split(',', 1)[1]
+                        attached_images.append({
+                            'name': img.get('name', 'image'),
+                            'mime': img.get('mime', 'image/jpeg'),
+                            'b64': b64,
+                        })
 
-            # Build final message with file contents prepended
+            # Build context string for text files
             full_msg = user_msg
             if file_context:
                 full_msg = file_context.strip() + ('\n\n' + user_msg if user_msg else '')
 
-            if not full_msg:
+            if not full_msg and not attached_images:
                 return web.json_response({'error': 'No message'}, status=400)
 
-            # Log a clean version (don't dump entire files into terminal)
+            # Log cleanly
+            parts_log = []
             if file_context:
-                file_count = file_context.count('[Attached file:')
-                log_msg = f"[Web] User: {user_msg or '(no text)'} [+{file_count} file(s) attached]"
-            else:
-                log_msg = f"[Web] User: {user_msg}"
-            await self.core.log(log_msg, priority=2)
+                parts_log.append(f"+{file_context.count('[Attached file:')} file(s)")
+            if attached_images:
+                parts_log.append(f"+{len(attached_images)} image(s)")
+            suffix = f" [{', '.join(parts_log)}]" if parts_log else ""
+            await self.core.log(f"[Web] User: {user_msg or '(no text)'}{suffix}", priority=2)
 
-            response = await self.core.gateway.speak(full_msg)
+            # Forward to gateway — pass images to speak() if present
+            if attached_images:
+                response = await self.core.gateway.speak(
+                    full_msg or f"[User attached {len(attached_images)} image(s). Please describe and analyse them.]",
+                    images=attached_images
+                )
+            else:
+                response = await self.core.gateway.speak(full_msg)
+
             await self.core.log(f"[Core] Byte: {response}", priority=2)
-            # Check if a generated image should be delivered inline
+
+            # Deliver any generated image inline — fix path for new images/ subfolders
             resp_data = {'response': response}
             image_file = getattr(self.core.gateway, 'last_image_file', None)
             if image_file and os.path.exists(image_file):
-                fname = os.path.basename(image_file)
-                resp_data['image_url'] = f'/api/image/{fname}'
+                images_dir = os.path.abspath(
+                    self.core.config.get('paths', {}).get('images', './images')
+                )
+                abs_img = os.path.abspath(image_file)
+                if abs_img.startswith(images_dir + os.sep):
+                    # New subfolder path → use /api/images/{subfolder}/{filename}
+                    rel = os.path.relpath(abs_img, images_dir)
+                    parts = rel.replace('\\', '/').split('/', 1)
+                    if len(parts) == 2:
+                        resp_data['image_url'] = f'/api/images/{parts[0]}/{parts[1]}'
+                    else:
+                        resp_data['image_url'] = f'/api/image/{os.path.basename(image_file)}'
+                else:
+                    # Legacy logs/ path
+                    resp_data['image_url'] = f'/api/image/{os.path.basename(image_file)}'
                 self.core.gateway.last_image_file = None
             return web.json_response(resp_data)
         except Exception as e:
