@@ -36,8 +36,20 @@ class GalacticGateway:
     def __init__(self, core):
         self.core = core
         self.config = core.config.get('gateway', {})
-        self.provider = self.config.get('provider', 'google')
-        self.model = self.config.get('model', 'gemini-3-flash-preview')
+        # Prefer models.primary_provider/model (canonical source of truth written by
+        # ModelManager._save_config), fall back to legacy gateway.* fields, and only
+        # use hardcoded defaults when the config has never been written at all.
+        models_cfg = core.config.get('models', {})
+        self.provider = (
+            models_cfg.get('primary_provider')
+            or self.config.get('provider')
+            or 'google'
+        )
+        self.model = (
+            models_cfg.get('primary_model')
+            or self.config.get('model')
+            or 'gemini-2.5-flash'
+        )
         self.api_key = self.config.get('api_key', 'NONE')
         
         # Load Personality (dynamic: reads .md files, config, or Byte defaults)
