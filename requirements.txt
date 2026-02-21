@@ -1,4 +1,4 @@
-# Galactic AI v0.9.1 — Python Dependencies
+# Galactic AI v1.0.0 — Python Dependencies
 # Install with: pip install -r requirements.txt
 
 # ─── Core web framework ───────────────────────────────────────────────────────
@@ -40,6 +40,10 @@ Pillow>=10.4.0               # Image processing (analyze_image tool)
 
 # ─── Scheduling / tasks ──────────────────────────────────────────────────────
 apscheduler>=3.10.0          # Advanced task scheduling
+
+# ─── Remote Access / Mobile ──────────────────────────────────────────────────
+qrcode[pil]>=8.0             # QR code generation for mobile app pairing
+cryptography>=42.0.0         # TLS certificate generation for remote access
 
 # ─── Utilities ────────────────────────────────────────────────────────────────
 python-dotenv>=1.0.0         # Load .env files
