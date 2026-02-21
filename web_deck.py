@@ -80,8 +80,7 @@ class GalacticWebDeck:
         self.app.router.add_post('/api/settings/models', self.handle_settings_models)
         self.app.router.add_post('/api/settings/voice', self.handle_settings_voice)
         self.app.router.add_post('/api/settings/system', self.handle_settings_system)
-        # Mobile / Remote access endpoints
-        self.app.router.add_get('/api/qr_pair', self.handle_qr_pair)
+        # Voice API endpoints
         self.app.router.add_post('/api/tts', self.handle_tts)
         self.app.router.add_post('/api/stt', self.handle_stt)
         self.trace_buffer = []  # last 500 agent trace entries for persistence
@@ -1162,25 +1161,7 @@ body.glow-max .status-dot{box-shadow:0 0 14px var(--green),0 0 28px rgba(0,255,1
           </div>
         </div>
 
-        <!-- Section 4: Mobile Pairing -->
-        <div class="model-config-box" style="margin-top:18px">
-          <h4>📱 MOBILE APP PAIRING</h4>
-          <div style="font-size:0.78em;color:var(--dim);margin-bottom:10px">
-            Scan this QR code with Galactic-AI Mobile to connect instantly.
-            <br>Remote access must be enabled in config.yaml (<code style="color:var(--cyan)">remote_access: true</code>).
-          </div>
-          <div id="qr-pair-container" style="text-align:center;padding:14px">
-            <div id="qr-pair-img" style="display:inline-block;background:var(--bg);border:2px solid var(--cyan);border-radius:12px;padding:16px;box-shadow:0 0 30px rgba(0,243,255,0.1)">
-              <div style="color:var(--dim);font-size:0.82em;padding:20px">Loading QR code...</div>
-            </div>
-            <div id="qr-pair-info" style="margin-top:10px;font-size:0.78em;color:var(--dim)"></div>
-          </div>
-          <div style="margin-top:8px;text-align:center">
-            <button class="btn secondary" onclick="loadPairingQR()">Refresh QR Code</button>
-          </div>
-        </div>
-
-        <!-- Section 5: Display -->
+        <!-- Section 4: Display -->
         <div class="model-config-box" style="margin-top:18px">
           <h4>DISPLAY</h4>
           <div style="display:flex;gap:18px;flex-wrap:wrap;align-items:center">
@@ -1636,7 +1617,6 @@ async function init() {
   populateSettingsProviders();
   populatePmoDropdown();
   loadSettingsValues();
-  loadPairingQR();
   // Restore the last active tab (defaults to 'chat' if none saved)
   const savedTab = localStorage.getItem('gal_activeTab') || 'chat';
   switchTab(savedTab);
@@ -2754,9 +2734,8 @@ function toggleVoiceInput() {
 async function startVoiceInput() {
   const btn = document.getElementById('voice-btn');
   // MediaRecorder requires a secure context (HTTPS or localhost).
-  // In the Android WebView over plain HTTP, navigator.mediaDevices is undefined.
   if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
-    showToast('Mic unavailable: use the PC browser for voice input, or type your message.', 'error', 4000);
+    showToast('Mic unavailable: requires secure context (HTTPS or localhost).', 'error', 4000);
     return;
   }
   try {
@@ -2842,35 +2821,6 @@ function showUpdateBanner(info) {
   banner.innerHTML = `<span style="font-size:1.2em">🆕</span><span><strong>Galactic AI v${info.latest}</strong> is available <span style="color:var(--dim)">(you have v${info.current})</span></span><code style="padding:3px 8px;background:var(--bg);border-radius:5px;font-size:0.85em">./update.ps1</code><button onclick="this.parentElement.remove()" style="margin-left:auto;background:none;border:1px solid var(--border);border-radius:5px;color:var(--text);padding:3px 10px;cursor:pointer;font-size:0.85em">Dismiss</button>`;
   const topbar = document.getElementById('topbar');
   if (topbar) topbar.after(banner);
-}
-
-// Mobile Pairing QR
-async function loadPairingQR() {
-  const container = document.getElementById('qr-pair-img');
-  const info = document.getElementById('qr-pair-info');
-  if (!container) return;
-  try {
-    const r = await authFetch('/api/qr_pair');
-    if (r.headers.get('content-type')?.includes('image/png')) {
-      const blob = await r.blob();
-      const url = URL.createObjectURL(blob);
-      container.innerHTML = '<img src="' + url + '" style="max-width:220px;border-radius:8px" alt="QR Pairing Code">';
-      info.textContent = 'Scan with Galactic-AI Mobile to connect';
-    } else {
-      const d = await r.json();
-      if (d.host) {
-        container.innerHTML = '<div style="padding:16px;font-size:0.82em;color:var(--cyan)">' +
-          'Host: ' + d.host + ':' + d.port + '<br>' +
-          (d.fingerprint ? 'Cert: ' + d.fingerprint.substring(0,16) + '...' : '') +
-          '</div>';
-        info.innerHTML = d.note || '';
-      } else {
-        container.innerHTML = '<div style="padding:16px;color:var(--dim)">QR unavailable: ' + (d.error || 'unknown error') + '</div>';
-      }
-    }
-  } catch(e) {
-    container.innerHTML = '<div style="padding:16px;color:var(--dim)">Enable remote_access in config.yaml</div>';
-  }
 }
 
 // Memory
@@ -4346,35 +4296,7 @@ setInterval(() => {
         await self.core.log(f"File saved via Web Deck: {filename}", priority=2)
         return web.json_response({'success': True})
 
-    # ── Mobile / Remote Access Endpoints ────────────────────────────────────────
-
-    async def handle_qr_pair(self, request):
-        """GET /api/qr_pair — returns QR code PNG for mobile app pairing."""
-        try:
-            import socket
-            # Detect local IP
-            try:
-                s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-                s.connect(('8.8.8.8', 80))
-                local_ip = s.getsockname()[0]
-                s.close()
-            except Exception:
-                local_ip = '127.0.0.1'
-
-            from remote_access import generate_pairing_qr
-            png_data = generate_pairing_qr(local_ip, self.port, self.cert_fingerprint)
-            if png_data:
-                return web.Response(body=png_data, content_type='image/png')
-            # Fallback: return JSON pairing data if qrcode lib not installed
-            return web.json_response({
-                'host': local_ip,
-                'port': self.port,
-                'fingerprint': self.cert_fingerprint,
-                'app': 'galactic-ai',
-                'note': 'Install qrcode library for QR image: pip install qrcode[pil]'
-            })
-        except Exception as e:
-            return web.json_response({'error': str(e)}, status=500)
+    # ── Voice API Endpoints ─────────────────────────────────────────────────────
 
     async def handle_tts(self, request):
         """POST /api/tts — text-to-speech via server-side engines. Returns MP3 audio."""
@@ -4475,17 +4397,9 @@ setInterval(() => {
 
         protocol = 'http'
         if self.remote_access:
-            # Remote mode: plain HTTP on 0.0.0.0 so both PC and phone can connect
-            # TLS with self-signed certs causes browser warnings and phone rejections,
+            # Remote mode: plain HTTP on 0.0.0.0 for LAN access.
+            # TLS with self-signed certs causes browser warnings,
             # so we skip it for LAN use. Auth is handled by JWT + password.
-            try:
-                # Still generate cert for fingerprint (used in QR pairing)
-                from remote_access import generate_self_signed_cert
-                cert_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'certs')
-                _, _, fingerprint = generate_self_signed_cert(cert_dir)
-                self.cert_fingerprint = fingerprint
-            except Exception:
-                pass
 
             site = web.TCPSite(runner, '0.0.0.0', self.port, ssl_context=None)
             await site.start()

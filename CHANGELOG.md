@@ -12,8 +12,7 @@ All notable changes to Galactic AI are documented here.
 - **"CONTROL DECK" label** in the top bar next to the model status badge
 
 ### Fixed
-- **Remote access HTTP mode** — Server now binds to `0.0.0.0` on plain HTTP instead of HTTPS with self-signed TLS. Self-signed certs caused `ERR_EMPTY_RESPONSE` on the PC browser and connection timeouts on phones. JWT authentication still protects all remote API endpoints
-- **Mobile app HTTPS default** — "Use HTTPS" checkbox now defaults to OFF (correct for LAN connections). Label updated to "Use HTTPS (for internet access)"
+- **Remote access HTTP mode** — Server now binds to `0.0.0.0` on plain HTTP instead of HTTPS with self-signed TLS. Self-signed certs caused `ERR_EMPTY_RESPONSE`. JWT authentication still protects all remote API endpoints
 - **Updater em dash encoding** — Fixed `update.ps1` parse error caused by em dash character corruption in some environments
 
 ---
@@ -25,7 +24,7 @@ All notable changes to Galactic AI are documented here.
 - **"CONTROL DECK" label** in top bar (first introduced here, improved in v1.0.3)
 
 ### Fixed
-- **QR code scanner compatibility** — QR pairing code now uses standard black-on-white colors with higher error correction (`ERROR_CORRECT_H`) for reliable phone camera scanning. Colored QR codes were failing on most phone cameras
+- **QR code compatibility** — QR pairing code now uses standard black-on-white colors with higher error correction (`ERROR_CORRECT_H`)
 - **Test Voice button now plays audio** — Previously only generated the MP3 server-side without streaming it back. Now uses `/api/tts` to stream audio bytes to the browser and plays them directly
 - **Desktop shortcut icon** — `galactic_ai_flux_v4.ico` added to the repository (was missing, referenced by `create_shortcut.ps1`)
 
@@ -38,24 +37,13 @@ All notable changes to Galactic AI are documented here.
 - **Updater `-Force` flag** — `.\update.ps1 -Force` and `./update.sh --force` re-download even when the installed version matches the latest release
 
 ### Fixed
-- Missing release ZIP assets — v1.0.0 release only contained the APK. Added `windows.zip`, `macos.zip`, `linux.tar.gz`, `universal.zip`, and `SHA256SUMS.txt`
+- Missing release ZIP assets — Added `windows.zip`, `macos.zip`, `linux.tar.gz`, `universal.zip`, and `SHA256SUMS.txt`
 
 ---
 
 ## [v1.0.0] — 2026-02-21
 
 ### Added
-- **📱 Galactic-AI Mobile** — Native Android companion app (Kotlin + WebView)
-  - Full Control Deck access with all 10 tabs (Chat, Tools, Plugins, Models, Browser, Memory, Status, Settings, Logs, Thinking)
-  - QR code pairing — scan from PC Settings tab to connect instantly
-  - Voice I/O — hands-free speech-to-text (Android SpeechRecognizer) and text-to-speech (server-side + local fallback)
-  - Biometric/PIN lock for app access (AndroidX Biometric)
-  - TLS certificate pinning with TOFU (Trust On First Use) model
-  - AES-256 encrypted credential storage (Android Keystore)
-  - Auto-reconnect on network changes with exponential backoff
-  - Hardware-accelerated WebView for smooth CRT effects
-  - Cyberpunk-themed native connection screen with QR scanner
-  - Animated splash screen matching desktop aesthetic
 - **🌐 Remote Access Mode** — Access Galactic AI from anywhere
   - Enable with `remote_access: true` in config.yaml
   - Auto-generated self-signed TLS certificates (HTTPS)
@@ -72,12 +60,10 @@ All notable changes to Galactic AI are documented here.
   - 5 login attempts/minute per IP
   - Returns 429 with `Retry-After` header
 - **🔒 CORS Middleware** — Cross-origin protection with configurable allowed origins
-- **📷 QR Code Pairing** — `GET /api/qr_pair` endpoint generates pairing QR code encoding host, port, and cert fingerprint
-- **🎙️ Voice API Endpoints** for mobile hands-free communication:
+- **🎙️ Voice API Endpoints**:
   - `POST /api/tts` — text-to-speech via existing ElevenLabs/edge-tts/gTTS pipeline, returns MP3
   - `POST /api/stt` — speech-to-text via OpenAI Whisper with Groq Whisper fallback, accepts multipart audio
-- **📱 Mobile Pairing Card** in Settings tab — displays QR code for instant mobile connection
-- **`remote_access.py`** — New security module centralizing JWT, TLS, rate limiting, CORS, and auth middleware
+- **`remote_access.py`** — New security module centralizing JWT, rate limiting, CORS, and auth middleware
 
 ### Fixed
 - **Settings model save bug** — Changing primary/fallback models in the Settings tab now takes effect immediately
@@ -90,7 +76,7 @@ All notable changes to Galactic AI are documented here.
 - `web_deck.py` JavaScript uses `authFetch()` wrapper for JWT auth headers on all API calls
 - `web_deck.py` WebSocket uses `wss://` protocol when on HTTPS
 - `galactic_core_v2.py` auto-generates JWT secret on first remote-mode startup
-- Website `index.html` updated with mobile app section and download link
+- Website `index.html` updated with remote access section
 
 ---
 

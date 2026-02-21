@@ -355,29 +355,6 @@
     .whats-new ul li { font-size: 0.875rem; color: var(--muted); }
     .whats-new ul li::before { content: '✦ '; color: var(--accent2); }
 
-    /* MOBILE */
-    .mobile-section {
-      text-align: center;
-      padding: 5rem 2rem;
-      background: linear-gradient(180deg, var(--bg) 0%, rgba(124,58,237,0.06) 100%);
-      border-top: 1px solid var(--border);
-    }
-    .mobile-section h2 { margin-bottom: 0.5rem; }
-    .mobile-section .section-sub { margin-bottom: 2rem; }
-    .mobile-features {
-      display: flex; flex-wrap: wrap; justify-content: center; gap: 1.5rem;
-      max-width: 900px; margin: 0 auto 2.5rem;
-    }
-    .mobile-feat {
-      background: var(--bg2); border: 1px solid var(--border); border-radius: 10px;
-      padding: 1.25rem 1.5rem; flex: 1 1 250px; max-width: 280px; text-align: left;
-    }
-    .mobile-feat h4 { font-size: 0.95rem; margin-bottom: 0.3rem; }
-    .mobile-feat p { font-size: 0.82rem; color: var(--muted); }
-    .mobile-dl-note {
-      font-size: 0.82rem; color: var(--muted); margin-top: 1rem;
-    }
-
     /* CTA */
     .cta-section {
       text-align: center;
@@ -421,7 +398,6 @@
     <li><a href="#features">Features</a></li>
     <li><a href="#providers">Providers</a></li>
     <li><a href="#tools">Tools</a></li>
-    <li><a href="#mobile">Mobile</a></li>
     <li><a href="#quickstart">Quick Start</a></li>
   </ul>
   <a href="https://github.com/cmmchsvc-dev/Galactic-AI/releases/latest" class="nav-cta">Download Free</a>
@@ -515,10 +491,8 @@
     <ul>
       <li>🎤 Voice Input Button — mic button in Control Deck chat bar, transcribed via Whisper</li>
       <li>🔥 Auto Windows Firewall Rule — port 17789 opened automatically on remote_access startup</li>
-      <li>📱 Galactic-AI Mobile — Android companion app with full Control Deck access</li>
       <li>🌐 Remote Access Mode — plain HTTP on LAN with JWT auth (no TLS cert headaches)</li>
       <li>🔑 JWT Authentication — enterprise-grade auth with 24h token expiry</li>
-      <li>📷 QR Code Pairing — scan from PC Settings tab to connect your phone instantly</li>
     </ul>
   </div>
 
@@ -584,11 +558,6 @@
       <p>Run update.ps1 or update.sh to update code. Your config, API keys, memory files, VAULT.md, and chat history are never touched.</p>
     </div>
     <div class="feature-card">
-      <span class="feature-icon">📱</span>
-      <h3>Android Mobile App</h3>
-      <p>Galactic-AI Mobile — full Control Deck on your phone. QR code pairing, voice I/O, biometric lock, CRT effects. Connect over LAN or internet.</p>
-    </div>
-    <div class="feature-card">
       <span class="feature-icon">🎤</span>
       <h3>Voice Input in Control Deck</h3>
       <p>Click the mic button in the chat bar to record your voice. Audio is sent to Whisper (OpenAI or Groq) for transcription and inserted into the chat automatically.</p>
@@ -596,7 +565,7 @@
     <div class="feature-card">
       <span class="feature-icon">🔑</span>
       <h3>Remote Access + JWT</h3>
-      <p>Access from your phone over LAN with plain HTTP + JWT auth (24h expiry), rate limiting, CORS protection, and auto Windows Firewall rule. No TLS cert issues.</p>
+      <p>Access remotely over LAN with plain HTTP + JWT auth (24h expiry), rate limiting, CORS protection, and auto Windows Firewall rule. No TLS cert issues.</p>
     </div>
   </div>
 </section>
@@ -759,43 +728,6 @@
     </div>
   </div>
 </section>
-
-<!-- MOBILE APP -->
-<div class="mobile-section" id="mobile">
-  <h2>Take it with you. 📱</h2>
-  <p class="section-sub">Galactic-AI Mobile — your full Control Deck on Android.</p>
-  <div class="mobile-features">
-    <div class="mobile-feat">
-      <h4>📷 QR Code Pairing</h4>
-      <p>Scan from your PC Settings tab — auto-connects in seconds. No typing URLs.</p>
-    </div>
-    <div class="mobile-feat">
-      <h4>🔒 Secure Connection</h4>
-      <p>JWT auth, biometric app lock, AES-256 encrypted storage. Connect over plain HTTP on LAN — leave HTTPS unchecked in the app.</p>
-    </div>
-    <div class="mobile-feat">
-      <h4>🎙️ Voice I/O</h4>
-      <p>Hands-free speech-to-text and text-to-speech. Talk to your AI from anywhere.</p>
-    </div>
-    <div class="mobile-feat">
-      <h4>🖥️ Full Control Deck</h4>
-      <p>All 10 tabs — Chat, Tools, Plugins, Models, Browser, Memory, Status, Settings, Logs, Thinking.</p>
-    </div>
-    <div class="mobile-feat">
-      <h4>🌐 LAN or Internet</h4>
-      <p>Connect over your home Wi-Fi or remotely over the internet. Auto-reconnect on network changes.</p>
-    </div>
-    <div class="mobile-feat">
-      <h4>✨ CRT Effects</h4>
-      <p>Same cyberpunk theme — scanlines, glow levels, and the full visual experience on mobile.</p>
-    </div>
-  </div>
-  <div class="hero-actions">
-    <a href="https://github.com/cmmchsvc-dev/Galactic-AI/releases/latest" class="btn-primary">Download APK</a>
-    <a href="https://github.com/cmmchsvc-dev/Galactic-AI/tree/main/galactic-mobile" class="btn-secondary">View Source</a>
-  </div>
-  <p class="mobile-dl-note">Android 8.0+ required · Enable "Install from unknown sources" · Build from source with Android Studio</p>
-</div>
 
 <!-- FINAL CTA -->
 <div class="cta-section">
