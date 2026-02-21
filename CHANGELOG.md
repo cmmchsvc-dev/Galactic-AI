@@ -4,6 +4,15 @@ All notable changes to Galactic AI are documented here.
 
 ---
 
+## [v1.0.4] — 2026-02-21
+
+### Fixed
+- **🔧 Model persistence across restarts** — Selected primary model now survives restarts. Two bugs were causing the model to revert to Gemini 2.5 Flash on every startup:
+  1. `/api/switch_model` (used by the Models tab quick-switch) updated the live session only — it never wrote the selection to `config.yaml`. It now calls `ModelManager._save_config()` so the choice is immediately persisted.
+  2. `GalacticGateway.__init__` read `config.gateway.model` which was only written by the Settings tab path, not the Models tab path. It now reads `config.models.primary_model` first (the canonical value written by `ModelManager`), falling back to `config.gateway.model`, so startup always loads the correct last-used model regardless of which UI element made the switch.
+
+---
+
 ## [v1.0.3] — 2026-02-21
 
 ### Added

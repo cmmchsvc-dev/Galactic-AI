@@ -3583,6 +3583,11 @@ setInterval(() => {
             self.core.gateway.llm.model = model
             if hasattr(self.core, 'model_manager'):
                 self.core.model_manager._set_api_key(provider)
+                # Persist as new primary so it survives restarts
+                self.core.model_manager.primary_provider = provider
+                self.core.model_manager.primary_model = model
+                self.core.model_manager.current_mode = 'primary'
+                await self.core.model_manager._save_config()
             # Check if API key is actually configured
             current_key = getattr(self.core.gateway.llm, 'api_key', '')
             if provider != 'ollama' and (not current_key or current_key == 'NONE'):

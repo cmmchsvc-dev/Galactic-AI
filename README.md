@@ -2,7 +2,7 @@
 
 **Sovereign. Universal. Fast.**
 
-A powerful, local-first AI automation platform with 100+ built-in tools, true persistent memory, voice I/O, browser automation, 14 AI providers, multi-platform messaging bridges, and a real-time web Control Deck. **v1.0.3**
+A powerful, local-first AI automation platform with 100+ built-in tools, true persistent memory, voice I/O, browser automation, 14 AI providers, multi-platform messaging bridges, and a real-time web Control Deck. **v1.0.4**
 
 Run fully local with Ollama (no API keys, no cloud, no tracking), or connect to any of 14 cloud providers. Your data stays yours.
 
@@ -435,6 +435,7 @@ MIT License — see LICENSE file.
 
 | Version | Highlights |
 |---|---|
+| **v1.0.4** | 🔧 Model persistence fix — selected primary model now survives restarts (both the Models tab quick-switch and the Settings tab now persist to config.yaml) |
 | **v1.0.3** | 🎤 Voice input mic button in Control Deck chat bar, 🔥 auto-Windows Firewall rule on remote_access startup, plain HTTP LAN mode (no TLS — fixes ERR_EMPTY_RESPONSE), em dash updater fix |
 | **v1.0.2** | Localhost bypass for remote auth (PC never locked out), QR code compatibility fix, Test Voice button now plays audio, desktop shortcut icon added |
 | **v1.0.1** | Config auto-migration for missing sections, updater `-Force` flag, missing release ZIP assets fixed |
