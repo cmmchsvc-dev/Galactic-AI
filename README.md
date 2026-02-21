@@ -308,43 +308,6 @@ The updater will:
 
 ---
 
-## Galactic-AI Mobile (Android)
-
-Access the full Control Deck from your phone — all 10 tabs, CRT effects, voice I/O, and the complete cyberpunk theme.
-
-### Quick Setup
-
-1. Enable remote access in `config.yaml`:
-   ```yaml
-   web:
-     remote_access: true
-   ```
-2. Restart Galactic AI — it binds to your LAN IP automatically
-3. Install the APK on your Android phone (Android 8.0+)
-4. Open the PC Control Deck > Settings tab > "Mobile App Pairing"
-5. On your phone, tap "Scan QR Code" — enter your passphrase — tap CONNECT
-
-> **Important:** Leave "Use HTTPS" **unchecked** in the mobile app. The server uses plain HTTP on LAN. HTTPS is only needed for internet access.
-
-### Features
-
-- Full Control Deck with all 10 tabs
-- QR code pairing — scan and connect in seconds
-- Voice I/O — hands-free speech-to-text and text-to-speech
-- Biometric/PIN lock for app access
-- AES-256 encrypted credential storage
-- Auto-reconnect on network changes
-
-### Building from Source
-
-1. Open `galactic-mobile/` in Android Studio
-2. Sync Gradle
-3. Build > Generate Signed APK (or Build > Build APK for debug)
-
-See [`galactic-mobile/README.md`](galactic-mobile/README.md) for full build instructions.
-
----
-
 ## Remote Access
 
 Enable secure remote connections to Galactic AI from any device:
@@ -372,8 +335,6 @@ When enabled, Galactic AI:
 | CORS | Configurable allowed origins |
 | WebSocket | JWT token validation via query parameter |
 
-> **Phone connection:** Make sure your phone and PC are on the same Wi-Fi. In the mobile app, leave "Use HTTPS" **unchecked**.
-
 ---
 
 ## File Structure
@@ -400,7 +361,6 @@ Galactic-AI/
 ├── install.ps1 / install.sh  # One-command installers
 ├── launch.ps1 / launch.sh    # Launchers
 ├── update.ps1 / update.sh    # Safe updaters (never touch your data)
-├── galactic-mobile/          # Android companion app (Kotlin + WebView)
 └── plugins/
     ├── browser_executor_pro.py   # Playwright browser automation (56 actions)
     ├── shell_executor.py         # Shell command execution
@@ -442,12 +402,6 @@ Check that port 17789 is free. Change it in `config.yaml` under `web.port`.
 **Voice messages not being transcribed?**
 You need an OpenAI or Groq API key configured in the setup wizard for speech-to-text.
 
-**Phone shows "Unable to parse TLS packet header"?**
-Uncheck "Use HTTPS" in the mobile app — the server uses plain HTTP on LAN. HTTPS is only for internet access over a reverse proxy.
-
-**Phone can't reach PC even with correct IP?**
-Make sure `remote_access: true` is set in `config.yaml` under `web:`, then restart Galactic AI. On Windows, a firewall rule for port 17789 is added automatically. Verify both devices are on the same Wi-Fi network.
-
 **Memory tab is empty?**
 Click into the Memory tab — it auto-creates the .md files with starter templates on first visit.
 
@@ -481,10 +435,10 @@ MIT License — see LICENSE file.
 
 | Version | Highlights |
 |---|---|
-| **v1.0.3** | 🎤 Voice input mic button in Control Deck chat bar, 🔥 auto-Windows Firewall rule on remote_access startup, plain HTTP LAN mode (no TLS — fixes ERR_EMPTY_RESPONSE), mobile HTTPS default OFF, em dash updater fix |
-| **v1.0.2** | Localhost bypass for remote auth (PC never locked out), QR code black-on-white for phone camera compatibility, Test Voice button now plays audio, desktop shortcut icon added |
+| **v1.0.3** | 🎤 Voice input mic button in Control Deck chat bar, 🔥 auto-Windows Firewall rule on remote_access startup, plain HTTP LAN mode (no TLS — fixes ERR_EMPTY_RESPONSE), em dash updater fix |
+| **v1.0.2** | Localhost bypass for remote auth (PC never locked out), QR code compatibility fix, Test Voice button now plays audio, desktop shortcut icon added |
 | **v1.0.1** | Config auto-migration for missing sections, updater `-Force` flag, missing release ZIP assets fixed |
-| **v1.0.0** | 📱 Galactic-AI Mobile (Android app, QR pairing, biometric lock), 🌐 Remote Access mode, 🔑 JWT authentication, 🛡️ rate limiting, 🔒 CORS, 📷 QR pairing endpoint, 🎙️ voice API (TTS/STT), settings model save bug fix |
+| **v1.0.0** | 🌐 Remote Access mode, 🔑 JWT authentication, 🛡️ rate limiting, 🔒 CORS, 🎙️ voice API (TTS/STT), settings model save bug fix |
 | **v0.9.2** | Resilient model fallback chain with cooldowns, 16 new tools (archives, HTTP, env vars, window management, system info, QR codes, text transforms), expanded Status screen with 30+ fields, per-tool configurable timeouts, speak() wall-clock timeout, shell command timeout |
 | **v0.9.0** | Discord/WhatsApp/Gmail bridges, Imagen 4, Telegram image model selector, Thinking tab persistence, chat timestamps, per-tool timeout, graceful shutdown fix, all providers in Telegram model menu |
 | **v0.8.1** | Typing indicator heartbeat fix, fast Ctrl+C shutdown, duplicate message guard |

@@ -566,53 +566,9 @@ Set `web.remote_access: true` in `config.yaml`. On next startup, Galactic AI:
 | WebSocket | JWT | Token validation via query parameter |
 | Firewall | Auto-rule (Windows) | `New-NetFirewallRule` adds TCP 17789 allow rule on startup |
 
-### Voice API (for mobile clients)
+### Voice API
 - `POST /api/tts` — text-to-speech via ElevenLabs/edge-tts/gTTS pipeline, returns MP3 audio
 - `POST /api/stt` — speech-to-text via OpenAI Whisper (Groq Whisper fallback), accepts multipart audio upload
-
-### QR Code Pairing
-- `GET /api/qr_pair` — returns a QR code PNG encoding `{"app":"galactic-ai","host":"<ip>","port":17789}`
-- Displayed in the PC Control Deck Settings tab as a "Mobile Pairing" card
-- Black-on-white with `ERROR_CORRECT_H` for reliable phone camera scanning
-- Android app scans QR, auto-fills host/port, and leaves HTTPS unchecked (server uses plain HTTP on LAN)
-
----
-
-## Galactic-AI Mobile (Android)
-
-Native Android companion app for accessing the full Control Deck from your phone.
-
-### Architecture
-Hybrid WebView app — the existing web Control Deck renders inside a native Kotlin shell. This reuses 100% of the existing UI (all 10 tabs, CRT effects, themes) with zero double-maintenance. The native shell handles what WebView can't: TLS cert pinning, biometric auth, secure credential storage, voice I/O, and connection management.
-
-### Components
-
-| Class | Purpose |
-|---|---|
-| `SplashActivity` | Animated launch screen (2s, cyberpunk themed) |
-| `ConnectActivity` | Connection setup with QR scanner and manual entry |
-| `MainActivity` | Full-screen WebView host with voice overlay |
-| `GalacticWebViewClient` | TLS cert pinning (TOFU), JWT injection, styled error pages |
-| `SecureStorage` | EncryptedSharedPreferences (AES-256, Android Keystore) |
-| `ConnectionManager` | Login, health check, exponential backoff reconnect |
-| `BiometricHelper` | Fingerprint/face/PIN authentication (AndroidX Biometric) |
-| `VoiceManager` | STT (Android SpeechRecognizer) + TTS (server-side + local fallback) |
-
-### Features
-- Full Control Deck with all 10 tabs
-- QR code pairing — scan from PC Settings tab to connect instantly
-- Voice I/O — hands-free speech-to-text and text-to-speech
-- Biometric/PIN lock for app access
-- TLS certificate pinning with TOFU (Trust On First Use) model
-- AES-256 encrypted credential storage (Android Keystore backed)
-- Auto-reconnect on network changes with exponential backoff
-- Hardware-accelerated WebView for smooth CRT scanline effects
-- CRT effects, glow levels, and the full cyberpunk theme on mobile
-
-### Requirements
-- Android 8.0+ (API 26)
-- Galactic-AI v1.0.3+ running on PC with `remote_access: true`
-- **Note:** Leave "Use HTTPS" unchecked in the app — the server uses plain HTTP on LAN
 
 ---
 
@@ -675,7 +631,6 @@ Hybrid WebView app — the existing web Control Deck renders inside a native Kot
 | macOS (Intel & Apple Silicon) | Fully supported |
 | WSL2 | Supported |
 | Chromebook (Linux mode) | See CHROMEBOOK.md |
-| Android 8.0+ (mobile app) | Galactic-AI Mobile companion app |
 
 ---
 

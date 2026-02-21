@@ -218,24 +218,12 @@ Security module for remote connections. Activated when `web.remote_access: true`
 - **Auto Firewall Rule** — on Windows with `remote_access: true`, `galactic_core_v2.py` calls `New-NetFirewallRule` via PowerShell on startup to open TCP 17789 (private networks only)
 - **Rate Limiter** — per-IP sliding window (60 req/min API, 5 req/min login)
 - **CORS Middleware** — configurable `allowed_origins` whitelist
-- **QR Code Pairing** — generates black-on-white pairing QR codes (`ERROR_CORRECT_H`) encoding host and port
 
-**New API endpoints:**
+**Voice API endpoints:**
 ```
 POST /api/tts         — text-to-speech (returns MP3 audio)
 POST /api/stt         — speech-to-text (accepts multipart audio)
-GET  /api/qr_pair     — QR code PNG for mobile pairing
 ```
-
----
-
-### 12. Galactic-AI Mobile (Android)
-
-Native Android companion app (Kotlin + WebView). Wraps the existing web Control Deck in a native shell that provides TLS cert pinning, biometric auth, secure credential storage, voice I/O, and connection management.
-
-**Key classes:** `MainActivity` (WebView host), `ConnectActivity` (QR + manual connect), `GalacticWebViewClient` (JWT injection, styled error pages), `SecureStorage` (EncryptedSharedPreferences), `VoiceManager` (STT + TTS), `BiometricHelper`.
-
-**Security:** AES-256 encrypted storage (Android Keystore), optional biometric/PIN lock. HTTPS toggle defaults to OFF — server uses plain HTTP on LAN.
 
 ---
 
@@ -323,7 +311,6 @@ Galactic-AI/
 ├── gmail_bridge.py         # Gmail IMAP
 ├── VAULT-example.md        # Template for private credentials
 ├── config.yaml             # All configuration
-├── galactic-mobile/        # Android companion app (Kotlin + WebView)
 └── plugins/
     ├── browser_executor_pro.py   # Playwright (56 actions)
     ├── shell_executor.py         # Shell execution

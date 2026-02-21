@@ -257,7 +257,7 @@ class GalacticCore:
                  f'New-NetFirewallRule -DisplayName "{rule_name}" '
                  f'-Direction Inbound -LocalPort {port} -Protocol TCP '
                  f'-Action Allow -Profile Private '
-                 f'-Description "Allow Galactic AI mobile app to connect on LAN"'],
+                 f'-Description "Allow Galactic AI remote access on LAN"'],
                 capture_output=True, text=True, timeout=10
             )
             if result.returncode == 0:

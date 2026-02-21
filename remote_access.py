@@ -353,35 +353,3 @@ def create_cors_middleware(allowed_origins: list):
     return cors_middleware
 
 
-# ── QR Code Pairing ──────────────────────────────────────────────────────────
-
-def generate_pairing_qr(host: str, port: int, cert_fingerprint: str = '') -> bytes:
-    """Generate a QR code PNG containing pairing info for the mobile app.
-
-    Returns PNG bytes, or None if qrcode library isn't available.
-    """
-    try:
-        import qrcode
-        from io import BytesIO
-
-        pairing_data = json.dumps({
-            "host": host,
-            "port": port,
-            "fingerprint": cert_fingerprint,
-            "app": "galactic-ai"
-        }, separators=(',', ':'))
-
-        qr = qrcode.QRCode(version=None, error_correction=qrcode.constants.ERROR_CORRECT_H, box_size=10, border=4)
-        qr.add_data(pairing_data)
-        qr.make(fit=True)
-        # Use standard black-on-white for maximum scanner compatibility
-        # (colored QR codes often fail on phone cameras)
-        img = qr.make_image(fill_color="black", back_color="white")
-
-        buf = BytesIO()
-        img.save(buf, format='PNG')
-        return buf.getvalue()
-
-    except ImportError:
-        # qrcode not installed — return a simple JSON response instead
-        return None
