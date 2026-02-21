@@ -16,7 +16,8 @@
 #   All .py source files, plugins, launch scripts, requirements.txt, docs
 
 param(
-    [string]$Version = "latest"   # Pin to a specific version e.g. "v0.7.1", or leave as "latest"
+    [string]$Version = "latest",  # Pin to a specific version e.g. "v0.7.1", or leave as "latest"
+    [switch]$Force                # Force re-download even if already on latest version
 )
 
 $GITHUB_REPO = "cmmchsvc-dev/Galactic-AI"
@@ -73,12 +74,16 @@ $latestTag     = $releaseInfo.tag_name
 
 Write-Host "  Latest version    : $latestTag" -ForegroundColor Green
 
-if ($latestVersion -eq $currentVersion) {
+if (($latestVersion -eq $currentVersion) -and (-not $Force)) {
     Write-Host ""
     Write-Host "  You are already on the latest version (v$currentVersion)." -ForegroundColor Green
-    Write-Host "  Use -Version to force a specific version: .\update.ps1 -Version v0.7.0" -ForegroundColor DarkGray
+    Write-Host "  Use -Force to re-download: .\update.ps1 -Force" -ForegroundColor DarkGray
+    Write-Host "  Use -Version to pin: .\update.ps1 -Version v0.7.0" -ForegroundColor DarkGray
     Write-Host ""
     exit 0
+}
+if ($Force -and ($latestVersion -eq $currentVersion)) {
+    Write-Host "  Force mode — re-downloading v$latestVersion..." -ForegroundColor Yellow
 }
 
 Write-Host "  Update available  : v$currentVersion -> v$latestVersion" -ForegroundColor Cyan
