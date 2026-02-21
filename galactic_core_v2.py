@@ -205,6 +205,16 @@ class GalacticCore:
             writer.close()
             await writer.wait_closed()
 
+    async def _recovery_check_loop(self):
+        """Periodically clear expired provider cooldowns and check recovery."""
+        while self.running:
+            await asyncio.sleep(30)
+            try:
+                if hasattr(self, 'model_manager'):
+                    await self.model_manager.check_recovery()
+            except Exception:
+                pass
+
     async def shutdown(self):
         """Graceful shutdown — close all subsystems cleanly."""
         if not self.running:
@@ -294,6 +304,7 @@ class GalacticCore:
         asyncio.create_task(self.web.run())
         asyncio.create_task(self.scheduler.run())
         asyncio.create_task(self.ollama_manager.auto_discover_loop())
+        asyncio.create_task(self._recovery_check_loop())
 
         # Start Plugins
         for plugin in self.plugins:
