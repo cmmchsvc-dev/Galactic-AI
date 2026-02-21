@@ -1022,6 +1022,22 @@ class GalacticGateway:
                 "fn": self.tool_generate_image_sd35
             },
 
+            # ── Google Imagen image generation ────────────────────────────────
+            "generate_image_imagen": {
+                "description": "Generate an image using Google Imagen 4 via the Google Generative AI API. High-quality photorealistic images. Returns path to saved image.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "prompt":         {"type": "string",  "description": "Image description / prompt"},
+                        "model":          {"type": "string",  "description": "Imagen model to use: imagen-4-ultra (best), imagen-4 (standard), imagen-4-fast (quick). Default: imagen-4"},
+                        "aspect_ratio":   {"type": "string",  "description": "Aspect ratio: 1:1, 16:9, 9:16, 4:3, 3:4. Default: 1:1"},
+                        "number_of_images": {"type": "integer", "description": "Number of images to generate (1-4, default: 1)"},
+                    },
+                    "required": ["prompt"]
+                },
+                "fn": self.tool_generate_image_imagen
+            },
+
             # ── File & system utilities ────────────────────────────────────────
             "list_dir": {
                 "description": "List files and directories at a path with sizes, dates, and types. Better than exec_shell for directory listings.",
@@ -3051,10 +3067,14 @@ class GalacticGateway:
         payload.update(kwargs)
         await self.core.relay.emit(3, "agent_trace", payload)
 
-    async def speak(self, user_input, context="", chat_id=None):
+    async def speak(self, user_input, context="", chat_id=None, images=None):
         """
         Main entry point for user interaction.
         Implements a ReAct loop: Think -> Act -> Observe -> Answer.
+
+        images: optional list of {name, mime, b64} dicts for vision-capable models.
+          When provided, the user message is built as a multimodal content array
+          (text + base64 image parts) compatible with OpenAI/Anthropic/Google vision APIs.
 
         Ollama/local models get:
           - Full parameter schemas in system prompt
@@ -3068,7 +3088,21 @@ class GalacticGateway:
         # Reset per-turn state
         self.last_voice_file = None
 
-        self.history.append({"role": "user", "content": user_input})
+        # Build user message — multimodal content array if images are attached
+        if images:
+            content = []
+            if user_input:
+                content.append({"type": "text", "text": user_input})
+            for img in images:
+                content.append({
+                    "type": "image_url",
+                    "image_url": {
+                        "url": f"data:{img['mime']};base64,{img['b64']}"
+                    }
+                })
+            self.history.append({"role": "user", "content": content})
+        else:
+            self.history.append({"role": "user", "content": user_input})
 
         # Persist to JSONL
         source = "telegram" if chat_id else "web"
@@ -3826,6 +3860,63 @@ class GalacticGateway:
             return f"✅ SD3.5 image generated: {path}\nModel: stable-diffusion-3.5-large\nPrompt: {prompt}"
         except Exception as e:
             return f"[ERROR] generate_image_sd35: {e}"
+
+    async def tool_generate_image_imagen(self, args):
+        """Generate an image using Google Imagen 4 via the Google Generative AI API."""
+        import base64 as _b64, time as _time
+        prompt       = args.get('prompt', '')
+        model        = args.get('model', 'imagen-4')
+        aspect_ratio = args.get('aspect_ratio', '1:1')
+        n_images     = int(args.get('number_of_images', 1))
+
+        if not prompt:
+            return "[ERROR] generate_image_imagen: 'prompt' is required."
+
+        # Validate model name
+        valid_models = {'imagen-4-ultra', 'imagen-4', 'imagen-4-fast'}
+        if model not in valid_models:
+            model = 'imagen-4'
+
+        google_cfg = self.core.config.get('providers', {}).get('google', {})
+        api_key = google_cfg.get('apiKey', '')
+        if not api_key:
+            return "[ERROR] generate_image_imagen: No Google API key configured. Add it at providers.google.apiKey in config.yaml."
+
+        try:
+            import google.generativeai as genai
+            genai.configure(api_key=api_key)
+
+            imagen = genai.ImageGenerationModel(model)
+            result = imagen.generate_images(
+                prompt=prompt,
+                number_of_images=max(1, min(4, n_images)),
+                aspect_ratio=aspect_ratio,
+                safety_filter_level="block_only_high",
+                person_generation="allow_adult",
+            )
+
+            if not result.images:
+                return f"[ERROR] Imagen returned no images. Check your prompt for policy violations."
+
+            images_dir = self.core.config.get('paths', {}).get('images', './images')
+            img_subdir = os.path.join(images_dir, 'imagen')
+            os.makedirs(img_subdir, exist_ok=True)
+
+            saved = []
+            for i, img in enumerate(result.images):
+                fname = f"imagen_{int(_time.time())}_{i}.png"
+                path = os.path.join(img_subdir, fname)
+                img.save(path)
+                saved.append(path)
+
+            # Deliver the first image inline via Control Deck / Telegram
+            self.last_image_file = saved[0]
+            paths_str = '\n'.join(f"  {p}" for p in saved)
+            return f"✅ Imagen image(s) generated ({model}):\n{paths_str}\nPrompt: {prompt}"
+        except ImportError:
+            return "[ERROR] google-generativeai not installed. Run: pip install google-generativeai"
+        except Exception as e:
+            return f"[ERROR] generate_image_imagen: {e}"
 
     async def tool_list_dir(self, args):
         """List directory contents with sizes and dates."""
