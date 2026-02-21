@@ -13,7 +13,6 @@ class GalacticWebDeck:
         self.port = self.config.get('port', 18789)
         self.host = self.config.get('host', '127.0.0.1')
         self.password_hash = self.config.get('password_hash')
-        self.trace_buffer = []  # Persist agent traces for Thinking tab across page refreshes
         self.app = web.Application()
         self.app.router.add_get('/', self.handle_index)
         self.app.router.add_post('/login', self.handle_login)
@@ -46,60 +45,10 @@ class GalacticWebDeck:
         self.app.router.add_delete('/api/model_overrides', self.handle_delete_model_override)
         self.app.router.add_get('/api/history', self.handle_history)
         self.app.router.add_get('/api/logs', self.handle_logs)
-        self.app.router.add_get('/api/traces', self.handle_traces)
         self.app.router.add_get('/api/image/{filename}', self.handle_serve_image)
-        # WhatsApp Cloud API webhook routes
-        self.app.router.add_get('/webhook/whatsapp', self.handle_whatsapp_verify)
-        self.app.router.add_post('/webhook/whatsapp', self.handle_whatsapp_incoming)
-        # Generic inbound webhook
-        self.app.router.add_post('/webhook/generic', self.handle_webhook_generic)
-
-    async def handle_whatsapp_verify(self, request):
-        """GET /webhook/whatsapp — Meta webhook verification (delegates to WhatsAppBridge)."""
-        if hasattr(self.core, 'whatsapp') and self.core.whatsapp.is_configured():
-            return await self.core.whatsapp.handle_verify(request)
-        return web.Response(status=404, text='WhatsApp bridge not configured')
-
-    async def handle_whatsapp_incoming(self, request):
-        """POST /webhook/whatsapp — incoming WhatsApp messages (delegates to WhatsAppBridge)."""
-        if hasattr(self.core, 'whatsapp') and self.core.whatsapp.is_configured():
-            return await self.core.whatsapp.handle_incoming(request)
-        return web.Response(status=404, text='WhatsApp bridge not configured')
-
-    async def handle_webhook_generic(self, request):
-        """POST /webhook/generic — generic inbound webhook for external integrations."""
-        try:
-            # Check webhook secret
-            cfg = self.core.config.get('webhooks', {})
-            secret = cfg.get('secret', '')
-            if secret:
-                auth = request.headers.get('Authorization', '')
-                if auth != f'Bearer {secret}':
-                    return web.json_response({"error": "Unauthorized"}, status=401)
-
-            data = await request.json()
-            message = data.get('message', data.get('text', data.get('data', json.dumps(data))))
-            source = data.get('source', 'webhook')
-
-            # Process through AI
-            response = await asyncio.wait_for(
-                self.core.gateway.speak(str(message), chat_id=f"webhook:{source}"),
-                timeout=120.0
-            )
-
-            # Relay to web UI
-            await self.core.relay.emit(2, "webhook_received", {
-                "source": source,
-                "data": str(message)[:200],
-                "response": response[:200] if response else "",
-            })
-
-            return web.json_response({"response": response, "source": source})
-        except asyncio.TimeoutError:
-            return web.json_response({"error": "AI processing timed out"}, status=504)
-        except Exception as e:
-            return web.json_response({"error": str(e)}, status=500)
-
+        self.app.router.add_get('/api/traces', self.handle_traces)
+        self.trace_buffer = []  # last 500 agent trace entries for persistence
+        
     async def handle_index(self, request):
         html = r"""<!DOCTYPE html>
 <html lang="en">
@@ -243,8 +192,6 @@ body::after{content:"";position:fixed;inset:0;background:linear-gradient(rgba(18
 .log-line.err{color:var(--red)}
 .log-line.warn{color:var(--yellow)}
 .log-line.ok{color:var(--green)}
-.log-line.tool{color:var(--cyan)}
-.log-line.tool-result{color:var(--dim);padding-left:20px;font-style:italic}
 #status-pane{padding:16px;overflow-y:auto}
 .stat-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(180px,1fr));gap:10px;margin-bottom:16px}
 .stat-card{background:var(--bg3);border:1px solid var(--border);border-radius:10px;padding:14px;text-align:center}
@@ -322,7 +269,7 @@ body::after{content:"";position:fixed;inset:0;background:linear-gradient(rgba(18
   <div class="login-box">
     <div style="font-size:2em;margin-bottom:8px">⬡</div>
     <h2>GALACTIC AI</h2>
-    <p>AUTOMATION SUITE v0.9.0</p>
+    <p>AUTOMATION SUITE v0.7.0</p>
     <input id="pw-input" type="password" placeholder="Enter passphrase" autocomplete="off">
     <button id="login-btn" onclick="doLogin()">ACCESS</button>
     <div id="login-err" style="display:none;color:var(--red);font-size:0.8em;margin-top:8px">Invalid passphrase</div>
@@ -508,85 +455,21 @@ body::after{content:"";position:fixed;inset:0;background:linear-gradient(rgba(18
       </div>
     </div>
 
-    <!-- Step 3: Messaging & Integrations (optional) -->
+    <!-- Step 3: Telegram (optional) -->
     <div id="sw-step-3" style="display:none;padding:28px 32px">
-      <div style="font-size:0.7em;letter-spacing:3px;color:var(--cyan);margin-bottom:4px">STEP 3 OF 7 — MESSAGING &amp; INTEGRATIONS <span style="color:var(--dim)">(all optional)</span></div>
-      <div style="color:var(--dim);font-size:0.78em;margin-bottom:18px">Connect messaging platforms and services. Configure only what you need.</div>
-
-      <!-- Telegram -->
-      <div style="padding:14px;background:rgba(0,243,255,0.04);border:1px solid rgba(0,243,255,0.15);border-radius:10px;margin-bottom:12px">
-        <div style="font-size:0.72em;letter-spacing:2px;color:var(--cyan);margin-bottom:10px">📱 TELEGRAM</div>
-        <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px">
-          <div>
-            <label style="font-size:0.75em;color:var(--dim);display:block;margin-bottom:4px">Bot Token <span style="font-size:0.85em">(from <a href="https://t.me/BotFather" target="_blank" style="color:var(--cyan)">@BotFather</a>)</span></label>
-            <input id="sw-tg-token" type="password" placeholder="1234567890:AAF..." style="width:100%;padding:8px 12px;background:var(--bg3);border:1px solid var(--border);border-radius:7px;color:var(--text);font-size:0.85em">
-          </div>
-          <div>
-            <label style="font-size:0.75em;color:var(--dim);display:block;margin-bottom:4px">Your Chat ID <span style="font-size:0.85em">(<a href="https://t.me/userinfobot" target="_blank" style="color:var(--cyan)">@userinfobot</a>)</span></label>
-            <input id="sw-tg-chat" type="text" placeholder="123456789" style="width:100%;padding:8px 12px;background:var(--bg3);border:1px solid var(--border);border-radius:7px;color:var(--text);font-size:0.85em">
-          </div>
+      <div style="font-size:0.7em;letter-spacing:3px;color:var(--cyan);margin-bottom:4px">STEP 3 OF 7 — TELEGRAM BOT <span style="color:var(--dim)">(optional)</span></div>
+      <div style="color:var(--dim);font-size:0.78em;margin-bottom:18px">Connect a Telegram bot to control Galactic AI from anywhere on your phone.</div>
+      <div style="display:flex;flex-direction:column;gap:14px">
+        <div>
+          <label style="font-size:0.8em;color:var(--dim);display:block;margin-bottom:5px">Bot Token <span style="font-size:0.85em">(from <a href="https://t.me/BotFather" target="_blank" style="color:var(--cyan)">@BotFather</a>)</span></label>
+          <input id="sw-tg-token" type="password" placeholder="1234567890:AAF..." style="width:100%;padding:9px 13px;background:var(--bg3);border:1px solid var(--border);border-radius:7px;color:var(--text);font-size:0.88em">
+        </div>
+        <div>
+          <label style="font-size:0.8em;color:var(--dim);display:block;margin-bottom:5px">Your Chat ID <span style="font-size:0.85em">(message <a href="https://t.me/userinfobot" target="_blank" style="color:var(--cyan)">@userinfobot</a>)</span></label>
+          <input id="sw-tg-chat" type="text" placeholder="123456789" style="width:100%;padding:9px 13px;background:var(--bg3);border:1px solid var(--border);border-radius:7px;color:var(--text);font-size:0.88em">
         </div>
       </div>
-
-      <!-- Discord -->
-      <div style="padding:14px;background:rgba(88,101,242,0.06);border:1px solid rgba(88,101,242,0.25);border-radius:10px;margin-bottom:12px">
-        <div style="font-size:0.72em;letter-spacing:2px;color:#5865f2;margin-bottom:10px">🎮 DISCORD</div>
-        <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px">
-          <div>
-            <label style="font-size:0.75em;color:var(--dim);display:block;margin-bottom:4px">Bot Token <span style="font-size:0.85em">(<a href="https://discord.com/developers/applications" target="_blank" style="color:var(--cyan)">Dev Portal</a>)</span></label>
-            <input id="sw-discord-token" type="password" placeholder="MTIz..." style="width:100%;padding:8px 12px;background:var(--bg3);border:1px solid var(--border);border-radius:7px;color:var(--text);font-size:0.85em">
-          </div>
-          <div>
-            <label style="font-size:0.75em;color:var(--dim);display:block;margin-bottom:4px">Admin User ID <span style="color:var(--dim)">(optional)</span></label>
-            <input id="sw-discord-admin" type="text" placeholder="123456789012345678" style="width:100%;padding:8px 12px;background:var(--bg3);border:1px solid var(--border);border-radius:7px;color:var(--text);font-size:0.85em">
-          </div>
-        </div>
-        <div style="margin-top:8px">
-          <label style="font-size:0.75em;color:var(--dim);display:block;margin-bottom:4px">Allowed Channel IDs <span style="color:var(--dim)">(comma-separated, blank = all)</span></label>
-          <input id="sw-discord-channels" type="text" placeholder="1234567890123456789, 9876543210987654321" style="width:100%;padding:8px 12px;background:var(--bg3);border:1px solid var(--border);border-radius:7px;color:var(--text);font-size:0.85em">
-        </div>
-      </div>
-
-      <!-- WhatsApp -->
-      <div style="padding:14px;background:rgba(37,211,102,0.04);border:1px solid rgba(37,211,102,0.2);border-radius:10px;margin-bottom:12px">
-        <div style="font-size:0.72em;letter-spacing:2px;color:#25d366;margin-bottom:10px">💬 WHATSAPP CLOUD API</div>
-        <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px">
-          <div>
-            <label style="font-size:0.75em;color:var(--dim);display:block;margin-bottom:4px">Phone Number ID <span style="font-size:0.85em">(<a href="https://developers.facebook.com" target="_blank" style="color:var(--cyan)">Meta Business</a>)</span></label>
-            <input id="sw-wa-phone" type="text" placeholder="1234567890" style="width:100%;padding:8px 12px;background:var(--bg3);border:1px solid var(--border);border-radius:7px;color:var(--text);font-size:0.85em">
-          </div>
-          <div>
-            <label style="font-size:0.75em;color:var(--dim);display:block;margin-bottom:4px">Access Token</label>
-            <input id="sw-wa-token" type="password" placeholder="EAAx..." style="width:100%;padding:8px 12px;background:var(--bg3);border:1px solid var(--border);border-radius:7px;color:var(--text);font-size:0.85em">
-          </div>
-          <div>
-            <label style="font-size:0.75em;color:var(--dim);display:block;margin-bottom:4px">Verify Token <span style="color:var(--dim)">(any random string)</span></label>
-            <input id="sw-wa-verify" type="text" placeholder="my-verify-token" style="width:100%;padding:8px 12px;background:var(--bg3);border:1px solid var(--border);border-radius:7px;color:var(--text);font-size:0.85em">
-          </div>
-          <div>
-            <label style="font-size:0.75em;color:var(--dim);display:block;margin-bottom:4px">Webhook Secret <span style="color:var(--dim)">(optional)</span></label>
-            <input id="sw-wa-secret" type="password" placeholder="app secret" style="width:100%;padding:8px 12px;background:var(--bg3);border:1px solid var(--border);border-radius:7px;color:var(--text);font-size:0.85em">
-          </div>
-        </div>
-      </div>
-
-      <!-- Gmail -->
-      <div style="padding:14px;background:rgba(234,67,53,0.05);border:1px solid rgba(234,67,53,0.2);border-radius:10px;margin-bottom:12px">
-        <div style="font-size:0.72em;letter-spacing:2px;color:#ea4335;margin-bottom:10px">📧 GMAIL</div>
-        <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px">
-          <div>
-            <label style="font-size:0.75em;color:var(--dim);display:block;margin-bottom:4px">Gmail Address</label>
-            <input id="sw-gmail-email" type="email" placeholder="you@gmail.com" style="width:100%;padding:8px 12px;background:var(--bg3);border:1px solid var(--border);border-radius:7px;color:var(--text);font-size:0.85em">
-          </div>
-          <div>
-            <label style="font-size:0.75em;color:var(--dim);display:block;margin-bottom:4px">App Password <span style="font-size:0.85em">(<a href="https://myaccount.google.com/apppasswords" target="_blank" style="color:var(--cyan)">generate</a>)</span></label>
-            <input id="sw-gmail-pw" type="password" placeholder="xxxx xxxx xxxx xxxx" style="width:100%;padding:8px 12px;background:var(--bg3);border:1px solid var(--border);border-radius:7px;color:var(--text);font-size:0.85em">
-          </div>
-        </div>
-        <div style="margin-top:6px;font-size:0.72em;color:var(--dim)">Enable 2FA on your Google account first, then create an App Password. Not your regular password.</div>
-      </div>
-
-      <div style="display:flex;gap:10px;margin-top:18px">
+      <div style="display:flex;gap:10px;margin-top:22px">
         <button onclick="swNextStep(3,2)" style="flex:0.4;padding:11px;background:var(--bg3);border:1px solid var(--border);border-radius:10px;color:var(--text);cursor:pointer;font-size:0.9em">← Back</button>
         <button onclick="swNextStep(3,4)" style="flex:1;padding:11px;background:linear-gradient(135deg,var(--cyan),var(--pink));border:none;border-radius:10px;color:#000;font-weight:700;cursor:pointer;font-size:0.95em">Next →</button>
       </div>
@@ -687,9 +570,6 @@ body::after{content:"";position:fixed;inset:0;background:linear-gradient(rgba(18
         <div>TTS: <span id="sw-review-tts" style="color:var(--dim)">—</span></div>
         <div>Web password: <span id="sw-review-pw" style="color:var(--green)">—</span></div>
         <div>Telegram: <span id="sw-review-tg" style="color:var(--dim)">—</span></div>
-        <div>Discord: <span id="sw-review-discord" style="color:var(--dim)">—</span></div>
-        <div>WhatsApp: <span id="sw-review-wa" style="color:var(--dim)">—</span></div>
-        <div>Gmail: <span id="sw-review-gmail" style="color:var(--dim)">—</span></div>
         <div>Personality: <span id="sw-review-persona" style="color:var(--cyan)">—</span></div>
       </div>
       <div style="display:flex;gap:10px">
@@ -706,7 +586,7 @@ body::after{content:"";position:fixed;inset:0;background:linear-gradient(rgba(18
 <!-- TOP BAR -->
 <div id="topbar">
   <div class="logo">⬡ GALACTIC AI</div>
-  <div id="version-badge" style="font-size:0.65em;color:var(--dim);letter-spacing:1px;padding:2px 7px;border:1px solid var(--border);border-radius:10px;cursor:default" title="Galactic AI version">v0.9.0</div>
+  <div id="version-badge" style="font-size:0.65em;color:var(--dim);letter-spacing:1px;padding:2px 7px;border:1px solid var(--border);border-radius:10px;cursor:default" title="Galactic AI version">v0.7.1</div>
   <div id='ollama-pill' onclick='switchTab("models")'>
     <div class="status-dot" id="ollama-dot"></div>
     <span id="ollama-label">Ollama</span>
@@ -1151,18 +1031,6 @@ async function swSave() {
     // Telegram
     telegram_token: gv('sw-tg-token'),
     telegram_chat_id: gv('sw-tg-chat'),
-    // Discord
-    discord_token: gv('sw-discord-token'),
-    discord_channels: gv('sw-discord-channels'),
-    discord_admin: gv('sw-discord-admin'),
-    // WhatsApp
-    whatsapp_phone: gv('sw-wa-phone'),
-    whatsapp_token: gv('sw-wa-token'),
-    whatsapp_verify: gv('sw-wa-verify'),
-    whatsapp_secret: gv('sw-wa-secret'),
-    // Gmail
-    gmail_email: gv('sw-gmail-email'),
-    gmail_password: gv('sw-gmail-pw'),
     // ElevenLabs TTS
     elevenlabs_key: gv('sw-elevenlabs-key'),
     elevenlabs_voice: gv('sw-elevenlabs-voice') || 'Guy',
@@ -1261,12 +1129,6 @@ function swFillReview() {
   document.getElementById('sw-review-tts').textContent = (elevenlabsKey && !freeVoices.includes(voice)) ? 'ElevenLabs (' + voice + ')' : 'Free voice: ' + voice;
   document.getElementById('sw-review-pw').textContent = pw ? '✓ Set' : 'None (open access)';
   document.getElementById('sw-review-tg').textContent = tgToken ? '✓ Configured' : 'Not configured';
-  const discordToken = (document.getElementById('sw-discord-token') || {value:''}).value.trim();
-  document.getElementById('sw-review-discord').textContent = discordToken ? '✓ Configured' : 'Not configured';
-  const waPhone = (document.getElementById('sw-wa-phone') || {value:''}).value.trim();
-  document.getElementById('sw-review-wa').textContent = waPhone ? '✓ Configured' : 'Not configured';
-  const gmailEmail = (document.getElementById('sw-gmail-email') || {value:''}).value.trim();
-  document.getElementById('sw-review-gmail').textContent = gmailEmail ? '✓ ' + gmailEmail : 'Not configured';
   const personaMode = document.getElementById('sw-persona-custom').checked ? 'Custom' : document.getElementById('sw-persona-generic').checked ? 'Generic' : 'Byte';
   document.getElementById('sw-review-persona').textContent = personaMode;
 }
@@ -1344,6 +1206,14 @@ async function swMigrateOpenClaw() {
 document.getElementById('pw-input').addEventListener('keydown', e => { if (e.key === 'Enter') doLogin(); });
 
 // Init
+async function loadTraceHistory() {
+  try {
+    const r = await fetch('/api/traces');
+    const d = await r.json();
+    (d.traces || []).forEach(t => handleAgentTrace(t));
+  } catch(e) { console.error('loadTraceHistory:', e); }
+}
+
 async function init() {
   await loadChatHistory();
   await loadLogHistory();
@@ -1355,19 +1225,9 @@ async function init() {
   renderModelGrid();
   refreshStatus();
   loadFileList();
-  // Restore last active tab from localStorage
-  try {
-    const savedTab = localStorage.getItem('gal_activeTab');
-    if (savedTab) switchTab(savedTab);
-  } catch(e) {}
-}
-
-async function loadTraceHistory() {
-  try {
-    const r = await fetch('/api/traces');
-    const d = await r.json();
-    (d.traces || []).forEach(t => handleAgentTrace(t));
-  } catch(e) { console.error('loadTraceHistory:', e); }
+  // Restore the last active tab (defaults to 'chat' if none saved)
+  const savedTab = localStorage.getItem('gal_activeTab') || 'chat';
+  switchTab(savedTab);
 }
 
 
@@ -1408,11 +1268,6 @@ function connectWS() {
       const tg = p.data || {};
       if (tg.data) appendUserMsg('[Telegram] ' + tg.data);
       if (tg.response) appendBotMsg(tg.response);
-    } else if (p.type === 'chat_from_discord') {
-      // Discord messages relayed to web UI
-      const dc = p.data || {};
-      if (dc.data) appendUserMsg('[Discord] ' + dc.data);
-      if (dc.response) appendBotMsg(dc.response);
     } else if (p.type === 'alert') {
       // optional alert sound
     } else if (p.type === 'agent_trace') {
@@ -1441,12 +1296,12 @@ function appendBotMsg(text, ts) {
   const log = document.getElementById('chat-log');
   const div = document.createElement('div');
   div.className = 'msg bot';
-  div.innerHTML = `<div class="bubble">${formatMsg(text)}</div><div class="meta">Byte • ${fmtTime(ts)}</div>`;
+  div.innerHTML = `<div class="bubble">${formatMsg(text)}</div><div class="meta">Byte \u2022 ${fmtTime(ts)}</div>`;
   log.appendChild(div);
   if (autoScroll) log.scrollTop = 99999;
 }
 
-function appendBotImage(url, ts) {
+function appendBotImage(url) {
   const log = document.getElementById('chat-log');
   const div = document.createElement('div');
   div.className = 'msg bot';
@@ -1454,7 +1309,7 @@ function appendBotImage(url, ts) {
     <img src="${url}" style="max-width:100%;max-height:512px;border-radius:8px;display:block;cursor:pointer"
          onclick="window.open('${url}','_blank')" title="Click to open full size" />
     <div style="font-size:0.75em;color:var(--dim);margin-top:4px">🎨 Click image to open full size</div>
-  </div><div class="meta">Byte • ${fmtTime(ts)}</div>`;
+  </div><div class="meta">Byte \u2022 ${fmtTime()}</div>`;
   log.appendChild(div);
   if (autoScroll) log.scrollTop = 99999;
 }
@@ -1477,7 +1332,7 @@ async function loadChatHistory() {
 
 async function loadLogHistory() {
   try {
-    const r = await fetch('/api/logs?limit=500');
+    const r = await fetch('/api/logs?limit=200');
     const d = await r.json();
     (d.logs || []).forEach(l => addLog(l));
   } catch(e) { console.error('loadLogHistory:', e); }
@@ -1487,7 +1342,7 @@ function appendUserMsg(text, ts) {
   const log = document.getElementById('chat-log');
   const div = document.createElement('div');
   div.className = 'msg user';
-  div.innerHTML = `<div class="bubble">${escHtml(text)}</div><div class="meta">You • ${fmtTime(ts)}</div>`;
+  div.innerHTML = `<div class="bubble">${escHtml(text)}</div><div class="meta">You \u2022 ${fmtTime(ts)}</div>`;
   log.appendChild(div);
   if (autoScroll) log.scrollTop = 99999;
 }
@@ -1739,102 +1594,93 @@ async function togglePlugin(name, enabled) {
 // Models
 const ALL_MODELS = {
   'Google': [
-    {name:'👑 Gemini 3.1 Pro', id:'gemini-3.1-pro-preview', provider:'google'},
-    {name:'🧠 Gemini 3 Pro', id:'gemini-3-pro-preview', provider:'google'},
-    {name:'⚡ Gemini 3 Flash', id:'gemini-3-flash-preview', provider:'google'},
-    {name:'🟢 Gemini 2.5 Pro', id:'gemini-2.5-pro', provider:'google'},
-    {name:'💨 Gemini 2.5 Flash', id:'gemini-2.5-flash', provider:'google'},
-    {name:'📦 Gemini 2.0 Flash', id:'gemini-2.0-flash', provider:'google'},
+    {name:'Gemini 3.1 Pro 🧠 [LATEST]', id:'gemini-3.1-pro-preview', provider:'google'},
+    {name:'Gemini 3 Flash ⚡', id:'gemini-3-flash-preview', provider:'google'},
+    {name:'Gemini 3 Pro', id:'gemini-3-pro-preview', provider:'google'},
+    {name:'Gemini 2.5 Flash', id:'gemini-2.5-flash', provider:'google'},
+    {name:'Gemini 2.5 Pro', id:'gemini-2.5-pro', provider:'google'},
+    {name:'Gemini 2.0 Flash', id:'gemini-2.0-flash', provider:'google'},
   ],
   'Anthropic': [
-    {name:'👑 Claude Opus 4.6', id:'claude-opus-4-6', provider:'anthropic'},
-    {name:'🧠 Claude Sonnet 4.6', id:'claude-sonnet-4-6', provider:'anthropic'},
-    {name:'📦 Claude Opus 4.5', id:'claude-opus-4-5', provider:'anthropic'},
-    {name:'📦 Claude Sonnet 4.5', id:'claude-sonnet-4-5', provider:'anthropic'},
-    {name:'⚡ Claude Haiku 4.5', id:'claude-haiku-4-5', provider:'anthropic'},
+    {name:'Claude Opus 4.6 [LATEST]', id:'claude-opus-4-6', provider:'anthropic'},
+    {name:'Claude Sonnet 4.6', id:'claude-sonnet-4-6', provider:'anthropic'},
+    {name:'Claude Haiku 4.5 (fast)', id:'claude-haiku-4-5', provider:'anthropic'},
+    {name:'Claude Sonnet 4.5 (legacy)', id:'claude-sonnet-4-5', provider:'anthropic'},
+    {name:'Claude Opus 4.5 (legacy)', id:'claude-opus-4-5', provider:'anthropic'},
   ],
   'OpenAI': [
-    {name:'👑 GPT-5.2', id:'gpt-5.2', provider:'openai'},
-    {name:'🧠 o1', id:'o1', provider:'openai'},
-    {name:'💡 o3 Mini', id:'o3-mini', provider:'openai'},
-    {name:'💡 o4-mini', id:'o4-mini', provider:'openai'},
-    {name:'🟢 GPT-4.1', id:'gpt-4.1', provider:'openai'},
-    {name:'🟢 GPT-4o', id:'gpt-4o', provider:'openai'},
-    {name:'⚡ GPT-4o Mini', id:'gpt-4o-mini', provider:'openai'},
+    {name:'GPT-4o [LATEST]', id:'gpt-4o', provider:'openai'},
+    {name:'GPT-4.1', id:'gpt-4.1', provider:'openai'},
+    {name:'GPT-4o Mini', id:'gpt-4o-mini', provider:'openai'},
+    {name:'o3 Mini', id:'o3-mini', provider:'openai'},
+    {name:'o1', id:'o1', provider:'openai'},
   ],
   'xAI': [
-    {name:'👑 Grok 4', id:'grok-4', provider:'xai'},
-    {name:'⚡ Grok 4 Fast', id:'grok-4-fast', provider:'xai'},
-    {name:'🟢 Grok 3', id:'grok-3', provider:'xai'},
-    {name:'💨 Grok 3 Mini', id:'grok-3-mini', provider:'xai'},
+    {name:'Grok 4 [LATEST]', id:'grok-4', provider:'xai'},
+    {name:'Grok 4 Fast', id:'grok-4-fast', provider:'xai'},
+    {name:'Grok 3', id:'grok-3', provider:'xai'},
+    {name:'Grok 3 Mini', id:'grok-3-mini', provider:'xai'},
   ],
   'Groq (Fast)': [
-    {name:'👑 Llama 4 Maverick 17B', id:'llama-4-maverick-17b-128e-instruct', provider:'groq'},
-    {name:'🧠 DeepSeek R1 70B', id:'deepseek-r1-distill-llama-70b', provider:'groq'},
-    {name:'🟢 Llama 3.3 70B', id:'llama-3.3-70b-versatile', provider:'groq'},
-    {name:'💡 Qwen 3 32B', id:'qwen-3-32b', provider:'groq'},
-    {name:'⚡ Llama 4 Scout 17B', id:'llama-4-scout-17b-16e-instruct', provider:'groq'},
-    {name:'💨 Gemma 9B', id:'gemma2-9b-it', provider:'groq'},
+    {name:'Llama 4 Scout 17B [FAST]', id:'llama-4-scout-17b-16e-instruct', provider:'groq'},
+    {name:'Llama 4 Maverick 17B', id:'llama-4-maverick-17b-128e-instruct', provider:'groq'},
+    {name:'Llama 3.3 70B', id:'llama-3.3-70b-versatile', provider:'groq'},
+    {name:'DeepSeek R1 70B', id:'deepseek-r1-distill-llama-70b', provider:'groq'},
+    {name:'Qwen 3 32B', id:'qwen-3-32b', provider:'groq'},
+    {name:'Gemma 3 27B', id:'gemma2-9b-it', provider:'groq'},
   ],
   'Mistral': [
-    {name:'👑 Mistral Large 3 675B', id:'mistral-large-3-675b-instruct-2512', provider:'mistral'},
-    {name:'🧠 Magistral Medium', id:'magistral-medium-latest', provider:'mistral'},
-    {name:'🟢 Mistral Large 2', id:'mistral-large-latest', provider:'mistral'},
-    {name:'🤖 Devstral (Agents)', id:'devstral-small-latest', provider:'mistral'},
-    {name:'💻 Codestral (Code)', id:'codestral-latest', provider:'mistral'},
-    {name:'⚡ Mistral Small 3.1', id:'mistral-small-latest', provider:'mistral'},
+    {name:'Mistral Small 3.1', id:'mistral-small-latest', provider:'mistral'},
+    {name:'Codestral (Code)', id:'codestral-latest', provider:'mistral'},
+    {name:'Devstral (Agents)', id:'devstral-small-latest', provider:'mistral'},
+    {name:'Mistral Large 2', id:'mistral-large-latest', provider:'mistral'},
+    {name:'Magistral Medium', id:'magistral-medium-latest', provider:'mistral'},
   ],
   'Cerebras': [
-    {name:'👑 Llama 4 Maverick', id:'llama-4-maverick-17b-128e-instruct', provider:'cerebras'},
-    {name:'🟢 Llama 4 Scout', id:'llama-4-scout-17b-16e-instruct', provider:'cerebras'},
-    {name:'💡 Qwen 3 32B', id:'qwen-3-32b', provider:'cerebras'},
-    {name:'⚡ Llama 3.3 70B', id:'llama3.3-70b', provider:'cerebras'},
-    {name:'💨 Llama 3.1 8B', id:'llama3.1-8b', provider:'cerebras'},
+    {name:'Llama 3.3 70B [FAST]', id:'llama3.3-70b', provider:'cerebras'},
+    {name:'Llama 3.1 8B', id:'llama3.1-8b', provider:'cerebras'},
+    {name:'Qwen 3 32B', id:'qwen-3-32b', provider:'cerebras'},
   ],
   'OpenRouter': [
-    {name:'👑 GPT-5.2', id:'openai/gpt-5.2', provider:'openrouter'},
-    {name:'🧠 Claude Opus 4.6', id:'anthropic/claude-opus-4-6', provider:'openrouter'},
-    {name:'💡 o4-mini', id:'openai/o4-mini', provider:'openrouter'},
-    {name:'🚀 DeepSeek V3.2', id:'deepseek/deepseek-v3.2', provider:'openrouter'},
-    {name:'🟢 Gemini 2.5 Pro', id:'google/gemini-2.5-pro', provider:'openrouter'},
-    {name:'🟢 Claude Sonnet 4.6', id:'anthropic/claude-sonnet-4-6', provider:'openrouter'},
-    {name:'🌊 Mistral Large 3 675B', id:'mistralai/mistral-large-3-675b-instruct-2512', provider:'openrouter'},
-    {name:'💡 DeepSeek V3', id:'deepseek/deepseek-chat', provider:'openrouter'},
-    {name:'⚡ GPT-4o', id:'openai/gpt-4o', provider:'openrouter'},
-    {name:'💨 Llama 4 Scout', id:'meta-llama/llama-4-scout', provider:'openrouter'},
+    {name:'Claude Opus 4.6 (via OR)', id:'anthropic/claude-opus-4-6', provider:'openrouter'},
+    {name:'Claude Sonnet 4.6 (via OR)', id:'anthropic/claude-sonnet-4-6', provider:'openrouter'},
+    {name:'GPT-4o (via OR)', id:'openai/gpt-4o', provider:'openrouter'},
+    {name:'Gemini 2.5 Pro (via OR)', id:'google/gemini-2.5-pro', provider:'openrouter'},
+    {name:'Llama 4 Scout (via OR)', id:'meta-llama/llama-4-scout', provider:'openrouter'},
+    {name:'DeepSeek V3 (via OR)', id:'deepseek/deepseek-chat', provider:'openrouter'},
   ],
   'HuggingFace': [
-    {name:'👑 Qwen3 Coder 480B', id:'Qwen/Qwen3-Coder-480B-A35B-Instruct', provider:'huggingface'},
-    {name:'🧠 Qwen3 235B', id:'Qwen/Qwen3-235B-A22B', provider:'huggingface'},
-    {name:'🟢 Llama 4 Maverick 17B', id:'meta-llama/Llama-4-Maverick-17B-128E-Instruct', provider:'huggingface'},
-    {name:'💡 DeepSeek V3', id:'deepseek-ai/DeepSeek-V3-0324', provider:'huggingface'},
-    {name:'⚡ Llama 4 Scout', id:'meta-llama/Llama-4-Scout-17B-16E-Instruct', provider:'huggingface'},
+    {name:'Qwen3 235B', id:'Qwen/Qwen3-235B-A22B', provider:'huggingface'},
+    {name:'Llama 4 Scout', id:'meta-llama/Llama-4-Scout-17B-16E-Instruct', provider:'huggingface'},
+    {name:'DeepSeek V3', id:'deepseek-ai/DeepSeek-V3-0324', provider:'huggingface'},
   ],
-  'DeepSeek': [
-    {name:'👑 DeepSeek V3.2', id:'deepseek-chat', provider:'deepseek'},
-    {name:'🧠 DeepSeek R1', id:'deepseek-reasoner', provider:'deepseek'},
+  'Kimi / Moonshot': [
+    {name:'Kimi K2.5 (Thinking) 🌙 [via NVIDIA]', id:'moonshotai/kimi-k2.5', provider:'nvidia'},
+  ],
+  'ZAI / GLM': [
+    {name:'GLM-5 (Thinking) 🧠 [via NVIDIA]', id:'z-ai/glm5', provider:'nvidia'},
+  ],
+  'MiniMax': [
+    {name:'MiniMax M2.1 🎯 [via NVIDIA]', id:'minimaxai/minimax-m2.1', provider:'nvidia'},
+  ],
+  'FLUX (Image Gen)': [
+    {name:'FLUX.1 Schnell ⚡️ (fast)', id:'black-forest-labs/flux.1-schnell', provider:'nvidia'},
+    {name:'FLUX.1 Dev 🎨 (quality)', id:'black-forest-labs/flux.1-dev', provider:'nvidia'},
   ],
   'NVIDIA': [
-    {name:'👑 Qwen 480B Coder', id:'qwen/qwen3-coder-480b-a35b-instruct', provider:'nvidia'},
-    {name:'🌊 Mistral Large 3 675B', id:'mistralai/mistral-large-3-675b-instruct-2512', provider:'nvidia'},
-    {name:'🧠 Qwen 3.5 397B', id:'qwen/qwen3.5-397b-a17b', provider:'nvidia'},
-    {name:'🏛️ Llama 405B', id:'meta/llama-3.1-405b-instruct', provider:'nvidia'},
-    {name:'🚀 DeepSeek V3.2', id:'deepseek-ai/deepseek-v3.2', provider:'nvidia'},
-    {name:'🌙 Kimi K2.5', id:'moonshotai/kimi-k2.5', provider:'nvidia'},
-    {name:'🎯 MiniMax M2.1', id:'minimaxai/minimax-m2.1', provider:'nvidia'},
-    {name:'🧠 GLM-5', id:'z-ai/glm5', provider:'nvidia'},
-    {name:'🌌 Gemma 3 27B', id:'google/gemma-3-27b-it', provider:'nvidia'},
-    {name:'⚡ StepFun 3.5 Flash', id:'stepfun-ai/step-3.5-flash', provider:'nvidia'},
-    {name:'⚛️ Nemotron 30B', id:'nvidia/nemotron-3-nano-30b-a3b', provider:'nvidia'},
-    {name:'👁️ Phi-3.5 Vision', id:'microsoft/phi-3.5-vision-instruct', provider:'nvidia'},
-    {name:'👁️ Nemotron Nano VL', id:'nvidia/nemotron-nano-12b-v2-vl', provider:'nvidia'},
-  ],
-  'Image Generation': [
-    {name:'👑 Imagen 4 Ultra', id:'imagen-4.0-ultra-generate-001', provider:'google'},
-    {name:'🎨 Imagen 4', id:'imagen-4.0-generate-001', provider:'google'},
-    {name:'🎨 FLUX.1 Dev', id:'black-forest-labs/flux.1-dev', provider:'nvidia'},
-    {name:'⚡ Imagen 4 Fast', id:'imagen-4.0-fast-generate-001', provider:'google'},
-    {name:'⚡ FLUX.1 Schnell', id:'black-forest-labs/flux.1-schnell', provider:'nvidia'},
+    {name:'GLM-5 (Thinking) 🧠', id:'z-ai/glm5', provider:'nvidia'},
+    {name:'Kimi K2.5 (Thinking) 🌙', id:'moonshotai/kimi-k2.5', provider:'nvidia'},
+    {name:'Qwen 3.5 397B (Thinking) 🦾', id:'qwen/qwen3.5-397b-a17b', provider:'nvidia'},
+    {name:'Nemotron 30B (Reasoning) ⚛️', id:'nvidia/nemotron-3-nano-30b-a3b', provider:'nvidia'},
+    {name:'Nemotron Nano VL 👁️', id:'nvidia/nemotron-nano-12b-v2-vl', provider:'nvidia'},
+    {name:'StepFun 3.5 Flash ⚡️', id:'stepfun-ai/step-3.5-flash', provider:'nvidia'},
+    {name:'MiniMax M2.1 🎯', id:'minimaxai/minimax-m2.1', provider:'nvidia'},
+    {name:'DeepSeek V3.2 (Math) 🚀', id:'deepseek-ai/deepseek-v3.2', provider:'nvidia'},
+    {name:'Llama 405B (Reasoning) 🏛️', id:'meta/llama-3.1-405b-instruct', provider:'nvidia'},
+    {name:'Phi-3.5 Vision (OCR) 👁️', id:'microsoft/phi-3.5-vision-instruct', provider:'nvidia'},
+    {name:'Gemma 3 27B (Chat) 🌌', id:'google/gemma-3-27b-it', provider:'nvidia'},
+    {name:'Mistral Large 3 (General) 🌊', id:'mistralai/mistral-large-3-675b-instruct-2512', provider:'nvidia'},
+    {name:'Qwen 480B Coder 🦾', id:'qwen/qwen3-coder-480b-a35b-instruct', provider:'nvidia'}
   ],
   'Ollama (Local)': []
 };
@@ -1934,7 +1780,6 @@ function updateModelList() {
     mistral: 'mistral-small-latest', cerebras: 'llama3.3-70b',
     openrouter: 'anthropic/claude-opus-4-6', huggingface: 'Qwen/Qwen3-235B-A22B',
     kimi: 'kimi-k2.5', zai: 'glm-4-plus', minimax: 'MiniMax-Text-01',
-    deepseek: 'deepseek-chat',
     nvidia: 'deepseek-ai/deepseek-v3.2', ollama: 'qwen3:8b'
   };
   document.getElementById('cfg-model').value = presets[p] || '';
@@ -2126,13 +1971,7 @@ function addLog(msg) {
   if (!filterVal || msg.toLowerCase().includes(filterVal.toLowerCase())) {
     const el = document.getElementById('logs-scroll');
     const div = document.createElement('div');
-    const cls = msg.includes('ERROR')||msg.includes('Error') ? ' err'
-      : msg.includes('✅')||msg.includes('ONLINE') ? ' ok'
-      : msg.includes('⚠️')||msg.includes('WARN') ? ' warn'
-      : msg.includes('Executing:')||msg.includes('🛠️') ? ' tool'
-      : msg.startsWith('   →') ? ' tool-result'
-      : '';
-    div.className = 'log-line' + cls;
+    div.className = 'log-line' + (msg.includes('ERROR')||msg.includes('Error') ? ' err' : msg.includes('✅')||msg.includes('ONLINE') ? ' ok' : msg.includes('⚠️')||msg.includes('WARN') ? ' warn' : '');
     div.textContent = msg;
     el.appendChild(div);
     if (autoScroll) el.scrollTop = 99999;
@@ -2381,6 +2220,28 @@ function toggleThinkingAutoScroll() {
   traceAutoScroll = !traceAutoScroll;
   document.getElementById('thinking-auto-scroll-btn').textContent = 'Auto-scroll: ' + (traceAutoScroll ? 'ON' : 'OFF');
 }
+
+// Real-time data: refresh current tab's data when window regains focus
+function refreshCurrentTab() {
+  const active = document.querySelector('.tab-pane.active');
+  if (!active) return;
+  const id = active.id;
+  if (id === 'tab-status') refreshStatus();
+  else if (id === 'tab-models') { loadOllamaStatus(); pmoLoad(); }
+  else if (id === 'tab-plugins') loadPlugins();
+  else if (id === 'tab-ollama') loadOllamaStatus();
+  else if (id === 'tab-logs') loadLogHistory();
+  else if (id === 'tab-memory') loadFileList();
+}
+
+document.addEventListener('visibilitychange', () => {
+  if (!document.hidden) refreshCurrentTab();
+});
+
+// Periodic refresh: keep Status and token counter current every 15s
+setInterval(() => {
+  if (!document.hidden) refreshCurrentTab();
+}, 15000);
 </script>
 </body>
 </html>"""
@@ -2503,7 +2364,7 @@ function toggleThinkingAutoScroll() {
             'model': model_status,
             'tokens_in': self.core.gateway.total_tokens_in,
             'tokens_out': self.core.gateway.total_tokens_out,
-            'version': self.core.config.get('system', {}).get('version', '0.9.0'),
+            'version': self.core.config.get('system', {}).get('version', '0.7.1'),
         })
 
     async def handle_plugin_toggle(self, request):
@@ -2719,48 +2580,6 @@ function toggleThinkingAutoScroll() {
             if tg_chat:
                 cfg['telegram']['admin_chat_id'] = tg_chat
 
-        # Discord
-        dc_token = data.get('discord_token', '')
-        dc_channels = data.get('discord_channels', '')
-        dc_admin = data.get('discord_admin', '')
-        if dc_token or dc_channels or dc_admin:
-            if 'discord' not in cfg:
-                cfg['discord'] = {}
-            if dc_token:
-                cfg['discord']['bot_token'] = dc_token
-            if dc_channels:
-                cfg['discord']['allowed_channels'] = [ch.strip() for ch in dc_channels.split(',') if ch.strip()]
-            if dc_admin:
-                cfg['discord']['admin_user_id'] = dc_admin
-
-        # WhatsApp
-        wa_phone = data.get('whatsapp_phone', '')
-        wa_token = data.get('whatsapp_token', '')
-        wa_verify = data.get('whatsapp_verify', '')
-        wa_secret = data.get('whatsapp_secret', '')
-        if wa_phone or wa_token:
-            if 'whatsapp' not in cfg:
-                cfg['whatsapp'] = {}
-            if wa_phone:
-                cfg['whatsapp']['phone_number_id'] = wa_phone
-            if wa_token:
-                cfg['whatsapp']['access_token'] = wa_token
-            if wa_verify:
-                cfg['whatsapp']['verify_token'] = wa_verify
-            if wa_secret:
-                cfg['whatsapp']['webhook_secret'] = wa_secret
-
-        # Gmail
-        gmail_email = data.get('gmail_email', '')
-        gmail_pw = data.get('gmail_password', '')
-        if gmail_email or gmail_pw:
-            if 'gmail' not in cfg:
-                cfg['gmail'] = {}
-            if gmail_email:
-                cfg['gmail']['email'] = gmail_email
-            if gmail_pw:
-                cfg['gmail']['app_password'] = gmail_pw
-
         # System name
         name = data.get('system_name', '')
         if name:
@@ -2969,15 +2788,13 @@ function toggleThinkingAutoScroll() {
             await ws.close(code=4001)
             return ws
 
-        web_deck = self  # capture reference for trace buffering
-
+        web_deck = self
         class WebAdapter:
             def __init__(self, ws):
                 self.ws = ws
             def write(self, data):
                 decoded = data.decode()
                 asyncio.create_task(self.ws.send_str(decoded))
-                # Buffer agent_trace events for Thinking tab persistence
                 try:
                     msg = json.loads(decoded.strip())
                     if msg.get('type') == 'agent_trace' and msg.get('data'):
@@ -3097,7 +2914,7 @@ function toggleThinkingAutoScroll() {
             return web.json_response({'logs': [], 'error': str(e)})
 
     async def handle_traces(self, request):
-        """GET /api/traces — return buffered agent traces for Thinking tab restore on page refresh."""
+        """GET /api/traces — return buffered agent trace entries for Thinking tab restore."""
         return web.json_response({'traces': self.trace_buffer[-500:]})
 
     async def handle_list_files(self, request):
