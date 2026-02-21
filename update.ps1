@@ -83,7 +83,7 @@ if (($latestVersion -eq $currentVersion) -and (-not $Force)) {
     exit 0
 }
 if ($Force -and ($latestVersion -eq $currentVersion)) {
-    Write-Host "  Force mode — re-downloading v$latestVersion..." -ForegroundColor Yellow
+    Write-Host "  Force mode - re-downloading v$latestVersion..." -ForegroundColor Yellow
 }
 
 Write-Host "  Update available  : v$currentVersion -> v$latestVersion" -ForegroundColor Cyan

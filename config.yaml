@@ -110,7 +110,7 @@ system:
   heartbeat_interval: 5
   name: Galactic AI
   port: 9999
-  version: 1.0.1
+  version: 1.0.2
   update_check_interval: 21600
 gmail:
   email: ""

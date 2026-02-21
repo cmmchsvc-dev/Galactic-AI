@@ -245,9 +245,16 @@ EXEMPT_ROUTES = {
     ('POST', '/api/setup'),
 }
 
+# Local IPs that bypass auth (the PC itself should never be locked out)
+LOCAL_IPS = {'127.0.0.1', '::1', 'localhost'}
+
 
 def create_auth_middleware(password_hash: str, jwt_secret: str, rate_limiter: RateLimiter):
-    """Create aiohttp middleware that enforces JWT auth and rate limiting on all /api/* routes."""
+    """Create aiohttp middleware that enforces JWT auth and rate limiting on all /api/* routes.
+
+    Local connections (127.0.0.1, ::1) bypass auth entirely so the PC user
+    is never locked out of their own Control Deck when remote_access is on.
+    """
 
     @web.middleware
     async def auth_middleware(request, handler):
@@ -260,10 +267,15 @@ def create_auth_middleware(password_hash: str, jwt_secret: str, rate_limiter: Ra
         if peername:
             ip = peername[0]
 
-        # Exempt routes skip auth (but still rate-limited)
+        # ── Local connections bypass ALL auth ────────────────────────────
+        # The PC user should never be locked out of their own Control Deck
+        if ip in LOCAL_IPS:
+            return await handler(request)
+
+        # Exempt routes skip auth (but still rate-limited for remote clients)
         is_exempt = (method, path) in EXEMPT_ROUTES
 
-        # Rate limiting
+        # Rate limiting (remote clients only)
         if path == '/login' and method == 'POST':
             if not rate_limiter.check_login(ip):
                 retry = rate_limiter.retry_after(ip, is_login=True)
@@ -285,7 +297,7 @@ def create_auth_middleware(password_hash: str, jwt_secret: str, rate_limiter: Ra
         if is_exempt or path == '/stream':
             return await handler(request)
 
-        # Require auth for all /api/* routes
+        # Require auth for all /api/* routes (remote clients)
         if path.startswith('/api/'):
             auth_header = request.headers.get('Authorization', '')
             token = None
@@ -301,7 +313,7 @@ def create_auth_middleware(password_hash: str, jwt_secret: str, rate_limiter: Ra
 
             # Accept either JWT or legacy password hash
             if token == password_hash:
-                pass  # Legacy token — valid
+                pass  # Legacy token - valid
             elif not verify_jwt(token, jwt_secret):
                 return web.json_response({'error': 'Unauthorized'}, status=401)
 
@@ -359,10 +371,12 @@ def generate_pairing_qr(host: str, port: int, cert_fingerprint: str = '') -> byt
             "app": "galactic-ai"
         }, separators=(',', ':'))
 
-        qr = qrcode.QRCode(version=None, error_correction=qrcode.constants.ERROR_CORRECT_M, box_size=8, border=2)
+        qr = qrcode.QRCode(version=None, error_correction=qrcode.constants.ERROR_CORRECT_H, box_size=10, border=4)
         qr.add_data(pairing_data)
         qr.make(fit=True)
-        img = qr.make_image(fill_color="#00f3ff", back_color="#04050d")
+        # Use standard black-on-white for maximum scanner compatibility
+        # (colored QR codes often fail on phone cameras)
+        img = qr.make_image(fill_color="black", back_color="white")
 
         buf = BytesIO()
         img.save(buf, format='PNG')

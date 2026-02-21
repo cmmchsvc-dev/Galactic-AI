@@ -703,6 +703,7 @@ body.glow-max .status-dot{box-shadow:0 0 14px var(--green),0 0 28px rgba(0,255,1
 <!-- TOP BAR -->
 <div id="topbar">
   <div class="logo">⬡ GALACTIC AI</div>
+  <div style="font-size:0.7em;color:var(--cyan);letter-spacing:2px;opacity:0.7;font-weight:600">CONTROL DECK</div>
   <div id="version-badge" style="font-size:0.65em;color:var(--dim);letter-spacing:1px;padding:2px 7px;border:1px solid var(--border);border-radius:10px;cursor:default" title="Galactic AI version">v0.9.1</div>
   <div id='ollama-pill' onclick='switchTab("models")'>
     <div class="status-dot" id="ollama-dot"></div>
@@ -2721,14 +2722,21 @@ async function saveQuickVoice(voice) {
 
 function testVoice() {
   const voice = document.getElementById('set-voice').value;
-  const msg = `Hello! I am ${voice}, your AI assistant's voice.`;
-  // Send as a chat command to trigger TTS
-  authFetch('/api/tool_invoke', {
+  const msg = 'Hello! I am ' + voice + ', your AI assistant voice.';
+  showToast('Generating voice preview...', 'info', 3000);
+  authFetch('/api/tts', {
     method: 'POST', headers: {'Content-Type':'application/json'},
-    body: JSON.stringify({tool: 'text_to_speech', args: {text: msg, voice: voice}})
-  }).then(r => r.json()).then(d => {
-    if (d.result && d.result.includes('[VOICE]')) showToast('Voice preview playing', 'success', 3000);
-    else showToast('Voice test: ' + (d.result || 'no output'), 'info', 4000);
+    body: JSON.stringify({text: msg, voice: voice})
+  }).then(r => {
+    if (!r.ok) return r.json().then(d => { throw new Error(d.error || 'TTS failed'); });
+    return r.blob();
+  }).then(blob => {
+    const url = URL.createObjectURL(blob);
+    const audio = new Audio(url);
+    audio.onended = () => URL.revokeObjectURL(url);
+    audio.play().then(() => {
+      showToast('Playing voice preview', 'success', 3000);
+    }).catch(e => showToast('Browser blocked audio playback. Click anywhere first.', 'error', 4000));
   }).catch(e => showToast('Error: ' + e.message, 'error', 4000));
 }
 
