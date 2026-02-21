@@ -26,6 +26,11 @@ class WhatsAppBridge:
         self._processing = set()  # (phone, text) pairs currently in-flight — prevents duplicate sends
         self._seen_message_ids = set()  # WhatsApp message wamids already handled
         self._seen_max = 5000  # Trim threshold for _seen_message_ids
+        self._component = "WhatsApp"
+
+    async def _log(self, message, priority=3):
+        """Route logs to the WhatsApp component log file."""
+        await self.core.log(message, priority=priority, component=self._component)
 
     # ──────────────────────────────────────────────
     #  Webhook verification (GET) & incoming (POST)
@@ -38,10 +43,10 @@ class WhatsAppBridge:
         challenge = request.query.get('hub.challenge', '')
 
         if mode == 'subscribe' and token == self.verify_token:
-            await self.core.log("[WhatsApp] Webhook verified successfully.", priority=1)
+            await self._log("[WhatsApp] Webhook verified successfully.", priority=1)
             from aiohttp import web
             return web.Response(text=challenge, content_type='text/plain')
-        await self.core.log("[WhatsApp] Webhook verification failed — token mismatch.", priority=1)
+        await self._log("[WhatsApp] Webhook verification failed — token mismatch.", priority=1)
         from aiohttp import web
         return web.Response(status=403, text='Forbidden')
 
@@ -54,7 +59,7 @@ class WhatsAppBridge:
         if self.webhook_secret:
             sig_header = request.headers.get('X-Hub-Signature-256', '')
             if not self._verify_signature(body_bytes, sig_header):
-                await self.core.log("[WhatsApp] Invalid webhook signature — dropping payload.", priority=1)
+                await self._log("[WhatsApp] Invalid webhook signature — dropping payload.", priority=1)
                 return web.Response(status=403, text='Invalid signature')
 
         # Always respond 200 quickly so Meta doesn't retry
@@ -101,7 +106,7 @@ class WhatsAppBridge:
                     for msg in messages:
                         await self._route_message(msg, value)
         except Exception as e:
-            await self.core.log(f"[WhatsApp] Webhook processing error: {e}", priority=1)
+            await self._log(f"[WhatsApp] Webhook processing error: {e}", priority=1)
 
     async def _route_message(self, msg, value):
         """Route an individual incoming WhatsApp message by type."""
@@ -162,7 +167,7 @@ class WhatsAppBridge:
             await self._handle_text(sender, text, sender_name)
 
         else:
-            await self.core.log(f"[WhatsApp] Unsupported message type '{msg_type}' from {sender}", priority=3)
+            await self._log(f"[WhatsApp] Unsupported message type '{msg_type}' from {sender}", priority=3)
 
     # ──────────────────────────────────────────────
     #  Message handlers (text, image, audio, doc)
@@ -194,7 +199,7 @@ class WhatsAppBridge:
                 await self.send_message(sender, "Could not download that image. Please try again.")
                 return
 
-            await self.core.log(f"[WhatsApp] Image received from {sender} ({len(raw)} bytes)", priority=2)
+            await self._log(f"[WhatsApp] Image received from {sender} ({len(raw)} bytes)", priority=2)
 
             # Vision analysis
             import base64
@@ -214,7 +219,7 @@ class WhatsAppBridge:
         except asyncio.TimeoutError:
             response = "Took too long analyzing that image. Please try again."
         except Exception as e:
-            await self.core.log(f"[WhatsApp] Image error: {e}", priority=1)
+            await self._log(f"[WhatsApp] Image error: {e}", priority=1)
             response = f"Error processing image: {str(e)}"
         finally:
             if typing_task and not typing_task.done():
@@ -260,7 +265,7 @@ class WhatsAppBridge:
                 tmp.write(raw)
                 temp_file_path = tmp.name
 
-            await self.core.log(f"[WhatsApp] Audio received from {sender} ({len(raw)} bytes, {mime_type})", priority=2)
+            await self._log(f"[WhatsApp] Audio received from {sender} ({len(raw)} bytes, {mime_type})", priority=2)
 
             # Transcribe using the same pipeline as Telegram
             transcription = await self._transcribe_audio(temp_file_path)
@@ -302,12 +307,12 @@ class WhatsAppBridge:
                                 await self.send_audio(sender, voice_path)
                                 voice_reply_sent = True
                 except Exception as e:
-                    await self.core.log(f"[WhatsApp] Auto-TTS error: {e}", priority=2)
+                    await self._log(f"[WhatsApp] Auto-TTS error: {e}", priority=2)
 
         except asyncio.TimeoutError:
             response = "Took too long processing that voice message. Please try again."
         except Exception as e:
-            await self.core.log(f"[WhatsApp] Audio error: {e}", priority=1)
+            await self._log(f"[WhatsApp] Audio error: {e}", priority=1)
             response = f"Error processing voice message: {str(e)}"
         finally:
             if typing_task and not typing_task.done():
@@ -363,7 +368,7 @@ class WhatsAppBridge:
             if caption:
                 full_msg += f"\n\n{caption}"
 
-            await self.core.log(f"[WhatsApp] Document received from {sender}: {filename} ({len(raw)} bytes)", priority=2)
+            await self._log(f"[WhatsApp] Document received from {sender}: {filename} ({len(raw)} bytes)", priority=2)
 
             response = await asyncio.wait_for(
                 self.core.gateway.speak(full_msg, chat_id=f"wa:{sender}"),
@@ -372,7 +377,7 @@ class WhatsAppBridge:
         except asyncio.TimeoutError:
             response = "Took too long processing that file. Please try again."
         except Exception as e:
-            await self.core.log(f"[WhatsApp] Document error: {e}", priority=1)
+            await self._log(f"[WhatsApp] Document error: {e}", priority=1)
             response = f"Error processing document: {str(e)}"
         finally:
             if typing_task and not typing_task.done():
@@ -421,7 +426,7 @@ class WhatsAppBridge:
             provider = getattr(self.core.gateway.llm, 'provider', 'unknown')
             model = getattr(self.core.gateway.llm, 'model', 'unknown')
             t = self._get_speak_timeout()
-            await self.core.log(
+            await self._log(
                 f"[WhatsApp] speak() timed out after {t:.0f}s for {sender} "
                 f"(provider={provider}, model={model})",
                 priority=1
@@ -431,7 +436,7 @@ class WhatsAppBridge:
                 f"The model is running slowly. Try a simpler question."
             )
         except Exception as e:
-            await self.core.log(f"[WhatsApp] Processing error: {e}", priority=1)
+            await self._log(f"[WhatsApp] Processing error: {e}", priority=1)
             response = f"Error: {str(e)}"
         finally:
             # Release dedup lock
@@ -461,7 +466,7 @@ class WhatsAppBridge:
                     await self.send_audio(sender, voice_file)
                     self.core.gateway.last_voice_file = None
                 except Exception as e:
-                    await self.core.log(f"[WhatsApp] TTS delivery error: {e}", priority=1)
+                    await self._log(f"[WhatsApp] TTS delivery error: {e}", priority=1)
             # Deliver generated image if present
             image_file = getattr(self.core.gateway, 'last_image_file', None)
             if image_file and os.path.exists(image_file):
@@ -469,13 +474,13 @@ class WhatsAppBridge:
                     await self.send_image(sender, image_file)
                     self.core.gateway.last_image_file = None
                 except Exception as e:
-                    await self.core.log(f"[WhatsApp] Image delivery error: {e}", priority=1)
+                    await self._log(f"[WhatsApp] Image delivery error: {e}", priority=1)
             # Send text response
             if response:
                 try:
                     await self.send_message(sender, response)
                 except Exception as e:
-                    await self.core.log(f"[WhatsApp] Send error: {e}", priority=1)
+                    await self._log(f"[WhatsApp] Send error: {e}", priority=1)
 
     # ──────────────────────────────────────────────
     #  Outbound API — send_message, send_image, send_audio, send_typing
@@ -500,9 +505,9 @@ class WhatsAppBridge:
                     headers=self._auth_headers()
                 )
                 if r.status_code != 200:
-                    await self.core.log(f"[WhatsApp] send_message failed ({r.status_code}): {r.text}", priority=1)
+                    await self._log(f"[WhatsApp] send_message failed ({r.status_code}): {r.text}", priority=1)
         except Exception as e:
-            await self.core.log(f"[WhatsApp] send_message error: {e}", priority=1)
+            await self._log(f"[WhatsApp] send_message error: {e}", priority=1)
 
     async def send_image(self, to, image_path, caption=None):
         """Upload and send an image via WhatsApp Cloud API."""
@@ -510,7 +515,7 @@ class WhatsAppBridge:
             # Step 1: Upload media
             media_id = await self._upload_media(image_path, 'image/png')
             if not media_id:
-                await self.core.log("[WhatsApp] Image upload failed — no media_id returned.", priority=1)
+                await self._log("[WhatsApp] Image upload failed — no media_id returned.", priority=1)
                 return
 
             # Step 2: Send image message
@@ -530,9 +535,9 @@ class WhatsAppBridge:
                 headers=self._auth_headers()
             )
             if r.status_code != 200:
-                await self.core.log(f"[WhatsApp] send_image failed ({r.status_code}): {r.text}", priority=1)
+                await self._log(f"[WhatsApp] send_image failed ({r.status_code}): {r.text}", priority=1)
         except Exception as e:
-            await self.core.log(f"[WhatsApp] send_image error: {e}", priority=1)
+            await self._log(f"[WhatsApp] send_image error: {e}", priority=1)
 
     async def send_audio(self, to, audio_path):
         """Upload and send an audio file via WhatsApp Cloud API."""
@@ -545,7 +550,7 @@ class WhatsAppBridge:
 
             media_id = await self._upload_media(audio_path, mime)
             if not media_id:
-                await self.core.log("[WhatsApp] Audio upload failed — no media_id returned.", priority=1)
+                await self._log("[WhatsApp] Audio upload failed — no media_id returned.", priority=1)
                 return
 
             payload = {
@@ -561,9 +566,9 @@ class WhatsAppBridge:
                 headers=self._auth_headers()
             )
             if r.status_code != 200:
-                await self.core.log(f"[WhatsApp] send_audio failed ({r.status_code}): {r.text}", priority=1)
+                await self._log(f"[WhatsApp] send_audio failed ({r.status_code}): {r.text}", priority=1)
         except Exception as e:
-            await self.core.log(f"[WhatsApp] send_audio error: {e}", priority=1)
+            await self._log(f"[WhatsApp] send_audio error: {e}", priority=1)
 
     async def send_typing(self, to):
         """Send typing indicator via WhatsApp Cloud API (composing status)."""
@@ -603,14 +608,14 @@ class WhatsAppBridge:
         try:
             while True:
                 if time.time() - start_time > max_duration:
-                    await self.core.log(f"[WhatsApp] Typing indicator timeout after {max_duration}s", priority=1)
+                    await self._log(f"[WhatsApp] Typing indicator timeout after {max_duration}s", priority=1)
                     break
                 await self.send_typing(to)
                 await asyncio.sleep(4)
         except asyncio.CancelledError:
             pass
         except Exception as e:
-            await self.core.log(f"[WhatsApp] Typing indicator error: {e}", priority=1)
+            await self._log(f"[WhatsApp] Typing indicator error: {e}", priority=1)
 
     # ──────────────────────────────────────────────
     #  Media helpers (download & upload)
@@ -625,7 +630,7 @@ class WhatsAppBridge:
                 headers=self._auth_headers()
             )
             if r.status_code != 200:
-                await self.core.log(f"[WhatsApp] Media metadata fetch failed: {r.text}", priority=1)
+                await self._log(f"[WhatsApp] Media metadata fetch failed: {r.text}", priority=1)
                 return None
             media_url = r.json().get('url', '')
             if not media_url:
@@ -635,10 +640,10 @@ class WhatsAppBridge:
             r = await self.client.get(media_url, headers=self._auth_headers())
             if r.status_code == 200:
                 return r.content
-            await self.core.log(f"[WhatsApp] Media download failed ({r.status_code})", priority=1)
+            await self._log(f"[WhatsApp] Media download failed ({r.status_code})", priority=1)
             return None
         except Exception as e:
-            await self.core.log(f"[WhatsApp] Media download error: {e}", priority=1)
+            await self._log(f"[WhatsApp] Media download error: {e}", priority=1)
             return None
 
     async def _upload_media(self, file_path, mime_type) -> str | None:
@@ -654,10 +659,10 @@ class WhatsAppBridge:
                 )
             if r.status_code == 200:
                 return r.json().get('id')
-            await self.core.log(f"[WhatsApp] Media upload failed ({r.status_code}): {r.text}", priority=1)
+            await self._log(f"[WhatsApp] Media upload failed ({r.status_code}): {r.text}", priority=1)
             return None
         except Exception as e:
-            await self.core.log(f"[WhatsApp] Media upload error: {e}", priority=1)
+            await self._log(f"[WhatsApp] Media upload error: {e}", priority=1)
             return None
 
     # ──────────────────────────────────────────────
@@ -681,10 +686,10 @@ class WhatsAppBridge:
                     if r.status_code == 200:
                         text = r.json().get('text', '').strip()
                         if text:
-                            await self.core.log(f"[WhatsApp STT] Whisper: {text[:80]}...", priority=2)
+                            await self._log(f"[WhatsApp STT] Whisper: {text[:80]}...", priority=2)
                             return text
             except Exception as e:
-                await self.core.log(f"[WhatsApp] Whisper STT error: {e}", priority=2)
+                await self._log(f"[WhatsApp] Whisper STT error: {e}", priority=2)
 
         # Try Groq Whisper
         groq_key = self.core.config.get('providers', {}).get('groq', {}).get('apiKey', '')
@@ -701,10 +706,10 @@ class WhatsAppBridge:
                     if r.status_code == 200:
                         text = r.json().get('text', '').strip()
                         if text:
-                            await self.core.log(f"[WhatsApp STT] Groq Whisper: {text[:80]}...", priority=2)
+                            await self._log(f"[WhatsApp STT] Groq Whisper: {text[:80]}...", priority=2)
                             return text
             except Exception as e:
-                await self.core.log(f"[WhatsApp] Groq STT error: {e}", priority=2)
+                await self._log(f"[WhatsApp] Groq STT error: {e}", priority=2)
 
         return None
 

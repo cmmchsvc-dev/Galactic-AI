@@ -1022,22 +1022,6 @@ class GalacticGateway:
                 "fn": self.tool_generate_image_sd35
             },
 
-            # ── Google Imagen 4 image generation ──────────────────────────────
-            "generate_image_gemini": {
-                "description": "Generate an image using Google Imagen 4 via the Gemini API. High quality, fast. Supports aspect ratios. Uses your Google API key — no extra setup needed.",
-                "parameters": {
-                    "type": "object",
-                    "properties": {
-                        "prompt":       {"type": "string",  "description": "Image description / prompt"},
-                        "aspect_ratio": {"type": "string",  "description": "Aspect ratio: 1:1 | 3:4 | 4:3 | 9:16 | 16:9 (default: 1:1)"},
-                        "count":        {"type": "integer", "description": "Number of images to generate, 1-4 (default: 1)"},
-                        "model":        {"type": "string",  "description": "Imagen model: imagen-4.0-generate-001 (default) | imagen-4.0-ultra-generate-001 | imagen-4.0-fast-generate-001"},
-                    },
-                    "required": ["prompt"]
-                },
-                "fn": self.tool_generate_image_gemini
-            },
-
             # ── File & system utilities ────────────────────────────────────────
             "list_dir": {
                 "description": "List files and directories at a path with sizes, dates, and types. Better than exec_shell for directory listings.",
@@ -2226,10 +2210,8 @@ class GalacticGateway:
             payload["mode"] = "base"
             payload["cfg_scale"] = 5  # dev default per NVIDIA docs (1-9 range)
 
-        # Dev model needs more time (50 steps vs 4 for schnell)
-        req_timeout = 300.0 if not is_schnell else 120.0
         try:
-            async with httpx.AsyncClient(timeout=req_timeout) as client:
+            async with httpx.AsyncClient(timeout=120.0) as client:
                 r = await client.post(url, headers=headers, json=payload)
                 if r.status_code == 401:
                     return f"[ERROR] NVIDIA GenAI 401 Unauthorized — key used: nvapi-...{nvidia_key[-8:]}. Check that your NVIDIA API key has access to the FLUX model at ai.api.nvidia.com."
@@ -2248,10 +2230,11 @@ class GalacticGateway:
                 return f"[ERROR] Image generation failed: {json.dumps(data)}"
 
             # API returns JPEG data
-            logs_dir = self.core.config.get('paths', {}).get('logs', './logs')
-            os.makedirs(logs_dir, exist_ok=True)
+            images_dir = self.core.config.get('paths', {}).get('images', './images')
+            img_subdir = os.path.join(images_dir, 'flux')
+            os.makedirs(img_subdir, exist_ok=True)
             fname = f"flux_{int(_time.time())}.jpg"
-            path = os.path.join(logs_dir, fname)
+            path = os.path.join(img_subdir, fname)
             with open(path, 'wb') as f:
                 f.write(_b64.b64decode(b64))
             # Signal Telegram bridge and web deck to deliver the image directly
@@ -3108,7 +3091,7 @@ class GalacticGateway:
         turn_count = 0
         last_tool_call = None  # Track last (tool_name, json_args_str) to prevent duplicate calls
         # Tools that are legitimately called repeatedly with same args (snapshots, reads, etc.)
-        _DUPLICATE_EXEMPT = {'browser_snapshot', 'web_search', 'read_file', 'memory_search', 'generate_image', 'generate_image_gemini', 'generate_image_sd35'}
+        _DUPLICATE_EXEMPT = {'browser_snapshot', 'web_search', 'read_file', 'memory_search', 'generate_image'}
 
         # Unique session ID for tracing this speak() invocation
         trace_sid = str(uuid.uuid4())[:8]
@@ -3180,17 +3163,10 @@ class GalacticGateway:
                                            tool=tool_name,
                                            args=tool_args if isinstance(tool_args, dict) else str(tool_args)[:1000])
                     try:
-                        result = await asyncio.wait_for(
-                            self.tools[tool_name]["fn"](tool_args),
-                            timeout=60.0
-                        )
+                        result = await self.tools[tool_name]["fn"](tool_args)
                         await self._send_telegram_typing_ping(chat_id)
                         await self._emit_trace("tool_result", turn_count, session_id=trace_sid,
                                                tool=tool_name, result=str(result)[:3000], success=True)
-                    except asyncio.TimeoutError:
-                        result = f"[Tool Timeout] {tool_name} did not complete within 60s. Try a different approach or simpler query."
-                        await self._emit_trace("tool_result", turn_count, session_id=trace_sid,
-                                               tool=tool_name, result=result, success=False)
                     except Exception as e:
                         result = f"[Tool Error] {tool_name} raised: {type(e).__name__}: {e}"
                         await self._emit_trace("tool_result", turn_count, session_id=trace_sid,
@@ -3201,10 +3177,6 @@ class GalacticGateway:
                         voice_match = re.search(r'Generated speech.*?:\s*(.+\.mp3)', str(result))
                         if voice_match:
                             self.last_voice_file = voice_match.group(1).strip()
-
-                    # Log tool result summary for debugging
-                    result_preview = str(result)[:200].replace('\n', ' ')
-                    await self.core.log(f"   → {tool_name}: {result_preview}", priority=3)
 
                     messages.append({"role": "assistant", "content": response_text})
                     messages.append({"role": "user", "content": f"Tool Output: {result}"})
@@ -3299,14 +3271,8 @@ class GalacticGateway:
 
         # ── Route to provider ─────────────────────────────────────────
         if self.llm.provider == "google":
-            prompt = messages[-1]['content']
-            # Imagen models can't do text chat — auto-generate image from the prompt
-            if "imagen" in self.llm.model.lower():
-                return await self.tool_generate_image_gemini({
-                    "prompt": prompt,
-                    "model": self.llm.model,
-                })
             # Gemini uses a single text blob (system context + user prompt)
+            prompt = messages[-1]['content']
             context_str = "\n".join(
                 [f"{m['role']}: {m['content']}" for m in messages[:-1]]
             )
@@ -3605,13 +3571,6 @@ class GalacticGateway:
                 "model": self.llm.model,
             })
 
-        # Imagen models (Google) are image-generation only — auto-invoke if selected.
-        if self.llm.provider == "google" and "imagen" in self.llm.model.lower():
-            return await self.tool_generate_image_gemini({
-                "prompt": prompt,
-                "model": self.llm.model,
-            })
-
         url = f"{self._get_provider_base_url(self.llm.provider)}/chat/completions"
 
         # Ollama doesn't need auth header
@@ -3856,88 +3815,17 @@ class GalacticGateway:
             if not b64:
                 return f"[ERROR] SD3.5 generation failed: {json.dumps(data)}"
 
-            logs_dir = self.core.config.get('paths', {}).get('logs', './logs')
-            os.makedirs(logs_dir, exist_ok=True)
+            images_dir = self.core.config.get('paths', {}).get('images', './images')
+            img_subdir = os.path.join(images_dir, 'sd35')
+            os.makedirs(img_subdir, exist_ok=True)
             fname = f"sd35_{int(_time.time())}.jpg"
-            path = os.path.join(logs_dir, fname)
+            path = os.path.join(img_subdir, fname)
             with open(path, 'wb') as f:
                 f.write(_b64.b64decode(b64))
             self.last_image_file = path
             return f"✅ SD3.5 image generated: {path}\nModel: stable-diffusion-3.5-large\nPrompt: {prompt}"
         except Exception as e:
             return f"[ERROR] generate_image_sd35: {e}"
-
-    async def tool_generate_image_gemini(self, args):
-        """Generate an image using Google Imagen 4 via the Gemini API."""
-        import base64 as _b64, time as _time
-        prompt = args.get('prompt', '')
-        if not prompt:
-            return "[ERROR] generate_image_gemini requires a 'prompt' argument."
-
-        model        = args.get('model', 'imagen-4.0-generate-001')
-        aspect_ratio = args.get('aspect_ratio', '1:1')
-        count        = max(1, min(4, int(args.get('count', 1))))
-
-        valid_ratios = {'1:1', '3:4', '4:3', '9:16', '16:9'}
-        if aspect_ratio not in valid_ratios:
-            aspect_ratio = '1:1'
-
-        google_cfg = self.core.config.get('providers', {}).get('google', {})
-        api_key = google_cfg.get('apiKey', '') or self.core.config.get('gateway', {}).get('api_key', '')
-        if not api_key:
-            return "[ERROR] Google API key not configured. Set providers.google.apiKey in config.yaml"
-
-        url = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:predict"
-        headers = {
-            "x-goog-api-key": api_key,
-            "Content-Type": "application/json",
-        }
-        payload = {
-            "instances": [{"prompt": prompt}],
-            "parameters": {
-                "sampleCount": count,
-                "aspectRatio": aspect_ratio,
-            }
-        }
-
-        try:
-            async with httpx.AsyncClient(timeout=180.0) as client:
-                r = await client.post(url, headers=headers, json=payload)
-                if r.status_code == 401:
-                    return f"[ERROR] Google Imagen 401 Unauthorized — check providers.google.apiKey in config.yaml"
-                if r.status_code == 403:
-                    return f"[ERROR] Google Imagen 403 Forbidden — your API key may not have Imagen access. Visit https://aistudio.google.com to enable it."
-                if r.status_code != 200:
-                    return f"[ERROR] Google Imagen HTTP {r.status_code}: {r.text[:500]}"
-                data = r.json()
-
-            predictions = data.get('predictions', [])
-            if not predictions:
-                return f"[ERROR] Imagen returned no predictions: {json.dumps(data)[:300]}"
-
-            logs_dir = self.core.config.get('paths', {}).get('logs', './logs')
-            os.makedirs(logs_dir, exist_ok=True)
-            saved_paths = []
-            for i, pred in enumerate(predictions):
-                b64 = pred.get('bytesBase64Encoded', '')
-                if not b64:
-                    continue
-                fname = f"imagen_{int(_time.time())}_{i}.jpg"
-                path = os.path.join(logs_dir, fname)
-                with open(path, 'wb') as f:
-                    f.write(_b64.b64decode(b64))
-                saved_paths.append(path)
-
-            if not saved_paths:
-                return f"[ERROR] Imagen returned data but no image bytes: {json.dumps(data)[:300]}"
-
-            # Signal Telegram bridge and web deck to deliver the last image
-            self.last_image_file = saved_paths[-1]
-            paths_str = ", ".join(saved_paths)
-            return f"✅ Imagen 4 generated {len(saved_paths)} image(s): {paths_str}\nModel: {model}\nPrompt: {prompt}"
-
-        except Exception as e:
-            return f"[ERROR] generate_image_gemini: {str(e)}"
 
     async def tool_list_dir(self, args):
         """List directory contents with sizes and dates."""
@@ -4434,10 +4322,11 @@ $notify.Dispose()
             qr.add_data(text)
             qr.make(fit=True)
             img = qr.make_image(fill_color='black', back_color='white')
-            logs_dir = self.core.config.get('paths', {}).get('logs', './logs')
-            os.makedirs(logs_dir, exist_ok=True)
+            images_dir = self.core.config.get('paths', {}).get('images', './images')
+            img_subdir = os.path.join(images_dir, 'qr')
+            os.makedirs(img_subdir, exist_ok=True)
             fname = f"qr_{int(_time.time())}.png"
-            path  = os.path.join(logs_dir, fname)
+            path  = os.path.join(img_subdir, fname)
             img.save(path)
             self.last_image_file = path
             return f"✅ QR code saved to: {path}\nContent: {text[:80]}"

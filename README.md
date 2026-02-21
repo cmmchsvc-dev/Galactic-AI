@@ -2,7 +2,7 @@
 
 **Sovereign. Universal. Fast.**
 
-A powerful, local-first AI automation platform with 92+ built-in tools, true persistent memory, voice I/O, browser automation, 14 AI providers, multi-platform messaging bridges, and a real-time web Control Deck.
+A powerful, local-first AI automation platform with 92+ built-in tools, true persistent memory, voice I/O, browser automation, 14 AI providers, multi-platform messaging bridges, and a real-time web Control Deck. **v0.9.1**
 
 Run fully local with Ollama (no API keys, no cloud, no tracking), or connect to any of 14 cloud providers. Your data stays yours.
 

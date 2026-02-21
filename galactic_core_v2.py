@@ -23,13 +23,8 @@ class GalacticRelay:
         await self.queue.put((priority, time.time(), json.dumps({"type": msg_type, "data": data})))
 
     async def route_loop(self):
-        while self.core.running:
-            try:
-                priority, ts, raw_payload = await asyncio.wait_for(
-                    self.queue.get(), timeout=2.0
-                )
-            except asyncio.TimeoutError:
-                continue  # Re-check self.core.running
+        while True:
+            priority, ts, raw_payload = await self.queue.get()
             payload = json.loads(raw_payload)
             payload["ts"] = ts
             encoded = (json.dumps(payload) + "\n").encode()
@@ -67,7 +62,7 @@ class GalacticCore:
         if not os.path.exists(config_full_path):
             default_config = {
                 'system': {'name': 'Galactic Core', 'port': 9999},
-                'paths': {'logs': './logs', 'plugins': './plugins'},
+                'paths': {'logs': './logs', 'images': './images', 'plugins': './plugins'},
                 'gateway': {'provider': 'placeholder', 'model': 'placeholder'}
             }
             return default_config
@@ -79,12 +74,9 @@ class GalacticCore:
         from gateway_v2 import GalacticGateway
         from memory_module_v2 import GalacticMemory
         from telegram_bridge import TelegramBridge
-        from whatsapp_bridge import WhatsAppBridge
-        from discord_bridge import DiscordBridge
         from web_deck import GalacticWebDeck
         from scheduler import GalacticScheduler
         from model_manager import ModelManager
-        from gmail_bridge import GmailBridge
         
         self.memory = GalacticMemory(self)
         self.gateway = GalacticGateway(self)
@@ -100,44 +92,12 @@ class GalacticCore:
         self.web = GalacticWebDeck(self)
         self.scheduler = GalacticScheduler(self)
 
-        # Gmail Bridge — conditional on config having email + app_password
-        gmail_cfg = self.config.get('gmail', {})
-        if gmail_cfg.get('email') and gmail_cfg.get('app_password'):
-            self.gmail = GmailBridge(self)
-            await self.log("[Gmail] Bridge configured -- will start polling.", priority=2)
-        else:
-            self.gmail = None
-            await self.log("[Gmail] Not configured -- skipping (set gmail.email and gmail.app_password in config.yaml).", priority=3)
-
-        # WhatsApp Bridge — conditional on config having phone_number_id + access_token
-        self.whatsapp = WhatsAppBridge(self)
-        if self.whatsapp.is_configured():
-            await self.log("[WhatsApp] Bridge configured — webhook routes will be registered with web deck.", priority=1)
-        else:
-            await self.log("[WhatsApp] Not configured -- skipping (set whatsapp.phone_number_id and whatsapp.access_token in config.yaml).", priority=3)
-
-        # Discord Bridge — conditional on config having bot_token
-        self.discord_bridge = DiscordBridge(self)
-        if self.discord_bridge.is_configured():
-            await self.log("[Discord] Bridge configured -- bot will start in main loop.", priority=1)
-        else:
-            await self.log("[Discord] Not configured -- skipping (set discord.bot_token in config.yaml).", priority=3)
-
         # Set initial model from ModelManager
         initial_model = self.model_manager.get_current_model()
         self.gateway.llm.provider = initial_model['provider']
         self.gateway.llm.model = initial_model['model']
         self.model_manager._set_api_key(initial_model['provider'])
-
-        # Register Gmail tools with the gateway (if configured)
-        if self.gmail:
-            self.gateway.tools.update(self.gmail.get_tool_definitions())
-            await self.log(f"[Gmail] Registered {len(self.gmail.get_tool_definitions())} tools with gateway.", priority=2)
-
-        # Register Scheduler tools with the gateway
-        self.gateway.tools.update(self.scheduler.get_tool_definitions())
-        await self.log(f"[Scheduler] Registered {len(self.scheduler.get_tool_definitions())} tools.", priority=2)
-
+        
         # Initialize Plugins — all optional, missing files are skipped gracefully
         _BUILTIN_PLUGINS = [
             ('plugins.shell_executor',      'ShellPlugin'),
@@ -175,25 +135,59 @@ class GalacticCore:
                 await self.memory.imprint_file(file_path)
         await self.log("Workspace Imprint Complete.", priority=2)
 
-    async def log(self, message, priority=3):
-        timestamp = datetime.now().strftime("%H:%M:%S")
-        log_entry = f"[{timestamp}] [Core] {message}"
-        print(log_entry)
-        # Persist log to file so UI can restore on refresh
+    def _rotate_if_needed(self, path, max_bytes=2_000_000, max_lines=5000):
+        """Trim a log file if it exceeds max_bytes. Keeps the last max_lines lines."""
         try:
-            logs_dir = self.config.get('paths', {}).get('logs', './logs')
-            os.makedirs(logs_dir, exist_ok=True)
+            if os.path.getsize(path) > max_bytes:
+                with open(path, 'r', encoding='utf-8') as f:
+                    lines = f.readlines()
+                with open(path, 'w', encoding='utf-8') as f:
+                    f.writelines(lines[-max_lines:])
+        except Exception:
+            pass
+
+    async def log(self, message, priority=3, component=None):
+        """Write a log entry to system_log.txt (plain text, UI-compatible) and,
+        if component= is given, also to a daily-rotated structured JSON component log.
+
+        Backwards compatible: all existing callers with no component= kwarg continue
+        to work identically. component= is used by bridges and subsystems to route
+        their logs to dedicated files (e.g. logs/telegram_2026-02-21.log).
+        """
+        comp_label = component or "Core"
+        timestamp = datetime.now().strftime("%H:%M:%S")
+        log_entry = f"[{timestamp}] [{comp_label}] {message}"
+        print(log_entry)
+
+        logs_dir = self.config.get('paths', {}).get('logs', './logs')
+        os.makedirs(logs_dir, exist_ok=True)
+
+        # 1. Always write plain-text entry to system_log.txt (UI backwards compat)
+        try:
             log_file = os.path.join(logs_dir, 'system_log.txt')
             with open(log_file, 'a', encoding='utf-8') as f:
                 f.write(log_entry + '\n')
-            # Keep file from growing unbounded — trim to last 500 lines
-            if os.path.getsize(log_file) > 200_000:
-                with open(log_file, 'r', encoding='utf-8') as f:
-                    lines = f.readlines()
-                with open(log_file, 'w', encoding='utf-8') as f:
-                    f.writelines(lines[-500:])
+            self._rotate_if_needed(log_file)
         except Exception:
             pass
+
+        # 2. Write structured JSON entry to daily component log
+        try:
+            date_str = datetime.now().strftime("%Y-%m-%d")
+            comp_slug = comp_label.lower().replace(' ', '_')
+            comp_file = os.path.join(logs_dir, f"{comp_slug}_{date_str}.log")
+            json_entry = json.dumps({
+                "ts": datetime.now().isoformat(timespec='seconds'),
+                "level": "INFO",
+                "component": comp_label,
+                "msg": message,
+            })
+            with open(comp_file, 'a', encoding='utf-8') as f:
+                f.write(json_entry + '\n')
+            self._rotate_if_needed(comp_file)
+        except Exception:
+            pass
+
         await self.relay.emit(priority, "log", log_entry)
 
     async def handle_client(self, reader, writer):
@@ -219,47 +213,24 @@ class GalacticCore:
         timestamp = datetime.now().strftime("%H:%M:%S")
         print(f"\n[{timestamp}] [Core] Shutting down Galactic AI...")
 
-        # Close HTTP clients first so pending requests abort immediately
-        for attr in ('telegram', 'whatsapp'):
-            try:
-                bridge = getattr(self, attr, None)
-                if bridge and hasattr(bridge, 'client'):
-                    await bridge.client.aclose()
-            except Exception:
-                pass
-
-        # Close Discord bot connection
-        try:
-            if hasattr(self, 'discord_bridge') and self.discord_bridge:
-                await self.discord_bridge.stop_bot()
-        except Exception:
-            pass
-
-        # Close Gmail IMAP connection
-        try:
-            if hasattr(self, 'gmail') and self.gmail and hasattr(self.gmail, '_imap_disconnect'):
-                self.gmail._imap_disconnect()
-        except Exception:
-            pass
-
-        # Cancel all background tasks with a 5-second grace period
+        # Cancel all background tasks
         tasks = [t for t in asyncio.all_tasks() if t is not asyncio.current_task()]
         for task in tasks:
             task.cancel()
-        try:
-            await asyncio.wait_for(
-                asyncio.gather(*tasks, return_exceptions=True),
-                timeout=5.0
-            )
-        except asyncio.TimeoutError:
-            timestamp = datetime.now().strftime("%H:%M:%S")
-            print(f"[{timestamp}] [Core] Force-killed {len(tasks)} lingering tasks.")
+        await asyncio.gather(*tasks, return_exceptions=True)
 
-        # Close browser if open (with its own timeout to prevent hanging)
+        # Close Telegram client
+        try:
+            if hasattr(self, 'telegram') and hasattr(self.telegram, 'client'):
+                await self.telegram.client.aclose()
+        except Exception:
+            pass
+
+        # Close browser if open
         try:
             if hasattr(self, 'browser') and hasattr(self.browser, 'close'):
-                await asyncio.wait_for(self.browser.close(), timeout=3.0)
-        except (asyncio.TimeoutError, Exception):
+                await self.browser.close()
+        except Exception:
             pass
 
         timestamp = datetime.now().strftime("%H:%M:%S")
@@ -323,10 +294,6 @@ class GalacticCore:
         asyncio.create_task(self.web.run())
         asyncio.create_task(self.scheduler.run())
         asyncio.create_task(self.ollama_manager.auto_discover_loop())
-        if self.gmail:
-            asyncio.create_task(self.gmail.poll_loop())
-        if self.discord_bridge.is_configured():
-            asyncio.create_task(self.discord_bridge.run_bot())
 
         # Start Plugins
         for plugin in self.plugins:
@@ -341,9 +308,6 @@ class GalacticCore:
             server.close()
             await server.wait_closed()
             await self.shutdown()
-
-        # Force-exit fallback — if anything is still alive after shutdown, kill the process
-        os._exit(0)
 
 if __name__ == "__main__":
     core = GalacticCore()
