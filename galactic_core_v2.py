@@ -128,7 +128,7 @@ class GalacticCore:
     async def imprint_workspace(self):
         """Initial memory imprint of key personality files."""
         await self.log("Starting Workspace Memory Imprint...", priority=2)
-        workspace_files = ['USER.md', 'IDENTITY.md', 'SOUL.md', 'MEMORY.md', 'TOOLS.md']
+        workspace_files = ['USER.md', 'IDENTITY.md', 'SOUL.md', 'MEMORY.md', 'TOOLS.md', 'VAULT.md']
         for file in workspace_files:
             file_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', file)
             if os.path.exists(file_path):
@@ -214,6 +214,55 @@ class GalacticCore:
                     await self.model_manager.check_recovery()
             except Exception:
                 pass
+
+    async def _update_check_loop(self):
+        """Check GitHub for new Galactic AI releases and notify user."""
+        import httpx
+        repo = "cmmchsvc-dev/Galactic-AI"
+        api_url = f"https://api.github.com/repos/{repo}/releases/latest"
+
+        # Initial delay — let the system finish booting before first check
+        await asyncio.sleep(15)
+
+        while self.running:
+            try:
+                interval = self.config.get('system', {}).get('update_check_interval', 21600)
+                if interval <= 0:
+                    await asyncio.sleep(3600)  # Re-check config in 1h
+                    continue
+
+                current_version = self.config.get('system', {}).get('version', '0.0.0')
+                async with httpx.AsyncClient(timeout=15) as client:
+                    r = await client.get(api_url, headers={"Accept": "application/vnd.github.v3+json"})
+                    if r.status_code == 200:
+                        data = r.json()
+                        latest_tag = data.get('tag_name', '').lstrip('v')
+                        if latest_tag and self._version_newer(latest_tag, current_version):
+                            await self.relay.emit(2, "update_available", {
+                                "current": current_version,
+                                "latest": latest_tag,
+                                "url": data.get('html_url', ''),
+                                "name": data.get('name', ''),
+                            })
+                            await self.log(
+                                f"🆕 Update available: v{latest_tag} (current: v{current_version}). "
+                                f"Run ./update.ps1 or ./update.sh to update.",
+                                priority=2
+                            )
+            except Exception:
+                pass  # Network issues shouldn't interrupt normal operation
+
+            await asyncio.sleep(max(interval, 3600))
+
+    @staticmethod
+    def _version_newer(latest, current):
+        """Compare semver strings. Returns True if latest > current."""
+        try:
+            l = [int(x) for x in latest.split('.')]
+            c = [int(x) for x in current.split('.')]
+            return l > c
+        except (ValueError, AttributeError):
+            return False
 
     async def shutdown(self):
         """Graceful shutdown — close all subsystems cleanly."""
@@ -305,6 +354,7 @@ class GalacticCore:
         asyncio.create_task(self.scheduler.run())
         asyncio.create_task(self.ollama_manager.auto_discover_loop())
         asyncio.create_task(self._recovery_check_loop())
+        asyncio.create_task(self._update_check_loop())
 
         # Start Plugins
         for plugin in self.plugins:

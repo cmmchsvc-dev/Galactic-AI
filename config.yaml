@@ -65,7 +65,7 @@ paths:
   images: ./images
   plugins: ./plugins
   watch: ./watch
-  workspace: C:\Users\Chesley\.openclaw\workspace
+  workspace: ./workspace
 personality:
   mode: byte
   name: Byte
@@ -110,7 +110,8 @@ system:
   heartbeat_interval: 5
   name: Galactic AI
   port: 9999
-  version: 0.9.2
+  version: 0.9.3
+  update_check_interval: 21600
 gmail:
   email: ""
   app_password: ""

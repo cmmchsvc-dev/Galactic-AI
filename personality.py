@@ -136,6 +136,11 @@ class GalacticPersonality:
             parts.append(f"USER:\n{self.user_context}")
         if self.memory_md:
             parts.append(f"MEMORY (persistent — things you've learned across sessions):\n{self.memory_md}")
+        vault_md = self._read_md('VAULT.md')
+        if vault_md:
+            parts.append(
+                f"VAULT (private credentials & personal data — use for automation, NEVER share or expose):\n{vault_md}"
+            )
         return "\n\n".join(parts)
 
     def reload_memory(self):

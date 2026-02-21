@@ -1,6 +1,6 @@
 # Galactic AI — Feature Reference
 
-Complete feature reference for Galactic AI Automation Suite **v0.9.1**.
+Complete feature reference for Galactic AI Automation Suite **v0.9.3**.
 
 ---
 
@@ -10,10 +10,10 @@ Complete feature reference for Galactic AI Automation Suite **v0.9.1**.
 The entire system runs on Python's `asyncio` event loop. Every subsystem — LLM gateway, web server, Telegram bridge, Discord bridge, WhatsApp bridge, Gmail bridge, plugin engine, Ollama manager, task scheduler — is fully non-blocking. Nothing stalls the core.
 
 ### ReAct Agentic Loop
-The AI operates in a **Think → Act → Observe → Answer** loop. It chains multiple tool calls in sequence, observes results, reasons about what to do next, and keeps going until the task is complete. Each tool call has a 60-second timeout — no single operation can block the loop indefinitely.
+The AI operates in a **Think → Act → Observe → Answer** loop. It chains multiple tool calls in sequence, observes results, reasons about what to do next, and keeps going until the task is complete. Each tool call has a configurable timeout (default 60 seconds) — no single operation can block the loop indefinitely. The entire ReAct loop is capped by a speak() wall-clock timeout (default 600 seconds).
 
 ### Per-Tool Timeout
-Every tool execution is wrapped in a 60-second `asyncio.wait_for` timeout. If a tool hangs (e.g. a browser operation on a slow page), it is cancelled with a descriptive error message and the AI continues to the next step. This prevents the 330-second "typing forever" issue seen when browser tools stalled.
+Every tool execution is wrapped in a configurable `asyncio.wait_for` timeout (defaults: shell 120s, Python 60s, image generation 180s). If a tool hangs (e.g. a browser operation on a slow page), it is cancelled with a descriptive error message and the AI continues to the next step. Configure per-tool timeouts in `config.yaml` under `tool_timeouts`.
 
 ### Graceful Lifecycle Management
 - Single **Ctrl+C** triggers a clean shutdown of all subsystems
@@ -35,8 +35,9 @@ Galactic AI uses a three-layer memory architecture:
 - `SOUL.md` — core values and personality style
 - `USER.md` — information about the user
 - `MEMORY.md` — things the AI has learned across sessions
+- `VAULT.md` — private credentials and personal data for automation tasks
 
-All four are read from disk on startup and included in every system prompt. Zero extra API calls. Cost is proportional only to the size of the files.
+All five are read from disk on startup and included in every system prompt. Zero extra API calls. Cost is proportional only to the size of the files.
 
 **Layer 2: MEMORY.md Auto-Writing (grows over time)**
 When the AI calls `memory_imprint`, it:
@@ -81,8 +82,8 @@ NVIDIA hosts models from many vendors. Galactic AI routes to the correct API key
 ### Smart Model Routing
 Enable `smart_routing: true` in config to auto-select the best model for each task type (coding, reasoning, creative, vision, quick queries).
 
-### Auto-Fallback
-If the primary provider fails, the system falls back to a secondary provider automatically. Recovery is automatic after a configurable cooldown period.
+### Auto-Fallback & Resilient Fallback Chain
+If the primary provider fails, the system falls back to a secondary provider automatically with error-type-specific cooldowns (rate limit: 60s, server error: 30s, timeout: 10s, auth error: 24h, quota exhausted: 1h). Recovery is automatic — the system periodically retests failed providers and restores them when healthy. Toggle auto-fallback on/off from the Settings tab in the Control Deck.
 
 ### Streaming Responses
 Token-by-token streaming from all providers, broadcast to the web UI via WebSocket in real-time.
@@ -101,11 +102,48 @@ Background health checks track when Ollama goes online or offline. The web UI sh
 The actual context window size is queried from Ollama for every model. Conversation history is trimmed accordingly.
 
 ### Tool Calling for Local Models
-Ollama models get enhanced system prompts with full parameter schemas for all 92+ tools, plus few-shot examples for reliable JSON tool call generation. Temperature tuned to 0.3 for consistent structured output.
+Ollama models get enhanced system prompts with full parameter schemas for all 100+ tools, plus few-shot examples for reliable JSON tool call generation. Temperature tuned to 0.3 for consistent structured output.
 
 ---
 
-## 92+ Built-In Tools
+## VAULT — Personal Data for Automation
+
+`VAULT.md` is a private credentials file loaded into every system prompt. It enables the AI to log into services, fill forms, and automate tasks using your personal information.
+
+### How It Works
+1. Copy `VAULT-example.md` to `VAULT.md`
+2. Add your credentials (email, API tokens, personal info, payment details)
+3. The `personality.py` loader reads VAULT.md and injects it with instructions to never share or expose the contents
+4. The AI can reference these values when performing automation tasks
+
+### Security
+- Gitignored — never committed to the repository
+- Protected by the auto-updater — `update.ps1` / `update.sh` never overwrite VAULT.md
+- Editable in the Memory tab of the Control Deck
+- The AI receives explicit instructions to use VAULT data for automation only and never expose it
+
+---
+
+## GitHub Auto-Update Checker
+
+Galactic AI automatically checks GitHub for new releases on startup (after a 15-second boot delay) and then every 6 hours.
+
+### How It Works
+1. Queries `https://api.github.com/repos/cmmchsvc-dev/Galactic-AI/releases/latest`
+2. Compares the latest release tag against the current `system.version` in config.yaml
+3. If a newer version exists, broadcasts an `update_available` event via the WebSocket relay
+4. The Control Deck shows a persistent dismissible banner and a 30-second toast notification
+5. Instructions to run `./update.ps1` or `./update.sh` are included in the notification
+
+### Configuration
+```yaml
+system:
+  update_check_interval: 21600  # 6 hours in seconds (0 = disabled)
+```
+
+---
+
+## 100+ Built-In Tools
 
 ### File System (7 tools)
 | Tool | Description |
@@ -352,10 +390,12 @@ Incoming Telegram voice messages are transcribed automatically using:
 
 ### Text-to-Speech
 The AI can generate spoken audio using:
-1. **ElevenLabs** — premium voices (requires API key)
+1. **ElevenLabs** — premium voices: Nova, Byte (requires API key)
 2. **OpenAI TTS** — high quality (requires API key)
-3. **edge-tts** — FREE Microsoft neural voices (Guy, Aria, and many others)
+3. **edge-tts** — FREE Microsoft neural voices: Guy (default), Aria, Jenny, Davis
 4. **gTTS** — free Google TTS fallback, always works
+
+Switch voices from the **Quick Tools** sidebar dropdown or the **⚙️ Settings** tab. Changes take effect immediately and persist to config.yaml.
 
 ### Voice In → Voice Out
 When a user sends a voice message via Telegram, the AI automatically:
@@ -371,11 +411,12 @@ When a user sends a voice message via Telegram, the AI automatically:
 ### Tabs
 - **Chat** — Full conversational interface with tool output; timestamps on every message; chat history persists across page refreshes (`logs/chat_history.jsonl`)
 - **Thinking** — Real-time agent trace viewer; watch the ReAct loop think and act step by step; persists across page refreshes via `/api/traces` backend buffer (last 500 entries)
-- **Status** — Live telemetry: provider, model, token usage, uptime, plugin states, version badge
-- **Models** — Browse and switch all available models, ordered best-to-worst with tier emoji indicators
-- **Tools** — Browse all 92+ tools with descriptions and parameter info
+- **Status** — Live telemetry: provider, model, token usage, uptime, fallback chain status, plugin states, version badge; 30+ data fields across 6 sections
+- **Models** — Browse and switch all available models, ordered best-to-worst with tier emoji indicators; per-model override dropdowns
+- **Tools** — Browse all 100+ tools with descriptions and parameter info
 - **Plugins** — Enable/disable plugins with toggle switches
-- **Memory** — Read and edit MEMORY.md, IDENTITY.md, SOUL.md, USER.md, TOOLS.md in-browser; auto-creates missing files with starter templates
+- **Memory** — Read and edit MEMORY.md, IDENTITY.md, SOUL.md, USER.md, TOOLS.md, VAULT.md in-browser; auto-creates missing files with starter templates
+- **⚙️ Settings** — Primary/fallback model dropdowns, auto-fallback/smart-routing/streaming toggles, TTS voice selector, update check interval, speak timeout, max ReAct turns — all saved to config.yaml
 - **Ollama** — Health status, discovered models, context window sizes
 - **Logs** — Real-time system log stream with tool call highlighting (cyan), tool result lines (indented/italic), 500-line restore
 
@@ -463,6 +504,7 @@ Powered by APScheduler. Tasks survive restarts if configured in `config.yaml`.
 2. SOUL.md (personality and values)
 3. USER.md (user context)
 4. MEMORY.md (persistent learned memories)
+5. VAULT.md (private credentials and personal data — marked as "never share or expose")
 
 ### Hot Reload
 `personality.reload_memory()` re-reads MEMORY.md from disk mid-session. Called automatically after every `memory_imprint`. The very next message sees the updated memory.
@@ -493,6 +535,9 @@ Drop a Python file in the `plugins/` folder. Any class with a `run()` coroutine 
 - `workspace/` — workspace files
 - `memory/` — memory folder
 - `watch/` — watch folder
+- `VAULT.md` — private credentials and personal data
+
+Galactic AI also checks GitHub for new releases automatically (every 6 hours by default) and shows a notification banner in the Control Deck when an update is available.
 
 ---
 
@@ -533,6 +578,12 @@ Drop a Python file in the `plugins/` folder. Any class with a `run()` coroutine 
 | `web.port` | Web UI port (default: 17789) |
 | `web.password_hash` | SHA-256 password hash (set via setup wizard) |
 | `system.version` | Current version string |
+| `system.update_check_interval` | GitHub update check interval in seconds (default: 21600 = 6h, 0 = disabled) |
+| `models.speak_timeout` | Wall-clock timeout for entire ReAct loop in seconds (default: 600) |
+| `tool_timeouts.exec_shell` | Shell command timeout in seconds (default: 120) |
+| `tool_timeouts.execute_python` | Python execution timeout in seconds (default: 60) |
+| `tool_timeouts.generate_image` | Image generation timeout in seconds (default: 180) |
+| `models.fallback_cooldowns.*` | Per-error-type cooldown durations for provider fallback |
 
 ---
 
@@ -548,4 +599,4 @@ Drop a Python file in the `plugins/` folder. Any class with a `run()` coroutine 
 
 ---
 
-**v0.9.0** — Galactic AI Automation Suite
+**v0.9.3** — Galactic AI Automation Suite
