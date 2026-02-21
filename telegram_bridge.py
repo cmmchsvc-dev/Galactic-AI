@@ -19,7 +19,7 @@ class TelegramBridge:
         self.start_time = time.time()
         self.thinking_level = "LOW"
         self.verbose = False
-        self._processing = set()  # (chat_id, text) pairs currently in-flight — prevents duplicate sends
+        self.pending_api_key = {}  # {chat_id: {"provider": str, "model": str}}
         
     async def set_commands(self):
         commands = [
@@ -42,8 +42,7 @@ class TelegramBridge:
             payload = {"chat_id": chat_id, "text": text, "parse_mode": "Markdown"}
             if reply_markup: payload["reply_markup"] = reply_markup
             await self.client.post(f"{self.api_url}/sendMessage", json=payload)
-        except Exception as e:
-            await self.core.log(f"[Telegram] send_message failed: {e}", priority=1)
+        except: pass
 
     async def send_photo(self, chat_id, photo_path, caption=None):
         try:
@@ -128,42 +127,6 @@ class TelegramBridge:
             await self.client.post(f"{self.api_url}/sendChatAction", json={"chat_id": chat_id, "action": "typing"})
         except: pass
 
-    async def send_status_message(self, chat_id, text):
-        """Send a status message and return the message_id for later editing."""
-        try:
-            r = await self.client.post(f"{self.api_url}/sendMessage", json={
-                "chat_id": chat_id, "text": text, "parse_mode": "Markdown"
-            })
-            data = r.json()
-            if data.get("ok"):
-                return data["result"]["message_id"]
-        except Exception as e:
-            await self.core.log(f"[Telegram] send_status failed: {e}", priority=2)
-        return None
-
-    async def edit_status_message(self, chat_id, message_id, text):
-        """Edit an existing status message in-place."""
-        if not message_id:
-            return
-        try:
-            await self.client.post(f"{self.api_url}/editMessageText", json={
-                "chat_id": chat_id, "message_id": message_id,
-                "text": text, "parse_mode": "Markdown"
-            })
-        except Exception:
-            pass  # Non-fatal — message may have been deleted
-
-    async def delete_message(self, chat_id, message_id):
-        """Delete a message (used to clean up status messages)."""
-        if not message_id:
-            return
-        try:
-            await self.client.post(f"{self.api_url}/deleteMessage", json={
-                "chat_id": chat_id, "message_id": message_id
-            })
-        except Exception:
-            pass
-
     async def get_help_page(self, page):
         if page == "1":
             text = "🌌 **Commands (1/5) - System** 🛰️\n• `/status` - Vitals\n• `/model` - Brain\n• `/uptime` - Engine"
@@ -214,111 +177,97 @@ class TelegramBridge:
                     buttons.append(row)
                     row = []
             if row: buttons.append(row)
-            buttons.append([{"text": "🎨 Image Models", "callback_data": "prov_image"}])
             return text, {"inline_keyboard": buttons}
-
-        if provider == "image":
-            text = "🎨 **Image Model Selection**\nChoose your preferred image generation engine:"
-            buttons = [
-                [{"text": "👑 Imagen 4 Ultra", "callback_data": "img_set|imagen-4.0-ultra-generate-001"}],
-                [{"text": "🎨 Imagen 4", "callback_data": "img_set|imagen-4.0-generate-001"}],
-                [{"text": "🎨 FLUX.1 Dev", "callback_data": "img_set|black-forest-labs/flux.1-dev"}],
-                [{"text": "⚡ Imagen 4 Fast", "callback_data": "img_set|imagen-4.0-fast-generate-001"}],
-                [{"text": "⚡ FLUX.1 Schnell", "callback_data": "img_set|black-forest-labs/flux.1-schnell"}],
-                [{"text": "⬅️ Back to Providers", "callback_data": "mod_back"}]
-            ]
-            current = getattr(self.core.gateway, 'preferred_image_model', 'imagen-4.0-generate-001')
-            text += f"\n\n📌 Current: `{current}`"
-            return text, {"inline_keyboard": buttons}
-
+        
         text = f"🧠 **{provider.capitalize()} Cluster**\nSelect a specific brain to activate:"
         buttons = []
         model_map = {
             "anthropic": [
-                ("Claude Opus 4.6 👑", "claude-opus-4-6"),
-                ("Claude Sonnet 4.6 🧠", "claude-sonnet-4-6"),
-                ("Claude Opus 4.5 📦", "claude-opus-4-5"),
-                ("Claude Sonnet 4.5 📦", "claude-sonnet-4-5"),
-                ("Claude Haiku 4.5 ⚡", "claude-haiku-4-5"),
+                ("Claude Opus 4.6 👑 [LATEST]", "claude-opus-4-6"),
+                ("Claude Sonnet 4.6 🌟", "claude-sonnet-4-6"),
+                ("Claude Haiku 4.5 ⚡️", "claude-haiku-4-5"),
+                ("Claude Sonnet 4.5 🚀", "claude-sonnet-4-5"),
+                ("Claude Opus 4.5 🏛️", "claude-opus-4-5"),
             ],
             "google": [
-                ("Gemini 3.1 Pro 👑", "gemini-3.1-pro-preview"),
+                ("Gemini 3.1 Pro 🧠 [LATEST]", "gemini-3.1-pro-preview"),
+                ("Gemini 3 Flash ⚡️", "gemini-3-flash-preview"),
                 ("Gemini 3 Pro 🧠", "gemini-3-pro-preview"),
-                ("Gemini 3 Flash ⚡", "gemini-3-flash-preview"),
-                ("Gemini 2.5 Pro 🟢", "gemini-2.5-pro"),
-                ("Gemini 2.5 Flash 💨", "gemini-2.5-flash"),
-                ("Gemini 2.0 Flash 📦", "gemini-2.0-flash"),
+                ("Gemini 2.5 Flash 🏎️", "gemini-2.5-flash"),
+                ("Gemini 2.5 Pro 🦾", "gemini-2.5-pro"),
+                ("Gemini 2.0 Flash ⚡️", "gemini-2.0-flash"),
             ],
             "openai": [
-                ("GPT-5.2 👑", "gpt-5.2"),
-                ("o1 🧠", "o1"),
-                ("o3 Mini 💡", "o3-mini"),
-                ("o4-mini 💡", "o4-mini"),
-                ("GPT-4.1 🟢", "gpt-4.1"),
-                ("GPT-4o 🟢", "gpt-4o"),
-                ("GPT-4o Mini ⚡", "gpt-4o-mini"),
-            ],
-            "xai": [
-                ("Grok 4 👑", "grok-4"),
-                ("Grok 4 Fast ⚡", "grok-4-fast"),
-                ("Grok 3 🟢", "grok-3"),
-                ("Grok 3 Mini 💨", "grok-3-mini"),
-            ],
-            "groq": [
-                ("Llama 4 Maverick 👑", "llama-4-maverick-17b-128e-instruct"),
-                ("DeepSeek R1 70B 🧠", "deepseek-r1-distill-llama-70b"),
-                ("Llama 3.3 70B 🟢", "llama-3.3-70b-versatile"),
-                ("Qwen 3 32B 💡", "qwen-3-32b"),
-                ("Llama 4 Scout ⚡", "llama-4-scout-17b-16e-instruct"),
-                ("Gemma 9B 💨", "gemma2-9b-it"),
-            ],
-            "mistral": [
-                ("Large 3 675B 👑", "mistral-large-3-675b-instruct-2512"),
-                ("Magistral Medium 🧠", "magistral-medium-latest"),
-                ("Large 2 🟢", "mistral-large-latest"),
-                ("Devstral 🤖", "devstral-small-latest"),
-                ("Codestral 💻", "codestral-latest"),
-                ("Small 3.1 ⚡", "mistral-small-latest"),
-            ],
-            "cerebras": [
-                ("Llama 4 Maverick 👑", "llama-4-maverick-17b-128e-instruct"),
-                ("Llama 4 Scout 🟢", "llama-4-scout-17b-16e-instruct"),
-                ("Qwen 3 32B 💡", "qwen-3-32b"),
-                ("Llama 3.3 70B ⚡", "llama3.3-70b"),
-                ("Llama 3.1 8B 💨", "llama3.1-8b"),
-            ],
-            "deepseek": [
-                ("DeepSeek V3.2 👑", "deepseek-chat"),
-                ("DeepSeek R1 🧠", "deepseek-reasoner"),
-            ],
-            "openrouter": [
-                ("GPT-5.2 👑", "openai/gpt-5.2"),
-                ("Claude Opus 4.6 🧠", "anthropic/claude-opus-4-6"),
-                ("o4-mini 💡", "openai/o4-mini"),
-                ("DeepSeek V3.2 🚀", "deepseek/deepseek-v3.2"),
-                ("Gemini 2.5 Pro 🟢", "google/gemini-2.5-pro"),
-                ("Llama 4 Scout 💨", "meta-llama/llama-4-scout"),
-            ],
-            "huggingface": [
-                ("Qwen3 Coder 480B 👑", "Qwen/Qwen3-Coder-480B-A35B-Instruct"),
-                ("Qwen3 235B 🧠", "Qwen/Qwen3-235B-A22B"),
-                ("Llama 4 Maverick 🟢", "meta-llama/Llama-4-Maverick-17B-128E-Instruct"),
-                ("DeepSeek V3 💡", "deepseek-ai/DeepSeek-V3-0324"),
+                ("GPT-4o 🧠 [LATEST]", "gpt-4o"),
+                ("GPT-4.1 🌟", "gpt-4.1"),
+                ("GPT-4o Mini ⚡️", "gpt-4o-mini"),
+                ("o3 Mini 🧮", "o3-mini"),
+                ("o1 🏛️", "o1"),
             ],
             "nvidia": [
-                ("Qwen 480B Coder 👑", "qwen/qwen3-coder-480b-a35b-instruct"),
-                ("Mistral Large 3 🌊", "mistralai/mistral-large-3-675b-instruct-2512"),
-                ("Qwen 3.5 397B 🧠", "qwen/qwen3.5-397b-a17b"),
-                ("Llama 405B 🏛️", "meta/llama-3.1-405b-instruct"),
-                ("DeepSeek V3.2 🚀", "deepseek-ai/deepseek-v3.2"),
-                ("Kimi K2.5 🌙", "moonshotai/kimi-k2.5"),
-                ("MiniMax M2.1 🎯", "minimaxai/minimax-m2.1"),
-                ("GLM-5 🧠", "z-ai/glm5"),
-                ("Gemma 3 27B 🌌", "google/gemma-3-27b-it"),
-                ("StepFun 3.5 Flash ⚡", "stepfun-ai/step-3.5-flash"),
-                ("Nemotron 30B ⚛️", "nvidia/nemotron-3-nano-30b-a3b"),
-                ("Phi-3.5 Vision 👁️", "microsoft/phi-3.5-vision-instruct"),
+                ("GLM-5 (Thinking) 🧠", "z-ai/glm5"),
+                ("Kimi K2.5 (Thinking) 🌙", "moonshotai/kimi-k2.5"),
+                ("Qwen 3.5 397B (Thinking) 🦾", "qwen/qwen3.5-397b-a17b"),
+                ("Nemotron 30B (Reasoning) ⚛️", "nvidia/nemotron-3-nano-30b-a3b"),
                 ("Nemotron Nano VL 👁️", "nvidia/nemotron-nano-12b-v2-vl"),
+                ("StepFun 3.5 Flash ⚡️", "stepfun-ai/step-3.5-flash"),
+                ("MiniMax M2.1 🎯", "minimaxai/minimax-m2.1"),
+                ("DeepSeek V3.2 (Math) 🚀", "deepseek-ai/deepseek-v3.2"),
+                ("Llama 405B 🏛️", "meta/llama-3.1-405b-instruct"),
+                ("Phi-3.5 Vision (OCR) 👁️", "microsoft/phi-3.5-vision-instruct"),
+                ("Gemma 3 27B 🌌", "google/gemma-3-27b-it"),
+                ("Mistral Large 3 🌊", "mistralai/mistral-large-3-675b-instruct-2512"),
+                ("Qwen 480B Coder 🦾", "qwen/qwen3-coder-480b-a35b-instruct"),
+            ],
+            "xai": [
+                ("Grok 4 🧠 [LATEST]", "grok-4"),
+                ("Grok 4 Fast ⚡️", "grok-4-fast"),
+                ("Grok 3 🌌", "grok-3"),
+                ("Grok 3 Mini 🎯", "grok-3-mini"),
+            ],
+            "deepseek": [
+                ("DeepSeek V3 🧠 [LATEST]", "deepseek-chat"),
+                ("DeepSeek R1 (Reasoning) 🧮", "deepseek-reasoner"),
+            ],
+            "groq": [
+                ("Llama 4 Scout 17B ⚡️ [FAST]", "llama-4-scout-17b-16e-instruct"),
+                ("Llama 4 Maverick 17B 🦾", "llama-4-maverick-17b-128e-instruct"),
+                ("Llama 3.3 70B 🏛️", "llama-3.3-70b-versatile"),
+                ("DeepSeek R1 70B 🧮", "deepseek-r1-distill-llama-70b"),
+                ("Qwen 3 32B 🧠", "qwen-3-32b"),
+            ],
+            "mistral": [
+                ("Mistral Small 3.1 ⚡️", "mistral-small-latest"),
+                ("Codestral (Code) 🦾", "codestral-latest"),
+                ("Devstral (Agents) 🤖", "devstral-small-latest"),
+                ("Mistral Large 2 🏛️", "mistral-large-latest"),
+                ("Magistral Medium 🧠", "magistral-medium-latest"),
+            ],
+            "cerebras": [
+                ("Llama 3.3 70B ⚡️ [FAST]", "llama3.3-70b"),
+                ("Llama 3.1 8B 🏎️", "llama3.1-8b"),
+                ("Qwen 3 32B 🧠", "qwen-3-32b"),
+            ],
+            "openrouter": [
+                ("Claude Opus 4.6 👑", "anthropic/claude-opus-4-6"),
+                ("Claude Sonnet 4.6 🌟", "anthropic/claude-sonnet-4-6"),
+                ("GPT-4o 🧠", "openai/gpt-4o"),
+                ("Gemini 2.5 Pro 🦾", "google/gemini-2.5-pro"),
+                ("DeepSeek V3 🚀", "deepseek/deepseek-chat"),
+            ],
+            "huggingface": [
+                ("Qwen3 235B 🧠", "Qwen/Qwen3-235B-A22B"),
+                ("Llama 4 Scout ⚡️", "meta-llama/Llama-4-Scout-17B-16E-Instruct"),
+                ("DeepSeek V3 🚀", "deepseek-ai/DeepSeek-V3-0324"),
+            ],
+            "kimi": [
+                ("Kimi K2.5 🌙", "moonshot-v1-auto"),
+            ],
+            "zai": [
+                ("GLM-4 Plus 🧠", "glm-4-plus"),
+            ],
+            "minimax": [
+                ("MiniMax Text-01 🎯", "MiniMax-Text-01"),
             ],
             "ollama": self._get_live_ollama_menu_entries()
         }
@@ -387,67 +336,68 @@ class TelegramBridge:
             model_map = {
                 "anthropic": [
                     ("Opus 4.6 👑", "claude-opus-4-6"),
-                    ("Sonnet 4.6 🧠", "claude-sonnet-4-6"),
-                    ("Opus 4.5", "claude-opus-4-5"),
-                    ("Sonnet 4.5", "claude-sonnet-4-5"),
-                    ("Haiku 4.5 ⚡", "claude-haiku-4-5"),
+                    ("Sonnet 4.6 🌟", "claude-sonnet-4-6"),
+                    ("Haiku 4.5 ⚡️", "claude-haiku-4-5"),
+                    ("Sonnet 4.5 🚀", "claude-sonnet-4-5"),
                 ],
                 "google": [
-                    ("Gemini 3.1 Pro 👑", "gemini-3.1-pro-preview"),
+                    ("Gemini 3.1 Pro 🧠", "gemini-3.1-pro-preview"),
+                    ("Gemini 3 Flash ⚡️", "gemini-3-flash-preview"),
                     ("Gemini 3 Pro 🧠", "gemini-3-pro-preview"),
-                    ("Gemini 3 Flash ⚡", "gemini-3-flash-preview"),
-                    ("Gemini 2.5 Pro", "gemini-2.5-pro"),
-                    ("Gemini 2.5 Flash 💨", "gemini-2.5-flash"),
+                    ("Gemini 2.5 Flash 🏎️", "gemini-2.5-flash"),
+                    ("Gemini 2.5 Pro 🦾", "gemini-2.5-pro"),
                 ],
                 "openai": [
-                    ("GPT-5.2 👑", "gpt-5.2"),
-                    ("o1 🧠", "o1"),
-                    ("GPT-4.1", "gpt-4.1"),
-                    ("GPT-4o", "gpt-4o"),
-                    ("GPT-4o Mini ⚡", "gpt-4o-mini"),
-                ],
-                "xai": [
-                    ("Grok 4 👑", "grok-4"),
-                    ("Grok 4 Fast ⚡", "grok-4-fast"),
-                    ("Grok 3", "grok-3"),
-                ],
-                "groq": [
-                    ("Llama 4 Maverick 👑", "llama-4-maverick-17b-128e-instruct"),
-                    ("DeepSeek R1 70B 🧠", "deepseek-r1-distill-llama-70b"),
-                    ("Llama 3.3 70B", "llama-3.3-70b-versatile"),
-                    ("Llama 4 Scout ⚡", "llama-4-scout-17b-16e-instruct"),
-                ],
-                "mistral": [
-                    ("Large 3 675B 👑", "mistral-large-3-675b-instruct-2512"),
-                    ("Magistral Medium 🧠", "magistral-medium-latest"),
-                    ("Large 2", "mistral-large-latest"),
-                    ("Small 3.1 ⚡", "mistral-small-latest"),
-                ],
-                "cerebras": [
-                    ("Llama 4 Maverick 👑", "llama-4-maverick-17b-128e-instruct"),
-                    ("Llama 4 Scout", "llama-4-scout-17b-16e-instruct"),
-                    ("Llama 3.3 70B ⚡", "llama3.3-70b"),
-                ],
-                "deepseek": [
-                    ("DeepSeek V3.2 👑", "deepseek-chat"),
-                    ("DeepSeek R1 🧠", "deepseek-reasoner"),
-                ],
-                "openrouter": [
-                    ("GPT-5.2 👑", "openai/gpt-5.2"),
-                    ("Claude Opus 4.6 🧠", "anthropic/claude-opus-4-6"),
-                    ("DeepSeek V3.2 🚀", "deepseek/deepseek-v3.2"),
-                ],
-                "huggingface": [
-                    ("Qwen3 Coder 480B 👑", "Qwen/Qwen3-Coder-480B-A35B-Instruct"),
-                    ("Qwen3 235B 🧠", "Qwen/Qwen3-235B-A22B"),
+                    ("GPT-4o 🧠", "gpt-4o"),
+                    ("GPT-4.1 🌟", "gpt-4.1"),
+                    ("GPT-4o Mini ⚡️", "gpt-4o-mini"),
+                    ("o3 Mini 🧮", "o3-mini"),
                 ],
                 "nvidia": [
-                    ("Qwen 480B Coder 👑", "qwen/qwen3-coder-480b-a35b-instruct"),
-                    ("Mistral Large 3 🌊", "mistralai/mistral-large-3-675b-instruct-2512"),
-                    ("Qwen 3.5 397B 🧠", "qwen/qwen3.5-397b-a17b"),
+                    ("GLM-5 Thinking 🧠", "z-ai/glm5"),
+                    ("Kimi K2.5 Thinking 🌙", "moonshotai/kimi-k2.5"),
+                    ("Qwen 3.5 397B 🦾", "qwen/qwen3.5-397b-a17b"),
+                    ("Nemotron 30B ⚛️", "nvidia/nemotron-3-nano-30b-a3b"),
+                    ("StepFun 3.5 Flash ⚡️", "stepfun-ai/step-3.5-flash"),
                     ("DeepSeek V3.2 🚀", "deepseek-ai/deepseek-v3.2"),
                     ("Llama 405B 🏛️", "meta/llama-3.1-405b-instruct"),
+                    ("Phi-3.5 Vision 👁️", "microsoft/phi-3.5-vision-instruct"),
+                    ("Qwen 480B Coder 🦾", "qwen/qwen3-coder-480b-a35b-instruct"),
                 ],
+                "xai": [
+                    ("Grok 4 🧠", "grok-4"),
+                    ("Grok 4 Fast ⚡️", "grok-4-fast"),
+                ],
+                "deepseek": [
+                    ("DeepSeek V3 🧠", "deepseek-chat"),
+                    ("DeepSeek R1 🧮", "deepseek-reasoner"),
+                ],
+                "groq": [
+                    ("Llama 4 Scout ⚡️", "llama-4-scout-17b-16e-instruct"),
+                    ("Llama 3.3 70B 🏛️", "llama-3.3-70b-versatile"),
+                    ("DeepSeek R1 70B 🧮", "deepseek-r1-distill-llama-70b"),
+                ],
+                "mistral": [
+                    ("Mistral Small 3.1 ⚡️", "mistral-small-latest"),
+                    ("Mistral Large 2 🏛️", "mistral-large-latest"),
+                    ("Codestral 🦾", "codestral-latest"),
+                ],
+                "cerebras": [
+                    ("Llama 3.3 70B ⚡️", "llama3.3-70b"),
+                    ("Qwen 3 32B 🧠", "qwen-3-32b"),
+                ],
+                "openrouter": [
+                    ("Claude Opus 4.6 👑", "anthropic/claude-opus-4-6"),
+                    ("GPT-4o 🧠", "openai/gpt-4o"),
+                    ("DeepSeek V3 🚀", "deepseek/deepseek-chat"),
+                ],
+                "huggingface": [
+                    ("Qwen3 235B 🧠", "Qwen/Qwen3-235B-A22B"),
+                    ("Llama 4 Scout ⚡️", "meta-llama/Llama-4-Scout-17B-16E-Instruct"),
+                ],
+                "kimi": [("Kimi K2.5 🌙", "moonshot-v1-auto")],
+                "zai": [("GLM-4 Plus 🧠", "glm-4-plus")],
+                "minimax": [("MiniMax Text-01 🎯", "MiniMax-Text-01")],
                 "ollama": self._get_live_ollama_menu_entries()
             }
             
@@ -484,60 +434,33 @@ class TelegramBridge:
             self.thinking_level = level
             text, markup = await self.get_think_menu()
             await self.client.post(f"{self.api_url}/editMessageText", json={"chat_id": chat_id, "message_id": message_id, "text": f"✅ Thinking: `{level}`\n\n{text}", "reply_markup": markup, "parse_mode": "Markdown"})
-        elif data.startswith("img_set|"):
-            model_id = data.split("|", 1)[1]
-            self.core.gateway.preferred_image_model = model_id
-            await self.send_message(chat_id, f"🎨 **Image model set:** `{model_id}`")
-            text, markup = await self.get_model_menu()
-            await self.client.post(f"{self.api_url}/editMessageText", json={
-                "chat_id": chat_id, "message_id": message_id,
-                "text": text, "reply_markup": markup, "parse_mode": "Markdown"
-            })
         elif data.startswith("mod_"):
             provider, model = data.split("_")[1].split("|")
             self.core.gateway.llm.provider = provider
             self.core.gateway.llm.model = model
-            if provider == "google":
-                self.core.gateway.llm.api_key = self.core.config['providers']['google']['apiKey']
-            elif provider == "anthropic":
-                self.core.gateway.llm.api_key = self.core.config['providers']['anthropic']['apiKey']
-            elif provider == "nvidia":
-                keys = self.core.config['providers']['nvidia']['keys']
-                if "glm" in model: 
-                    self.core.gateway.llm.api_key = keys['glm']
-                elif "deepseek" in model: 
-                    self.core.gateway.llm.api_key = keys['deepseek']
-                elif "kimi" in model: 
-                    self.core.gateway.llm.api_key = keys['kimi']
-                elif "qwen" in model: 
-                    self.core.gateway.llm.api_key = keys['qwen']
-                elif "step" in model: 
-                    self.core.gateway.llm.api_key = keys['stepfun']
-                else:
-                    # Fallback for meta/llama, nvidia/nemotron, and other NVIDIA models
-                    # Use deepseek key as default (all nvapi- keys work for NVIDIA API Catalog)
-                    self.core.gateway.llm.api_key = keys['deepseek']
-            elif provider == "xai":
-                self.core.gateway.llm.api_key = self.core.config['providers']['xai']['apiKey']
-            elif provider == "openai":
-                self.core.gateway.llm.api_key = self.core.config['providers']['openai']['apiKey']
-            elif provider == "groq":
-                self.core.gateway.llm.api_key = self.core.config['providers']['groq']['apiKey']
-            elif provider == "mistral":
-                self.core.gateway.llm.api_key = self.core.config['providers']['mistral']['apiKey']
-            elif provider == "cerebras":
-                self.core.gateway.llm.api_key = self.core.config['providers']['cerebras']['apiKey']
-            elif provider == "deepseek":
-                self.core.gateway.llm.api_key = self.core.config['providers']['deepseek']['apiKey']
-            elif provider == "openrouter":
-                self.core.gateway.llm.api_key = self.core.config['providers']['openrouter']['apiKey']
-            elif provider == "huggingface":
-                self.core.gateway.llm.api_key = self.core.config['providers']['huggingface']['apiKey']
-            elif provider == "ollama":
-                self.core.gateway.llm.api_key = "NONE"  # Ollama doesn't need an API key (local)
-            await self.send_message(chat_id, f"✅ **Shifted to {provider.capitalize()}:** `{model}`")
-            text, markup = await self.get_model_menu()
-            await self.client.post(f"{self.api_url}/editMessageText", json={"chat_id": chat_id, "message_id": message_id, "text": text, "reply_markup": markup, "parse_mode": "Markdown"})
+            # Use centralized key setter (handles all providers including nvidia sub-keys)
+            if hasattr(self.core, 'model_manager'):
+                self.core.model_manager._set_api_key(provider)
+            # Check if API key is actually configured
+            current_key = getattr(self.core.gateway.llm, 'api_key', '')
+            if provider != 'ollama' and (not current_key or current_key == 'NONE'):
+                # No API key — prompt user to enter one
+                self.pending_api_key[chat_id] = {"provider": provider, "model": model}
+                await self.send_message(
+                    chat_id,
+                    f"🔑 **API Key Required**\n\n"
+                    f"No API key configured for **{provider.capitalize()}**.\n"
+                    f"Please paste your API key now and I'll save it:"
+                )
+                await self.client.post(f"{self.api_url}/editMessageText", json={
+                    "chat_id": chat_id, "message_id": message_id,
+                    "text": f"⏳ Waiting for {provider.capitalize()} API key...",
+                    "parse_mode": "Markdown"
+                })
+            else:
+                await self.send_message(chat_id, f"✅ **Shifted to {provider.capitalize()}:** `{model}`")
+                text, markup = await self.get_model_menu()
+                await self.client.post(f"{self.api_url}/editMessageText", json={"chat_id": chat_id, "message_id": message_id, "text": text, "reply_markup": markup, "parse_mode": "Markdown"})
         elif data.startswith("cfg_"):
             # Model configuration callbacks
             if data == "cfg_primary":
@@ -713,32 +636,35 @@ class TelegramBridge:
                             await self.send_typing(chat_id)
                             asyncio.create_task(self._handle_audio(chat_id, msg))
                             continue
+                        # Intercept API key text if we're waiting for one
+                        if chat_id in self.pending_api_key and text and not text.startswith('/'):
+                            pending = self.pending_api_key.pop(chat_id)
+                            api_key = text.strip()
+                            await self._save_provider_key(pending["provider"], api_key)
+                            self.core.gateway.llm.api_key = api_key
+                            self.core.gateway.llm.provider = pending["provider"]
+                            self.core.gateway.llm.model = pending["model"]
+                            await self.send_message(
+                                chat_id,
+                                f"✅ API key saved for **{pending['provider'].capitalize()}**! "
+                                f"Switched to: `{pending['model']}`"
+                            )
+                            continue
                         if text.startswith('/'):
                             await self.process_command(chat_id, text)
                             continue
                         await self.send_typing(chat_id)
                         if hasattr(self.core, 'gateway'):
-                            key = (chat_id, text)
-                            if key in self._processing:
-                                continue  # Telegram retry — already being processed
-                            self._processing.add(key)
-                            asyncio.create_task(self.process_and_respond(chat_id, text, _key=key))
+                            asyncio.create_task(self.process_and_respond(chat_id, text))
             except Exception as e:
                 await self.core.log(f"Bridge Loop Error: {e}", priority=1)
             await asyncio.sleep(0.5)
 
     async def get_updates(self):
         try:
-            r = await self.client.get(f"{self.api_url}/getUpdates", params={
-                "offset": self.offset,
-                "timeout": 25,
-                "allowed_updates": ["message", "callback_query"]
-            })
-            data = r.json()
-            return data.get("result", []) if data.get("ok") else []
-        except Exception as e:
-            await self.core.log(f"[Telegram] getUpdates error: {e}", priority=2)
-            return []
+            r = await self.client.get(f"{self.api_url}/getUpdates", params={"offset": self.offset, "timeout": 30})
+            return r.json().get("result", []) if r.json().get("ok") else []
+        except: return []
 
     def _get_speak_timeout(self) -> float:
         """Return the appropriate speak() timeout based on the active model provider.
@@ -758,62 +684,35 @@ class TelegramBridge:
             return float(tg_cfg.get('ollama_timeout_seconds', 600))
         return float(tg_cfg.get('timeout_seconds', 120))
 
-    async def process_and_respond(self, chat_id, text, _key=None):
+    async def _save_provider_key(self, provider: str, api_key: str):
+        """Persist an API key for a provider to config.yaml and update in-memory config."""
+        try:
+            import yaml
+            config_path = getattr(self.core, 'config_path', 'config.yaml')
+            with open(config_path, 'r', encoding='utf-8') as f:
+                cfg = yaml.safe_load(f) or {}
+            # Ensure providers section exists
+            if 'providers' not in cfg:
+                cfg['providers'] = {}
+            if provider not in cfg['providers']:
+                cfg['providers'][provider] = {}
+            cfg['providers'][provider]['apiKey'] = api_key
+            with open(config_path, 'w', encoding='utf-8') as f:
+                yaml.dump(cfg, f, default_flow_style=False, allow_unicode=True)
+            # Update in-memory config
+            if 'providers' not in self.core.config:
+                self.core.config['providers'] = {}
+            if provider not in self.core.config['providers']:
+                self.core.config['providers'][provider] = {}
+            self.core.config['providers'][provider]['apiKey'] = api_key
+            await self.core.log(f"Telegram Bridge: Saved API key for {provider}", priority=1)
+        except Exception as e:
+            await self.core.log(f"Telegram Bridge: Failed to save API key for {provider}: {e}", priority=1)
+
+    async def process_and_respond(self, chat_id, text):
         typing_task = None
-        status_msg_id = None
-        _orig_emit = None
-        _heartbeat_task = None
         try:
             typing_task = asyncio.create_task(self.keep_typing(chat_id))
-
-            # ── Send immediate status so user knows we're alive ──
-            provider = getattr(self.core.gateway.llm, 'provider', '?')
-            model = getattr(self.core.gateway.llm, 'model', '?')
-            status_msg_id = await self.send_status_message(
-                chat_id, f"⏳ _Thinking... ({provider}/{model.split('/')[-1]})_"
-            )
-
-            # ── Hook into gateway traces for live progress on Telegram ──
-            _progress_state = {"tools": 0, "last_tool": "", "msg_id": status_msg_id, "start": time.time()}
-            _orig_emit = self.core.gateway._emit_trace
-
-            async def _tg_trace_hook(phase, turn, **kwargs):
-                await _orig_emit(phase, turn, **kwargs)
-                if phase == "tool_call" and _progress_state["msg_id"]:
-                    _progress_state["tools"] += 1
-                    tool = kwargs.get("tool", "?")
-                    _progress_state["last_tool"] = tool
-                    n = _progress_state["tools"]
-                    elapsed = int(time.time() - _progress_state["start"])
-                    await self.edit_status_message(
-                        chat_id, _progress_state["msg_id"],
-                        f"⏳ _Working... (step {n}: `{tool}` — {elapsed}s)_"
-                    )
-
-            self.core.gateway._emit_trace = _tg_trace_hook
-
-            # ── Heartbeat: update status every 15s so user sees elapsed time ──
-            async def _heartbeat():
-                try:
-                    while True:
-                        await asyncio.sleep(15)
-                        if not _progress_state["msg_id"]:
-                            break
-                        elapsed = int(time.time() - _progress_state["start"])
-                        n = _progress_state["tools"]
-                        if n > 0:
-                            tool = _progress_state["last_tool"]
-                            msg = f"⏳ _Working... (step {n}: `{tool}` — {elapsed}s)_"
-                        else:
-                            msg = f"⏳ _Thinking... ({elapsed}s)_"
-                        await self.edit_status_message(chat_id, _progress_state["msg_id"], msg)
-                except asyncio.CancelledError:
-                    pass
-                except Exception:
-                    pass
-
-            _heartbeat_task = asyncio.create_task(_heartbeat())
-
             response = await asyncio.wait_for(
                 self.core.gateway.speak(text, chat_id=chat_id),
                 timeout=self._get_speak_timeout()
@@ -836,22 +735,6 @@ class TelegramBridge:
             await self.core.log(f"Processing Error: {e}", priority=1)
             response = f"🌌 **Byte Interference:** `{str(e)}`"
         finally:
-            # Restore original trace emitter
-            if _orig_emit and hasattr(self.core, 'gateway'):
-                try:
-                    self.core.gateway._emit_trace = _orig_emit
-                except Exception:
-                    pass
-            # Release the in-flight dedup lock so Telegram retries can be processed later
-            if _key:
-                self._processing.discard(_key)
-            # Cancel heartbeat timer
-            if _heartbeat_task and not _heartbeat_task.done():
-                _heartbeat_task.cancel()
-                try:
-                    await _heartbeat_task
-                except (asyncio.CancelledError, Exception):
-                    pass
             # ALWAYS cancel typing, even on errors
             if typing_task and not typing_task.done():
                 typing_task.cancel()
@@ -861,8 +744,6 @@ class TelegramBridge:
                     pass
                 except Exception:
                     pass  # Ignore any other errors during cleanup
-            # Clean up the status message now that we have the real answer
-            await self.delete_message(chat_id, status_msg_id)
             # Relay to Web UI so Telegram conversations show up in the web chat log
             try:
                 await self.core.relay.emit(2, "chat_from_telegram", {
