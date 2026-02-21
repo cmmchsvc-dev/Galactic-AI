@@ -67,7 +67,54 @@ class GalacticCore:
             }
             return default_config
         with open(config_full_path, 'r') as f:
-            return yaml.load(f, Loader=yaml.FullLoader) or {}
+            config = yaml.load(f, Loader=yaml.FullLoader) or {}
+
+        # ── Auto-migrate: add missing config sections from newer versions ────
+        migrated = False
+        defaults = {
+            'gmail':    {'email': '', 'app_password': '', 'check_interval': 60, 'notify_telegram': True},
+            'discord':  {'bot_token': '', 'allowed_channels': [], 'admin_user_id': '', 'timeout_seconds': 120, 'ollama_timeout_seconds': 600},
+            'whatsapp': {'phone_number_id': '', 'access_token': '', 'verify_token': '', 'webhook_secret': '', 'api_version': 'v21.0'},
+            'webhooks': {'secret': ''},
+            'web':      {'enabled': True, 'host': '127.0.0.1', 'port': 17789, 'password_hash': '', 'remote_access': False},
+            'elevenlabs': {'api_key': '', 'voice': 'Guy'},
+            'models':   {'auto_fallback': True, 'streaming': True, 'smart_routing': False, 'max_turns': 50, 'speak_timeout': 600,
+                         'fallback_cooldowns': {'RATE_LIMIT': 60, 'SERVER_ERROR': 30, 'TIMEOUT': 10, 'AUTH_ERROR': 86400, 'QUOTA_EXHAUSTED': 3600}},
+            'tool_timeouts': {'exec_shell': 120, 'execute_python': 60, 'generate_image': 180},
+            'aliases':  {},
+        }
+        for section, section_defaults in defaults.items():
+            if section not in config:
+                config[section] = section_defaults
+                migrated = True
+            elif isinstance(section_defaults, dict) and isinstance(config[section], dict):
+                # Add missing keys within existing sections
+                for key, value in section_defaults.items():
+                    if key not in config[section]:
+                        config[section][key] = value
+                        migrated = True
+
+        # Ensure system section has newer keys
+        sys_defaults = {'update_check_interval': 21600, 'version': '1.0.0'}
+        if 'system' not in config:
+            config['system'] = {'name': 'Galactic AI', 'port': 9999}
+            config['system'].update(sys_defaults)
+            migrated = True
+        else:
+            for key, value in sys_defaults.items():
+                if key not in config['system']:
+                    config['system'][key] = value
+                    migrated = True
+
+        # Save migrated config
+        if migrated:
+            try:
+                with open(config_full_path, 'w', encoding='utf-8') as f:
+                    yaml.dump(config, f, default_flow_style=False, allow_unicode=True, sort_keys=False)
+            except Exception:
+                pass  # Non-fatal — config still works in memory
+
+        return config
 
     async def setup_systems(self):
         """Initialize core sub-systems."""
