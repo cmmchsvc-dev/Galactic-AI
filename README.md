@@ -2,7 +2,7 @@
 
 **Sovereign. Universal. Fast.**
 
-A powerful, local-first AI automation platform with 72+ built-in tools, true persistent memory, voice I/O, browser automation, 14 AI providers, and a real-time web control deck.
+A powerful, local-first AI automation platform with 92+ built-in tools, true persistent memory, voice I/O, browser automation, 14 AI providers, multi-platform messaging bridges, and a real-time web Control Deck.
 
 Run fully local with Ollama (no API keys, no cloud, no tracking), or connect to any of 14 cloud providers. Your data stays yours.
 
@@ -18,13 +18,13 @@ When the AI learns something important, it writes it to **MEMORY.md** on disk. T
 This is fundamentally different from session memory or expensive vector search on every message.
 
 ### 14 AI Providers, One Interface
-Switch between Google Gemini, Claude, GPT, Grok, Groq, Mistral, Cohere, DeepSeek, Perplexity, and more — or run completely offline with Ollama. Change providers mid-conversation. Set automatic fallback so the AI never goes down.
+Switch between Google Gemini, Claude, GPT, Grok, Groq, Mistral, DeepSeek, NVIDIA, and more — or run completely offline with Ollama. Change providers mid-conversation. Set automatic fallback so the AI never goes down.
 
-### 72+ Tools, Real Agent Behavior
-The AI doesn't just answer questions — it acts. It browses the web, reads and writes files, runs shell commands, controls a full Chromium browser, manages schedules, searches memory, converts text to speech, and more. It chains tool calls in a ReAct loop until the task is done.
+### 92+ Tools, Real Agent Behavior
+The AI doesn't just answer questions — it acts. It browses the web, reads and writes files, runs shell commands, controls a full Chromium browser, generates images, manages schedules, sends messages across platforms, and more. It chains tool calls in a ReAct loop until the task is done.
 
-### Voice I/O via Telegram
-Send a voice message to your Telegram bot → the AI transcribes it with Whisper, thinks, responds with a voice message back. Send a text → get text back. Control everything from your phone.
+### Voice I/O + Multi-Platform Messaging
+Send a voice message to your Telegram bot — the AI transcribes it with Whisper, thinks, responds with a voice message back. Or message from Discord, WhatsApp, or Gmail. Control everything from wherever you are.
 
 ---
 
@@ -75,7 +75,7 @@ playwright install chromium
 
 ---
 
-## Setup Wizard (7 Steps)
+## Setup Wizard
 
 After launching, open **http://127.0.0.1:17789**. The Setup Wizard appears automatically on first run:
 
@@ -83,11 +83,12 @@ After launching, open **http://127.0.0.1:17789**. The Setup Wizard appears autom
 |---|---|
 | 1 | **Primary Provider** — your main AI (Google, Anthropic, OpenAI, Groq, Ollama, etc.) |
 | 2 | **Additional API Keys + TTS** — extra providers and ElevenLabs voice |
-| 3 | **Telegram** — optional Telegram bot for mobile access |
-| 4 | **Security** — passphrase to protect the web UI |
-| 5 | **Personality** — choose Byte, Custom, or Generic Assistant |
-| 6 | **OpenClaw Migration** — import your existing memory/identity files |
-| 7 | **Review & Launch** — confirm everything and start |
+| 3 | **Telegram** — optional Telegram bot for mobile access and voice I/O |
+| 4 | **Messaging Bridges** — Discord, WhatsApp, Gmail (all optional) |
+| 5 | **Security** — passphrase to protect the web UI |
+| 6 | **Personality** — choose Byte, Custom, or Generic Assistant |
+| 7 | **OpenClaw Migration** — import your existing memory/identity files |
+| 8 | **Review & Launch** — confirm everything and start |
 
 > **Zero-key mode:** Choose Ollama as your provider in Step 1 and skip all API key steps. Pull a model with `ollama pull qwen3:8b` and you're running 100% locally.
 
@@ -95,38 +96,40 @@ After launching, open **http://127.0.0.1:17789**. The Setup Wizard appears autom
 
 ## AI Providers
 
-| Provider | Models | Free Tier |
+| Provider | Top Models | Free Tier |
 |---|---|---|
-| **Google Gemini** | gemini-2.5-flash, gemini-2.5-pro | Yes |
-| **Anthropic Claude** | claude-sonnet-4-5, claude-opus-4-6 | No |
-| **OpenAI** | gpt-4o, gpt-4o-mini, o1, o3 | No |
+| **Google Gemini** | gemini-2.5-pro, gemini-3.1-pro-preview, gemini-2.5-flash | Yes |
+| **Anthropic Claude** | claude-opus-4-6, claude-sonnet-4-5 | No |
+| **OpenAI** | gpt-4o, o3, o1 | No |
 | **xAI Grok** | grok-4, grok-3 | No |
-| **Groq** | llama3, mixtral, gemma — blazing fast | Yes |
-| **Mistral** | mistral-large, codestral | Yes |
-| **Cohere** | command-r-plus | Yes |
-| **NVIDIA AI** | deepseek-v3.2, qwen3-coder-480b, llama-3.3-70b | Yes |
+| **Groq** | llama-3.3-70b, deepseek-r1, gemma-2-9b — blazing fast | Yes |
+| **Mistral** | mistral-large-3, codestral | Yes |
+| **NVIDIA AI** | qwen3-coder-480b, deepseek-v3.2, kimi-k2.5, llama-3.1-405b | Yes |
+| **DeepSeek** | deepseek-chat, deepseek-reasoner | Yes |
+| **Cerebras** | llama-3.3-70b — ultra fast inference | Yes |
+| **OpenRouter** | Any model via unified API | Yes |
+| **HuggingFace** | 1000s of open models | Yes |
 | **Together AI** | 100+ open models | Yes |
 | **Perplexity** | sonar-pro, sonar | No |
-| **Fireworks AI** | firefunction-v2, llama-v3 | Yes |
-| **DeepSeek** | deepseek-chat, deepseek-coder | Yes |
-| **OpenRouter** | Any model via unified API | Yes |
 | **Ollama (Local)** | Any model you pull — qwen3, llama3.3, phi4, mistral, deepseek-coder | **No key needed** |
 
 ---
 
 ## Web Control Deck
 
-The control deck at **http://127.0.0.1:17789** gives you full control:
+The Control Deck at **http://127.0.0.1:17789** gives you full control:
 
 | Tab | What's There |
 |---|---|
-| **Chat** | Talk to your AI with full tool support; chat history survives page refreshes |
+| **Chat** | Talk to your AI with full tool support; timestamps on every message; chat history survives page refreshes |
+| **Thinking** | Real-time agent trace — watch the ReAct loop think and act step by step; persists across page refreshes |
 | **Status** | Live provider, model, token usage, uptime, and plugin telemetry |
-| **Tools** | Browse and understand all 72+ built-in tools |
+| **Models** | Browse and switch all 92+ models, ordered best-to-worst with tier indicators |
+| **Tools** | Browse all 92+ built-in tools with descriptions and parameters |
 | **Plugins** | Enable/disable plugins with one click |
 | **Memory** | Edit MEMORY.md, IDENTITY.md, SOUL.md, USER.md, TOOLS.md directly in-browser |
 | **Ollama** | Health status, discovered models, context window sizes |
-| **Logs** | Real-time system log stream |
+| **Logs** | Real-time log stream with tool call highlighting and 500-line history |
 
 ---
 
@@ -138,7 +141,7 @@ Galactic AI has three layers of memory, all persistent across restarts:
 - **IDENTITY.md** — who the AI is (name, role, vibe)
 - **SOUL.md** — core values and personality
 - **USER.md** — who you are, your preferences, context
-- **MEMORY.md** — things the AI has learned over time ← **new in v0.7.1**
+- **MEMORY.md** — things the AI has learned over time
 
 All four files are loaded from disk on startup and injected into every system prompt. The AI always knows who it is and who you are.
 
@@ -152,10 +155,10 @@ Facts, documents, and imprinted knowledge stored in a local JSON index. The AI c
 
 ## Telegram Bot (Optional)
 
-Control Galactic AI from your phone:
+Control Galactic AI from your phone with full voice support:
 
-1. Message [@BotFather](https://t.me/BotFather) → create a new bot → copy the token
-2. Enter the token in the Setup Wizard (Step 3)
+1. Message [@BotFather](https://t.me/BotFather) — create a new bot — copy the token
+2. Enter the token in the Setup Wizard
 3. Get your chat ID from [@userinfobot](https://t.me/userinfobot) and enter it too
 4. Restart Galactic AI
 
@@ -163,14 +166,56 @@ Control Galactic AI from your phone:
 | Command | What it does |
 |---|---|
 | `/status` | Live system telemetry |
-| `/model` | Switch AI model |
+| `/model` | Switch AI model or select image generation model |
+| `/models` | Configure primary and fallback models |
 | `/browser` | Open a URL in the browser |
 | `/screenshot` | Take a browser screenshot |
 | `/cli` | Run a shell command |
 | `/compact` | Compact conversation context |
 | `/help` | Interactive menu |
 
+The `/model` menu includes an **Image Models** section to switch between Imagen 4 Ultra, Imagen 4, FLUX.1 Dev, Imagen 4 Fast, and FLUX.1 Schnell.
+
 Or just send any message — text or voice — and the AI responds. Voice messages are transcribed automatically and replied to with voice.
+
+---
+
+## Messaging Bridges (Optional)
+
+### Discord
+Full bot integration — AI responds in channels, handles slash commands, shows typing indicators.
+
+1. Create a bot at [discord.com/developers](https://discord.com/developers/applications)
+2. Add the bot token to `config.yaml` under `discord.bot_token`
+3. Set allowed channels and admin user ID
+4. Restart Galactic AI
+
+### WhatsApp
+Uses the official Meta Cloud API. Requires a Meta Business account and phone number.
+
+Set `whatsapp.phone_number_id`, `whatsapp.access_token`, and `whatsapp.verify_token` in `config.yaml`.
+
+### Gmail
+Monitors your inbox via IMAP. AI can read, respond to, and summarize emails.
+
+Set `gmail.email` and `gmail.app_password` in `config.yaml`. Requires a Gmail App Password (not your login password).
+
+---
+
+## Image Generation
+
+Generate images directly in chat or from Telegram:
+
+| Model | Provider | Quality |
+|---|---|---|
+| Imagen 4 Ultra | Google | Highest quality |
+| Imagen 4 | Google | High quality, fast |
+| Imagen 4 Fast | Google | Fastest |
+| FLUX.1 Dev | NVIDIA / Black Forest Labs | Excellent detail |
+| FLUX.1 Schnell | NVIDIA / Black Forest Labs | Very fast |
+| Stable Diffusion 3.5 Large | NVIDIA / Stability AI | Versatile |
+
+In Telegram: `/model` → Image Models to select your preferred generation backend.
 
 ---
 
@@ -208,8 +253,8 @@ One command — pulls the latest release directly from GitHub, no manual downloa
 
 Pin to a specific version if needed:
 ```powershell
-.\update.ps1 -Version v0.7.2   # Windows
-./update.sh v0.7.2              # Linux / macOS
+.\update.ps1 -Version v0.9.0   # Windows
+./update.sh v0.9.0              # Linux / macOS
 ```
 
 The updater will:
@@ -224,15 +269,20 @@ The updater will:
 
 ```
 Galactic-AI/
-├── galactic_core_v2.py       # Main entry point
-├── gateway_v2.py             # LLM routing + 72-tool ReAct loop
+├── galactic_core_v2.py       # Main entry point + orchestrator
+├── gateway_v2.py             # LLM routing + 92-tool ReAct loop
 ├── web_deck.py               # Web Control Deck (http://127.0.0.1:17789)
-├── telegram_bridge.py        # Telegram bot + voice I/O
+├── telegram_bridge.py        # Telegram bot + voice I/O + image model selector
+├── discord_bridge.py         # Discord bot bridge
+├── whatsapp_bridge.py        # WhatsApp Cloud API bridge
+├── gmail_bridge.py           # Gmail IMAP bridge
 ├── personality.py            # AI personality + MEMORY.md loader
 ├── memory_module_v2.py       # Persistent memory (memory_aura.json)
 ├── model_manager.py          # 14-provider model management
 ├── ollama_manager.py         # Ollama auto-discovery + health monitoring
-├── scheduler.py              # Task scheduling engine
+├── scheduler.py              # Cron-style task scheduler (APScheduler)
+├── nvidia_gateway.py         # NVIDIA NIM image generation gateway
+├── splash.py                 # Startup splash screen
 ├── config.yaml               # All configuration (generated by setup wizard)
 ├── install.ps1 / install.sh  # One-command installers
 ├── launch.ps1 / launch.sh    # Launchers
@@ -241,6 +291,7 @@ Galactic-AI/
     ├── browser_executor_pro.py   # Playwright browser automation (56 actions)
     ├── shell_executor.py         # Shell command execution
     ├── subagent_manager.py       # Multi-agent orchestration
+    ├── desktop_tool.py           # OS-level mouse/keyboard/screenshot automation
     └── ping.py                   # Connectivity monitoring
 ```
 
@@ -252,6 +303,7 @@ Galactic-AI/
 - Protected by a passphrase set in the setup wizard (stored as SHA-256 hash, plaintext never saved)
 - API keys live in `config.yaml` on your machine — **never committed to git** (excluded by `.gitignore`)
 - Ollama runs 100% on your machine — zero data leaves your computer in local mode
+- Per-tool timeout (60s) prevents any single operation from hanging the system
 
 ---
 
@@ -274,6 +326,12 @@ You need an OpenAI or Groq API key configured in the setup wizard for speech-to-
 
 **Memory tab is empty?**
 Click into the Memory tab — it auto-creates the .md files with starter templates on first visit.
+
+**Telegram /model menu shows empty provider?**
+Make sure the provider's API key is set in `config.yaml`. Providers with empty keys are still listed but will fail when selected.
+
+**AI response taking too long in Telegram?**
+Individual tools time out after 60 seconds. The overall response limit is 180 seconds. If a tool hangs, it will be skipped with an error message and the AI will try another approach.
 
 ---
 
@@ -299,7 +357,17 @@ MIT License — see LICENSE file.
 
 | Version | Highlights |
 |---|---|
-| **v0.7.2** | NVIDIA single-key setup (one `nvapi-` key for all 500+ models on build.nvidia.com), quick-pick model chips, custom model field, NVIDIA Bearer token fix, Ollama 10-min timeout, max_turns 50 |
-| **v0.7.1** | Persistent memory, voice I/O, chat persistence, personality config, Claude Pro OAuth, one-command auto-updater |
+| **v0.9.0** | Discord/WhatsApp/Gmail bridges, Imagen 4, Telegram image model selector, Thinking tab persistence, chat timestamps, per-tool timeout, graceful shutdown fix, all providers in Telegram model menu |
+| **v0.8.1** | Typing indicator heartbeat fix, fast Ctrl+C shutdown, duplicate message guard |
+| **v0.8.0** | 17 new tools — clipboard, notifications, window management, HTTP requests, QR codes, system info, text transforms, SD3.5 image gen, FLUX auto-generate |
+| **v0.7.9** | Image delivery to Telegram & Control Deck, FLUX auto-generate, dual FLUX API keys |
+| **v0.7.8** | 9 new NVIDIA models, FLUX image gen tool, thinking models, file attachment fix |
+| **v0.7.7** | Enhanced browser automation — accessibility-driven interactions, network interception |
+| **v0.7.6** | Desktop automation plugin (pyautogui), template matching, clipboard tools |
+| **v0.7.5** | Sub-agent orchestration, parallel task execution, multi-agent workflows |
+| **v0.7.4** | Browser session save/restore, geolocation spoofing, proxy support, media emulation |
+| **v0.7.3** | Browser tracing, iframe support, storage tools, advanced browser control |
+| **v0.7.2** | NVIDIA single-key setup, quick-pick model chips, custom model field, Ollama 10-min timeout |
+| **v0.7.1** | Persistent memory, voice I/O, chat persistence, personality config, one-command auto-updater |
 | **v0.7.0** | 14 AI providers, Gemini dupe fix, TTS config, OpenClaw migration step, expanded installer |
 | **v0.6.0-Alpha** | Initial public release — 72 tools, 5 providers, Telegram bot, web control deck |
