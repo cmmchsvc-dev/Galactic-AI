@@ -4,6 +4,44 @@ All notable changes to Galactic AI are documented here.
 
 ---
 
+## [v1.0.3] — 2026-02-21
+
+### Added
+- **🎤 Voice Input Button** — Microphone button in the Control Deck chat bar. Click to record, sends audio to Whisper (OpenAI/Groq) for transcription, inserts text into the chat input automatically
+- **🔥 Auto Windows Firewall Rule** — On startup with `remote_access: true`, Galactic AI automatically adds a Windows Firewall inbound rule allowing TCP traffic on the Control Deck port (private networks only)
+- **"CONTROL DECK" label** in the top bar next to the model status badge
+
+### Fixed
+- **Remote access HTTP mode** — Server now binds to `0.0.0.0` on plain HTTP instead of HTTPS with self-signed TLS. Self-signed certs caused `ERR_EMPTY_RESPONSE` on the PC browser and connection timeouts on phones. JWT authentication still protects all remote API endpoints
+- **Mobile app HTTPS default** — "Use HTTPS" checkbox now defaults to OFF (correct for LAN connections). Label updated to "Use HTTPS (for internet access)"
+- **Updater em dash encoding** — Fixed `update.ps1` parse error caused by em dash character corruption in some environments
+
+---
+
+## [v1.0.2] — 2026-02-21
+
+### Added
+- **Localhost bypass for remote auth** — Local connections from `127.0.0.1`/`::1` bypass JWT auth so the PC is never locked out of the Control Deck when `remote_access: true`
+- **"CONTROL DECK" label** in top bar (first introduced here, improved in v1.0.3)
+
+### Fixed
+- **QR code scanner compatibility** — QR pairing code now uses standard black-on-white colors with higher error correction (`ERROR_CORRECT_H`) for reliable phone camera scanning. Colored QR codes were failing on most phone cameras
+- **Test Voice button now plays audio** — Previously only generated the MP3 server-side without streaming it back. Now uses `/api/tts` to stream audio bytes to the browser and plays them directly
+- **Desktop shortcut icon** — `galactic_ai_flux_v4.ico` added to the repository (was missing, referenced by `create_shortcut.ps1`)
+
+---
+
+## [v1.0.1] — 2026-02-21
+
+### Added
+- **Config auto-migration** — On startup, `load_config()` detects missing config sections from newer versions and adds them with safe defaults. Affected sections: `gmail`, `discord`, `whatsapp`, `webhooks`, `web`, `elevenlabs`, `models`, `tool_timeouts`, `aliases`. Existing values are never overwritten
+- **Updater `-Force` flag** — `.\update.ps1 -Force` and `./update.sh --force` re-download even when the installed version matches the latest release
+
+### Fixed
+- Missing release ZIP assets — v1.0.0 release only contained the APK. Added `windows.zip`, `macos.zip`, `linux.tar.gz`, `universal.zip`, and `SHA256SUMS.txt`
+
+---
+
 ## [v1.0.0] — 2026-02-21
 
 ### Added
