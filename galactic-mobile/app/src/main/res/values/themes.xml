@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <style name="GalacticTheme" parent="Theme.Material3.DayNight.NoActionBar">
+        <item name="android:windowBackground">@color/bg</item>
+        <item name="android:statusBarColor">@color/bg2</item>
+        <item name="android:navigationBarColor">@color/bg</item>
+        <item name="android:windowLightStatusBar">false</item>
+        <item name="colorPrimary">@color/cyan</item>
+        <item name="colorPrimaryDark">@color/bg2</item>
+        <item name="colorAccent">@color/pink</item>
+        <item name="android:textColor">@color/text_primary</item>
+        <item name="android:colorBackground">@color/bg</item>
+    </style>
+
+    <style name="GalacticTheme.Splash" parent="GalacticTheme">
+        <item name="android:windowFullscreen">true</item>
+    </style>
+</resources>
