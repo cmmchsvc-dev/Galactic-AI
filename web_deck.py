@@ -2909,6 +2909,26 @@ function switchTab(name) {
     const tBtn = document.getElementById('thinking-tab-btn');
     if (tBtn) { tBtn.style.color = ''; tBtn.style.textShadow = ''; }
   }
+  // Scroll to bottom when switching to content tabs — must run after the
+  // pane becomes visible so the browser can compute scroll height.
+  if (name === 'chat') {
+    requestAnimationFrame(() => {
+      const el = document.getElementById('chat-log');
+      if (el) el.scrollTop = el.scrollHeight;
+    });
+  }
+  if (name === 'logs') {
+    requestAnimationFrame(() => {
+      const el = document.getElementById('logs-scroll');
+      if (el) el.scrollTop = el.scrollHeight;
+    });
+  }
+  if (name === 'thinking') {
+    requestAnimationFrame(() => {
+      const el = document.getElementById('thinking-scroll');
+      if (el) el.scrollTop = el.scrollHeight;
+    });
+  }
   try { localStorage.setItem('gal_activeTab', name); } catch(e) {}
 }
 
