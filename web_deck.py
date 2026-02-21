@@ -47,6 +47,7 @@ class GalacticWebDeck:
         self.app.router.add_get('/api/logs', self.handle_logs)
         self.app.router.add_get('/api/image/{filename}', self.handle_serve_image)
         self.app.router.add_get('/api/traces', self.handle_traces)
+        self.app.router.add_post('/api/save_key', self.handle_save_key)
         self.trace_buffer = []  # last 500 agent trace entries for persistence
         
     async def handle_index(self, request):
@@ -158,6 +159,15 @@ body{background:var(--bg);color:var(--text);font-family:var(--font);height:100vh
 .btn.secondary{background:var(--bg3);border:1px solid var(--border);color:var(--text)}
 .btn.secondary:hover{border-color:var(--border-hi)}
 #tool-result{margin-top:14px;padding:12px;background:var(--bg);border:1px solid var(--border);border-radius:7px;font-size:0.84rem;font-family:var(--mono);white-space:pre-wrap;max-height:220px;overflow-y:auto;display:none}
+
+/* ── API KEY MODAL ───────────────────────────────────────────────────────── */
+#key-modal{display:none;position:fixed;inset:0;background:rgba(0,0,0,0.85);z-index:5500;align-items:center;justify-content:center;backdrop-filter:blur(4px)}
+#key-modal.open{display:flex}
+#key-modal-inner{background:var(--bg2);border:1px solid var(--yellow);border-radius:16px;padding:28px;width:500px;max-width:95vw;box-shadow:0 0 40px rgba(255,204,0,0.15)}
+#key-modal-inner h3{color:var(--yellow);margin-bottom:10px;font-size:1.05rem}
+#key-modal-inner p{color:var(--dim);font-size:0.88rem;margin-bottom:18px;line-height:1.5}
+#key-input{width:100%;padding:10px 14px;background:var(--bg3);border:1px solid var(--border);border-radius:9px;color:var(--text);font-size:0.9rem;font-family:var(--mono);outline:none;transition:border .2s;margin-bottom:6px}
+#key-input:focus{border-color:var(--yellow);box-shadow:0 0 0 2px rgba(255,204,0,0.1)}
 
 /* ── PLUGINS PANE ────────────────────────────────────────────────────────── */
 #plugins-pane{padding:18px;overflow-y:auto}
@@ -980,6 +990,23 @@ body.glow-max .status-dot{box-shadow:0 0 14px var(--green),0 0 28px rgba(0,255,1
   </div>
 </div>
 
+<!-- API KEY MODAL -->
+<div id="key-modal" onclick="if(event.target===this)this.classList.remove('open')">
+  <div id="key-modal-inner">
+    <h3 id="key-modal-title">\ud83d\udd11 API Key Required</h3>
+    <p id="key-modal-desc">Enter your API key to use this provider.</p>
+    <div style="margin-bottom:14px">
+      <label style="display:block;font-size:0.82rem;color:var(--yellow);margin-bottom:6px;font-family:var(--mono)" id="key-modal-label">API Key</label>
+      <input id="key-input" type="password" placeholder="Paste your API key here..." autocomplete="off">
+      <div style="font-size:0.72rem;color:var(--dim);margin-top:4px">Your key will be saved to config.yaml and never shared.</div>
+    </div>
+    <div class="modal-btns">
+      <button class="btn secondary" onclick="document.getElementById('key-modal').classList.remove('open')">Cancel</button>
+      <button class="btn primary" onclick="submitApiKey()" style="background:linear-gradient(135deg,var(--yellow),var(--orange))">Save &amp; Switch</button>
+    </div>
+  </div>
+</div>
+
 <script>
 // State
 let token = localStorage.getItem('gal_token') || '';
@@ -1398,7 +1425,9 @@ function connectWS() {
 
 // Chat
 function fmtTime(ts) {
-  if (ts) return new Date(ts * 1000).toLocaleTimeString();
+  if (!ts) return new Date().toLocaleTimeString();
+  if (typeof ts === 'string') return new Date(ts).toLocaleTimeString();
+  if (typeof ts === 'number') return new Date(ts * 1000).toLocaleTimeString();
   return new Date().toLocaleTimeString();
 }
 
@@ -1705,96 +1734,100 @@ async function togglePlugin(name, enabled) {
 
 // Models
 const ALL_MODELS = {
-  'Google': [
-    {name:'Gemini 3.1 Pro 🧠 [LATEST]', id:'gemini-3.1-pro-preview', provider:'google'},
-    {name:'Gemini 3 Flash ⚡', id:'gemini-3-flash-preview', provider:'google'},
-    {name:'Gemini 3 Pro', id:'gemini-3-pro-preview', provider:'google'},
-    {name:'Gemini 2.5 Flash', id:'gemini-2.5-flash', provider:'google'},
-    {name:'Gemini 2.5 Pro', id:'gemini-2.5-pro', provider:'google'},
-    {name:'Gemini 2.0 Flash', id:'gemini-2.0-flash', provider:'google'},
+  '\ud83d\udd35 Google': [
+    {name:'Gemini 3.1 Pro \ud83e\udde0 [LATEST]', id:'gemini-3.1-pro-preview', provider:'google'},
+    {name:'Gemini 3 Flash \u26a1', id:'gemini-3-flash-preview', provider:'google'},
+    {name:'Gemini 3 Pro \ud83e\udde0', id:'gemini-3-pro-preview', provider:'google'},
+    {name:'Gemini 2.5 Flash \ud83c\udfce\ufe0f', id:'gemini-2.5-flash', provider:'google'},
+    {name:'Gemini 2.5 Pro \ud83e\uddbe', id:'gemini-2.5-pro', provider:'google'},
+    {name:'Gemini 2.0 Flash \u26a1', id:'gemini-2.0-flash', provider:'google'},
   ],
-  'Anthropic': [
-    {name:'Claude Opus 4.6 [LATEST]', id:'claude-opus-4-6', provider:'anthropic'},
-    {name:'Claude Sonnet 4.6', id:'claude-sonnet-4-6', provider:'anthropic'},
-    {name:'Claude Haiku 4.5 (fast)', id:'claude-haiku-4-5', provider:'anthropic'},
-    {name:'Claude Sonnet 4.5 (legacy)', id:'claude-sonnet-4-5', provider:'anthropic'},
-    {name:'Claude Opus 4.5 (legacy)', id:'claude-opus-4-5', provider:'anthropic'},
+  '\ud83d\udfe3 Anthropic': [
+    {name:'Claude Opus 4.6 \ud83d\udc51 [LATEST]', id:'claude-opus-4-6', provider:'anthropic'},
+    {name:'Claude Sonnet 4.6 \ud83c\udf1f', id:'claude-sonnet-4-6', provider:'anthropic'},
+    {name:'Claude Haiku 4.5 \u26a1 (fast)', id:'claude-haiku-4-5', provider:'anthropic'},
+    {name:'Claude Sonnet 4.5 \ud83d\ude80 (legacy)', id:'claude-sonnet-4-5', provider:'anthropic'},
+    {name:'Claude Opus 4.5 \ud83c\udfdb\ufe0f (legacy)', id:'claude-opus-4-5', provider:'anthropic'},
   ],
-  'OpenAI': [
-    {name:'GPT-4o [LATEST]', id:'gpt-4o', provider:'openai'},
-    {name:'GPT-4.1', id:'gpt-4.1', provider:'openai'},
-    {name:'GPT-4o Mini', id:'gpt-4o-mini', provider:'openai'},
-    {name:'o3 Mini', id:'o3-mini', provider:'openai'},
-    {name:'o1', id:'o1', provider:'openai'},
+  '\ud83d\udfe2 OpenAI': [
+    {name:'GPT-4o \ud83e\udde0 [LATEST]', id:'gpt-4o', provider:'openai'},
+    {name:'GPT-4.1 \ud83c\udf1f', id:'gpt-4.1', provider:'openai'},
+    {name:'GPT-4o Mini \u26a1', id:'gpt-4o-mini', provider:'openai'},
+    {name:'o3 Mini \ud83e\uddee', id:'o3-mini', provider:'openai'},
+    {name:'o1 \ud83c\udfdb\ufe0f', id:'o1', provider:'openai'},
   ],
-  'xAI': [
-    {name:'Grok 4 [LATEST]', id:'grok-4', provider:'xai'},
-    {name:'Grok 4 Fast', id:'grok-4-fast', provider:'xai'},
-    {name:'Grok 3', id:'grok-3', provider:'xai'},
-    {name:'Grok 3 Mini', id:'grok-3-mini', provider:'xai'},
+  '\u26a1 xAI': [
+    {name:'Grok 4 \ud83e\udde0 [LATEST]', id:'grok-4', provider:'xai'},
+    {name:'Grok 4 Fast \u26a1', id:'grok-4-fast', provider:'xai'},
+    {name:'Grok 3 \ud83c\udf0c', id:'grok-3', provider:'xai'},
+    {name:'Grok 3 Mini \ud83c\udfaf', id:'grok-3-mini', provider:'xai'},
   ],
-  'Groq (Fast)': [
-    {name:'Llama 4 Scout 17B [FAST]', id:'llama-4-scout-17b-16e-instruct', provider:'groq'},
-    {name:'Llama 4 Maverick 17B', id:'llama-4-maverick-17b-128e-instruct', provider:'groq'},
-    {name:'Llama 3.3 70B', id:'llama-3.3-70b-versatile', provider:'groq'},
-    {name:'DeepSeek R1 70B', id:'deepseek-r1-distill-llama-70b', provider:'groq'},
-    {name:'Qwen 3 32B', id:'qwen-3-32b', provider:'groq'},
-    {name:'Gemma 3 27B', id:'gemma2-9b-it', provider:'groq'},
+  '\ud83d\udd2e DeepSeek': [
+    {name:'DeepSeek V3 \ud83e\udde0 [LATEST]', id:'deepseek-chat', provider:'deepseek'},
+    {name:'DeepSeek R1 (Reasoning) \ud83e\uddee', id:'deepseek-reasoner', provider:'deepseek'},
   ],
-  'Mistral': [
-    {name:'Mistral Small 3.1', id:'mistral-small-latest', provider:'mistral'},
-    {name:'Codestral (Code)', id:'codestral-latest', provider:'mistral'},
-    {name:'Devstral (Agents)', id:'devstral-small-latest', provider:'mistral'},
-    {name:'Mistral Large 2', id:'mistral-large-latest', provider:'mistral'},
-    {name:'Magistral Medium', id:'magistral-medium-latest', provider:'mistral'},
+  '\ud83c\udfce\ufe0f Groq (Fast)': [
+    {name:'Llama 4 Scout 17B \u26a1 [FAST]', id:'llama-4-scout-17b-16e-instruct', provider:'groq'},
+    {name:'Llama 4 Maverick 17B \ud83e\uddbe', id:'llama-4-maverick-17b-128e-instruct', provider:'groq'},
+    {name:'Llama 3.3 70B \ud83c\udfdb\ufe0f', id:'llama-3.3-70b-versatile', provider:'groq'},
+    {name:'DeepSeek R1 70B \ud83e\uddee', id:'deepseek-r1-distill-llama-70b', provider:'groq'},
+    {name:'Qwen 3 32B \ud83e\udde0', id:'qwen-3-32b', provider:'groq'},
+    {name:'Gemma 3 27B \ud83c\udf0c', id:'gemma2-9b-it', provider:'groq'},
   ],
-  'Cerebras': [
-    {name:'Llama 3.3 70B [FAST]', id:'llama3.3-70b', provider:'cerebras'},
-    {name:'Llama 3.1 8B', id:'llama3.1-8b', provider:'cerebras'},
-    {name:'Qwen 3 32B', id:'qwen-3-32b', provider:'cerebras'},
+  '\ud83c\udf0a Mistral': [
+    {name:'Mistral Small 3.1 \u26a1', id:'mistral-small-latest', provider:'mistral'},
+    {name:'Codestral (Code) \ud83e\uddbe', id:'codestral-latest', provider:'mistral'},
+    {name:'Devstral (Agents) \ud83e\udd16', id:'devstral-small-latest', provider:'mistral'},
+    {name:'Mistral Large 2 \ud83c\udfdb\ufe0f', id:'mistral-large-latest', provider:'mistral'},
+    {name:'Magistral Medium \ud83e\udde0', id:'magistral-medium-latest', provider:'mistral'},
   ],
-  'OpenRouter': [
-    {name:'Claude Opus 4.6 (via OR)', id:'anthropic/claude-opus-4-6', provider:'openrouter'},
-    {name:'Claude Sonnet 4.6 (via OR)', id:'anthropic/claude-sonnet-4-6', provider:'openrouter'},
-    {name:'GPT-4o (via OR)', id:'openai/gpt-4o', provider:'openrouter'},
-    {name:'Gemini 2.5 Pro (via OR)', id:'google/gemini-2.5-pro', provider:'openrouter'},
-    {name:'Llama 4 Scout (via OR)', id:'meta-llama/llama-4-scout', provider:'openrouter'},
-    {name:'DeepSeek V3 (via OR)', id:'deepseek/deepseek-chat', provider:'openrouter'},
+  '\u26a1 Cerebras': [
+    {name:'Llama 3.3 70B \u26a1 [FAST]', id:'llama3.3-70b', provider:'cerebras'},
+    {name:'Llama 3.1 8B \ud83c\udfce\ufe0f', id:'llama3.1-8b', provider:'cerebras'},
+    {name:'Qwen 3 32B \ud83e\udde0', id:'qwen-3-32b', provider:'cerebras'},
   ],
-  'HuggingFace': [
-    {name:'Qwen3 235B', id:'Qwen/Qwen3-235B-A22B', provider:'huggingface'},
-    {name:'Llama 4 Scout', id:'meta-llama/Llama-4-Scout-17B-16E-Instruct', provider:'huggingface'},
-    {name:'DeepSeek V3', id:'deepseek-ai/DeepSeek-V3-0324', provider:'huggingface'},
+  '\ud83d\udd00 OpenRouter': [
+    {name:'Claude Opus 4.6 (via OR) \ud83d\udc51', id:'anthropic/claude-opus-4-6', provider:'openrouter'},
+    {name:'Claude Sonnet 4.6 (via OR) \ud83c\udf1f', id:'anthropic/claude-sonnet-4-6', provider:'openrouter'},
+    {name:'GPT-4o (via OR) \ud83e\udde0', id:'openai/gpt-4o', provider:'openrouter'},
+    {name:'Gemini 2.5 Pro (via OR) \ud83e\uddbe', id:'google/gemini-2.5-pro', provider:'openrouter'},
+    {name:'Llama 4 Scout (via OR) \u26a1', id:'meta-llama/llama-4-scout', provider:'openrouter'},
+    {name:'DeepSeek V3 (via OR) \ud83d\ude80', id:'deepseek/deepseek-chat', provider:'openrouter'},
   ],
-  'Kimi / Moonshot': [
-    {name:'Kimi K2.5 (Thinking) 🌙 [via NVIDIA]', id:'moonshotai/kimi-k2.5', provider:'nvidia'},
+  '\ud83e\udd17 HuggingFace': [
+    {name:'Qwen3 235B \ud83e\udde0', id:'Qwen/Qwen3-235B-A22B', provider:'huggingface'},
+    {name:'Llama 4 Scout \u26a1', id:'meta-llama/Llama-4-Scout-17B-16E-Instruct', provider:'huggingface'},
+    {name:'DeepSeek V3 \ud83d\ude80', id:'deepseek-ai/DeepSeek-V3-0324', provider:'huggingface'},
   ],
-  'ZAI / GLM': [
-    {name:'GLM-5 (Thinking) 🧠 [via NVIDIA]', id:'z-ai/glm5', provider:'nvidia'},
+  '\ud83c\udf19 Kimi / Moonshot': [
+    {name:'Kimi K2.5 (Thinking) \ud83c\udf19 [via NVIDIA]', id:'moonshotai/kimi-k2.5', provider:'nvidia'},
   ],
-  'MiniMax': [
-    {name:'MiniMax M2.1 🎯 [via NVIDIA]', id:'minimaxai/minimax-m2.1', provider:'nvidia'},
+  '\ud83e\udde0 ZAI / GLM': [
+    {name:'GLM-5 (Thinking) \ud83e\udde0 [via NVIDIA]', id:'z-ai/glm5', provider:'nvidia'},
   ],
-  'FLUX (Image Gen)': [
-    {name:'FLUX.1 Schnell ⚡️ (fast)', id:'black-forest-labs/flux.1-schnell', provider:'nvidia'},
-    {name:'FLUX.1 Dev 🎨 (quality)', id:'black-forest-labs/flux.1-dev', provider:'nvidia'},
+  '\ud83c\udfaf MiniMax': [
+    {name:'MiniMax M2.1 \ud83c\udfaf [via NVIDIA]', id:'minimaxai/minimax-m2.1', provider:'nvidia'},
   ],
-  'NVIDIA': [
-    {name:'GLM-5 (Thinking) 🧠', id:'z-ai/glm5', provider:'nvidia'},
-    {name:'Kimi K2.5 (Thinking) 🌙', id:'moonshotai/kimi-k2.5', provider:'nvidia'},
-    {name:'Qwen 3.5 397B (Thinking) 🦾', id:'qwen/qwen3.5-397b-a17b', provider:'nvidia'},
-    {name:'Nemotron 30B (Reasoning) ⚛️', id:'nvidia/nemotron-3-nano-30b-a3b', provider:'nvidia'},
-    {name:'Nemotron Nano VL 👁️', id:'nvidia/nemotron-nano-12b-v2-vl', provider:'nvidia'},
-    {name:'StepFun 3.5 Flash ⚡️', id:'stepfun-ai/step-3.5-flash', provider:'nvidia'},
-    {name:'MiniMax M2.1 🎯', id:'minimaxai/minimax-m2.1', provider:'nvidia'},
-    {name:'DeepSeek V3.2 (Math) 🚀', id:'deepseek-ai/deepseek-v3.2', provider:'nvidia'},
-    {name:'Llama 405B (Reasoning) 🏛️', id:'meta/llama-3.1-405b-instruct', provider:'nvidia'},
-    {name:'Phi-3.5 Vision (OCR) 👁️', id:'microsoft/phi-3.5-vision-instruct', provider:'nvidia'},
-    {name:'Gemma 3 27B (Chat) 🌌', id:'google/gemma-3-27b-it', provider:'nvidia'},
-    {name:'Mistral Large 3 (General) 🌊', id:'mistralai/mistral-large-3-675b-instruct-2512', provider:'nvidia'},
-    {name:'Qwen 480B Coder 🦾', id:'qwen/qwen3-coder-480b-a35b-instruct', provider:'nvidia'}
+  '\ud83c\udfa8 FLUX (Image Gen)': [
+    {name:'FLUX.1 Schnell \u26a1\ufe0f (fast)', id:'black-forest-labs/flux.1-schnell', provider:'nvidia'},
+    {name:'FLUX.1 Dev \ud83c\udfa8 (quality)', id:'black-forest-labs/flux.1-dev', provider:'nvidia'},
   ],
-  'Ollama (Local)': []
+  '\ud83d\udfe9 NVIDIA': [
+    {name:'GLM-5 (Thinking) \ud83e\udde0', id:'z-ai/glm5', provider:'nvidia'},
+    {name:'Kimi K2.5 (Thinking) \ud83c\udf19', id:'moonshotai/kimi-k2.5', provider:'nvidia'},
+    {name:'Qwen 3.5 397B (Thinking) \ud83e\uddbe', id:'qwen/qwen3.5-397b-a17b', provider:'nvidia'},
+    {name:'Nemotron 30B (Reasoning) \u269b\ufe0f', id:'nvidia/nemotron-3-nano-30b-a3b', provider:'nvidia'},
+    {name:'Nemotron Nano VL \ud83d\udc41\ufe0f', id:'nvidia/nemotron-nano-12b-v2-vl', provider:'nvidia'},
+    {name:'StepFun 3.5 Flash \u26a1\ufe0f', id:'stepfun-ai/step-3.5-flash', provider:'nvidia'},
+    {name:'MiniMax M2.1 \ud83c\udfaf', id:'minimaxai/minimax-m2.1', provider:'nvidia'},
+    {name:'DeepSeek V3.2 (Math) \ud83d\ude80', id:'deepseek-ai/deepseek-v3.2', provider:'nvidia'},
+    {name:'Llama 405B (Reasoning) \ud83c\udfdb\ufe0f', id:'meta/llama-3.1-405b-instruct', provider:'nvidia'},
+    {name:'Phi-3.5 Vision (OCR) \ud83d\udc41\ufe0f', id:'microsoft/phi-3.5-vision-instruct', provider:'nvidia'},
+    {name:'Gemma 3 27B (Chat) \ud83c\udf0c', id:'google/gemma-3-27b-it', provider:'nvidia'},
+    {name:'Mistral Large 3 (General) \ud83c\udf0a', id:'mistralai/mistral-large-3-675b-instruct-2512', provider:'nvidia'},
+    {name:'Qwen 480B Coder \ud83e\uddbe', id:'qwen/qwen3-coder-480b-a35b-instruct', provider:'nvidia'}
+  ],
+  '\ud83e\udd99 Ollama (Local)': []
 };
 let currentProvider = '', currentModelId = '';
 
@@ -1825,7 +1858,8 @@ function updateOllamaHealth(d) {
 }
 
 function renderOllamaModels(models) {
-  ALL_MODELS['Ollama (Local)'] = models.map(m => ({name: m, id: m, provider: 'ollama'}));
+  const ollamaKey = Object.keys(ALL_MODELS).find(k => k.includes('Ollama'));
+  if (ollamaKey) ALL_MODELS[ollamaKey] = models.map(m => ({name: m + ' \ud83e\udd99', id: m, provider: 'ollama'}));
   renderModelGrid();
 }
 
@@ -1843,7 +1877,7 @@ function renderModelGrid() {
   for (const [provName, models] of Object.entries(ALL_MODELS)) {
     const sec = document.createElement('div');
     sec.className = 'provider-section';
-    if (provName === 'Ollama (Local)') sec.id = 'ollama-section';
+    if (provName.includes('Ollama')) sec.id = 'ollama-section';
     sec.innerHTML = `<div class="provider-label">${provName}</div><div class="model-grid"></div>`;
     const grid = sec.querySelector('.model-grid');
     if (!models.length) {
@@ -1861,6 +1895,8 @@ function renderModelGrid() {
   }
 }
 
+let pendingKeySwitch = null;
+
 async function switchModel(provider, modelId, btn) {
   const r = await fetch('/api/switch_model', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({provider, model: modelId})});
   const d = await r.json();
@@ -1873,6 +1909,32 @@ async function switchModel(provider, modelId, btn) {
     document.getElementById('cfg-provider').value = provider;
     document.getElementById('cfg-model').value = modelId;
     addLog(`[Web] Switched model: ${provider}/${modelId}`);
+  } else if (d.needs_key) {
+    pendingKeySwitch = {provider, modelId, btn};
+    const pName = provider.charAt(0).toUpperCase() + provider.slice(1);
+    document.getElementById('key-modal-title').textContent = '\ud83d\udd11 ' + pName + ' API Key Required';
+    document.getElementById('key-modal-desc').textContent = 'No API key configured for ' + pName + '. Enter your key to activate ' + modelId + '.';
+    document.getElementById('key-modal-label').textContent = pName + ' API Key';
+    document.getElementById('key-input').value = '';
+    document.getElementById('key-modal').classList.add('open');
+    setTimeout(() => document.getElementById('key-input').focus(), 100);
+  }
+}
+
+async function submitApiKey() {
+  const key = document.getElementById('key-input').value.trim();
+  if (!key) { document.getElementById('key-input').style.borderColor = 'var(--red)'; return; }
+  if (!pendingKeySwitch) return;
+  const r = await fetch('/api/save_key', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({provider: pendingKeySwitch.provider, api_key: key})});
+  const d = await r.json();
+  if (d.ok) {
+    document.getElementById('key-modal').classList.remove('open');
+    addLog('[Web] API key saved for ' + pendingKeySwitch.provider);
+    await switchModel(pendingKeySwitch.provider, pendingKeySwitch.modelId, pendingKeySwitch.btn);
+    pendingKeySwitch = null;
+  } else {
+    document.getElementById('key-input').style.borderColor = 'var(--red)';
+    addLog('[Error] Failed to save key: ' + (d.error || 'Unknown'));
   }
 }
 
@@ -2617,8 +2679,46 @@ setInterval(() => {
             self.core.gateway.llm.model = model
             if hasattr(self.core, 'model_manager'):
                 self.core.model_manager._set_api_key(provider)
+            # Check if API key is actually configured
+            current_key = getattr(self.core.gateway.llm, 'api_key', '')
+            if provider != 'ollama' and (not current_key or current_key == 'NONE'):
+                return web.json_response({'ok': False, 'needs_key': True, 'provider': provider, 'model': model})
             await self.core.log(f"Shifted Model via Web Deck: {model}", priority=2)
             return web.json_response({'ok': True, 'provider': provider, 'model': model})
+        except Exception as e:
+            return web.json_response({'error': str(e)}, status=500)
+
+    async def handle_save_key(self, request):
+        """POST /api/save_key — {provider, api_key} — save an API key and apply it."""
+        try:
+            import yaml
+            data = await request.json()
+            provider = data.get('provider', '')
+            api_key = data.get('api_key', '').strip()
+            if not provider or not api_key:
+                return web.json_response({'error': 'provider and api_key required'}, status=400)
+            # Update in-memory config
+            cfg = self.core.config
+            if 'providers' not in cfg:
+                cfg['providers'] = {}
+            if provider not in cfg['providers']:
+                cfg['providers'][provider] = {}
+            cfg['providers'][provider]['apiKey'] = api_key
+            # Persist to config.yaml
+            cfg_path = getattr(self.core, 'config_path', 'config.yaml')
+            with open(cfg_path, 'r', encoding='utf-8') as f:
+                file_config = yaml.safe_load(f) or {}
+            if 'providers' not in file_config:
+                file_config['providers'] = {}
+            if provider not in file_config['providers']:
+                file_config['providers'][provider] = {}
+            file_config['providers'][provider]['apiKey'] = api_key
+            with open(cfg_path, 'w', encoding='utf-8') as f:
+                yaml.dump(file_config, f, default_flow_style=False, allow_unicode=True)
+            # Apply to live gateway
+            self.core.gateway.llm.api_key = api_key
+            await self.core.log(f"API key saved for {provider} via Web Deck", priority=2)
+            return web.json_response({'ok': True})
         except Exception as e:
             return web.json_response({'error': str(e)}, status=500)
 
