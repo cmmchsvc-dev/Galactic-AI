@@ -1,6 +1,6 @@
 # Galactic AI — Feature Reference
 
-Complete feature reference for Galactic AI Automation Suite **v1.0.0**.
+Complete feature reference for Galactic AI Automation Suite **v1.0.3**.
 
 ---
 
@@ -409,7 +409,7 @@ When a user sends a voice message via Telegram, the AI automatically:
 ## Web Control Deck
 
 ### Tabs
-- **Chat** — Full conversational interface with tool output; timestamps on every message; chat history persists across page refreshes (`logs/chat_history.jsonl`)
+- **Chat** — Full conversational interface with tool output; 🎤 voice input mic button (click to record, transcribed via Whisper, inserted into chat); timestamps on every message; chat history persists across page refreshes (`logs/chat_history.jsonl`)
 - **Thinking** — Real-time agent trace viewer; watch the ReAct loop think and act step by step; persists across page refreshes via `/api/traces` backend buffer (last 500 entries)
 - **Status** — Live telemetry: provider, model, token usage, uptime, fallback chain status, plugin states, version badge; 30+ data fields across 6 sections
 - **Models** — Browse and switch all available models, ordered best-to-worst with tier emoji indicators; per-model override dropdowns
@@ -547,31 +547,34 @@ Enable secure remote connections to Galactic AI from any device on your LAN or t
 
 ### Setup
 Set `web.remote_access: true` in `config.yaml`. On next startup, Galactic AI:
-- Binds to `0.0.0.0` instead of localhost
-- Auto-generates a self-signed TLS certificate (`certs/cert.pem`, `certs/key.pem`)
-- Serves over HTTPS on port 17789
-- Requires JWT authentication on all API endpoints
+- Binds to `0.0.0.0` (all network interfaces) on plain HTTP
+- Requires JWT authentication on all `/api/*` endpoints
+- Automatically adds a Windows Firewall inbound rule for port 17789 (private networks only)
+- Local connections from `127.0.0.1`/`::1` bypass auth — PC browser always has access
 - Logs a startup warning that remote access is active
 
 ### Security Layers
 
 | Layer | Mechanism | Details |
 |---|---|---|
-| Transport | TLS 1.2+ | Auto-generated self-signed certificate |
-| Authentication | JWT (HMAC-SHA256) | 24-hour expiry, signed with auto-generated secret |
-| API Protection | Auth middleware | Every `/api/*` route requires valid JWT |
+| Transport | Plain HTTP on LAN | No TLS — avoids `ERR_EMPTY_RESPONSE` from self-signed certs; JWT protects all endpoints |
+| Authentication | JWT (HMAC-SHA256) | 24-hour expiry, signed with auto-generated 64-char hex secret |
+| Localhost Bypass | IP check | `127.0.0.1` and `::1` skip auth — PC is never locked out |
+| API Protection | Auth middleware | Every `/api/*` route requires valid JWT (except login/setup) |
 | Brute Force | Rate limiting | 5 login attempts/min, 60 API calls/min per IP |
 | CORS | Whitelist | Configurable `allowed_origins` in config.yaml |
-| WebSocket | WSS + JWT | Encrypted transport with token validation |
+| WebSocket | JWT | Token validation via query parameter |
+| Firewall | Auto-rule (Windows) | `New-NetFirewallRule` adds TCP 17789 allow rule on startup |
 
 ### Voice API (for mobile clients)
 - `POST /api/tts` — text-to-speech via ElevenLabs/edge-tts/gTTS pipeline, returns MP3 audio
 - `POST /api/stt` — speech-to-text via OpenAI Whisper (Groq Whisper fallback), accepts multipart audio upload
 
 ### QR Code Pairing
-- `GET /api/qr_pair` — returns a QR code PNG encoding `{"host":"<ip>","port":17789,"fingerprint":"<cert_sha256>"}`
+- `GET /api/qr_pair` — returns a QR code PNG encoding `{"app":"galactic-ai","host":"<ip>","port":17789}`
 - Displayed in the PC Control Deck Settings tab as a "Mobile Pairing" card
-- Android app scans QR, auto-fills connection details, and pins the TLS certificate fingerprint
+- Black-on-white with `ERROR_CORRECT_H` for reliable phone camera scanning
+- Android app scans QR, auto-fills host/port, and leaves HTTPS unchecked (server uses plain HTTP on LAN)
 
 ---
 
@@ -608,7 +611,8 @@ Hybrid WebView app — the existing web Control Deck renders inside a native Kot
 
 ### Requirements
 - Android 8.0+ (API 26)
-- Galactic-AI v1.0.0+ running on PC with `remote_access: true`
+- Galactic-AI v1.0.3+ running on PC with `remote_access: true`
+- **Note:** Leave "Use HTTPS" unchecked in the app — the server uses plain HTTP on LAN
 
 ---
 
@@ -675,4 +679,4 @@ Hybrid WebView app — the existing web Control Deck renders inside a native Kot
 
 ---
 
-**v1.0.0** — Galactic AI Automation Suite
+**v1.0.3** — Galactic AI Automation Suite

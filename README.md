@@ -2,7 +2,7 @@
 
 **Sovereign. Universal. Fast.**
 
-A powerful, local-first AI automation platform with 100+ built-in tools, true persistent memory, voice I/O, browser automation, 14 AI providers, multi-platform messaging bridges, and a real-time web Control Deck. **v1.0.0**
+A powerful, local-first AI automation platform with 100+ built-in tools, true persistent memory, voice I/O, browser automation, 14 AI providers, multi-platform messaging bridges, and a real-time web Control Deck. **v1.0.3**
 
 Run fully local with Ollama (no API keys, no cloud, no tracking), or connect to any of 14 cloud providers. Your data stays yours.
 
@@ -121,7 +121,7 @@ The Control Deck at **http://127.0.0.1:17789** gives you full control:
 
 | Tab | What's There |
 |---|---|
-| **Chat** | Talk to your AI with full tool support; timestamps on every message; chat history survives page refreshes |
+| **Chat** | Talk to your AI with full tool support; 🎤 voice input mic button; timestamps on every message; chat history survives page refreshes |
 | **Thinking** | Real-time agent trace — watch the ReAct loop think and act step by step; persists across page refreshes |
 | **Status** | Live provider, model, token usage, uptime, fallback chain, and plugin telemetry |
 | **Models** | Browse and switch all 100+ models, ordered best-to-worst with tier indicators |
@@ -319,10 +319,12 @@ Access the full Control Deck from your phone — all 10 tabs, CRT effects, voice
    web:
      remote_access: true
    ```
-2. Restart Galactic AI — it generates TLS certificates automatically
+2. Restart Galactic AI — it binds to your LAN IP automatically
 3. Install the APK on your Android phone (Android 8.0+)
 4. Open the PC Control Deck > Settings tab > "Mobile App Pairing"
-5. On your phone, tap "Scan QR Code" — enter your passphrase — done
+5. On your phone, tap "Scan QR Code" — enter your passphrase — tap CONNECT
+
+> **Important:** Leave "Use HTTPS" **unchecked** in the mobile app. The server uses plain HTTP on LAN. HTTPS is only needed for internet access.
 
 ### Features
 
@@ -330,7 +332,6 @@ Access the full Control Deck from your phone — all 10 tabs, CRT effects, voice
 - QR code pairing — scan and connect in seconds
 - Voice I/O — hands-free speech-to-text and text-to-speech
 - Biometric/PIN lock for app access
-- TLS encryption with certificate pinning (TOFU)
 - AES-256 encrypted credential storage
 - Auto-reconnect on network changes
 
@@ -355,19 +356,23 @@ web:
 ```
 
 When enabled, Galactic AI:
-- Generates a self-signed TLS certificate automatically
-- Serves over HTTPS on port 17789
+- Binds to `0.0.0.0` (all network interfaces) on plain HTTP
 - Requires JWT authentication on all API endpoints
 - Rate-limits API calls (60/min) and login attempts (5/min)
+- Automatically adds a Windows Firewall inbound rule for port 17789 (private networks)
+- Local connections from `127.0.0.1`/`::1` always bypass auth so the PC is never locked out
 - Logs a startup warning that remote access is active
 
 | Layer | Protection |
 |---|---|
-| Transport | TLS 1.2+ with auto-generated certificates |
-| Auth | JWT tokens (HMAC-SHA256, 24h expiry) |
+| Transport | Plain HTTP on LAN (no TLS — avoids ERR_EMPTY_RESPONSE from self-signed certs) |
+| Auth | JWT tokens (HMAC-SHA256, 24h expiry) on all `/api/*` endpoints |
+| Localhost | `127.0.0.1` and `::1` bypass auth — PC browser always has access |
 | Brute Force | Rate limiting (5 login attempts/min per IP) |
 | CORS | Configurable allowed origins |
-| WebSocket | WSS + JWT token validation |
+| WebSocket | JWT token validation via query parameter |
+
+> **Phone connection:** Make sure your phone and PC are on the same Wi-Fi. In the mobile app, leave "Use HTTPS" **unchecked**.
 
 ---
 
@@ -409,7 +414,7 @@ Galactic-AI/
 ## Security
 
 - Web UI runs on **localhost only** by default (`127.0.0.1`) — not exposed to the internet
-- Optional **remote access mode** with TLS encryption, JWT authentication, and rate limiting
+- Optional **remote access mode** with JWT authentication, rate limiting, and auto-firewall rule (Windows)
 - Protected by a passphrase set in the setup wizard (stored as SHA-256 hash, plaintext never saved)
 - API keys live in `config.yaml` on your machine — **never committed to git** (excluded by `.gitignore`)
 - `VAULT.md` (personal credentials) is gitignored and protected by the updater
@@ -436,6 +441,12 @@ Check that port 17789 is free. Change it in `config.yaml` under `web.port`.
 
 **Voice messages not being transcribed?**
 You need an OpenAI or Groq API key configured in the setup wizard for speech-to-text.
+
+**Phone shows "Unable to parse TLS packet header"?**
+Uncheck "Use HTTPS" in the mobile app — the server uses plain HTTP on LAN. HTTPS is only for internet access over a reverse proxy.
+
+**Phone can't reach PC even with correct IP?**
+Make sure `remote_access: true` is set in `config.yaml` under `web:`, then restart Galactic AI. On Windows, a firewall rule for port 17789 is added automatically. Verify both devices are on the same Wi-Fi network.
 
 **Memory tab is empty?**
 Click into the Memory tab — it auto-creates the .md files with starter templates on first visit.
@@ -470,7 +481,10 @@ MIT License — see LICENSE file.
 
 | Version | Highlights |
 |---|---|
-| **v1.0.0** | ⚙️ Settings tab (model/voice/system config in-browser), VAULT.md personal data file, TTS voice selector, GitHub auto-update checker, model dropdowns replace text inputs, per-model overrides dropdown, auto-fallback toggle, resilient model fallback chain, speak() wall-clock timeout, expanded Status screen, 16 new tools (108 total) |
+| **v1.0.3** | 🎤 Voice input mic button in Control Deck chat bar, 🔥 auto-Windows Firewall rule on remote_access startup, plain HTTP LAN mode (no TLS — fixes ERR_EMPTY_RESPONSE), mobile HTTPS default OFF, em dash updater fix |
+| **v1.0.2** | Localhost bypass for remote auth (PC never locked out), QR code black-on-white for phone camera compatibility, Test Voice button now plays audio, desktop shortcut icon added |
+| **v1.0.1** | Config auto-migration for missing sections, updater `-Force` flag, missing release ZIP assets fixed |
+| **v1.0.0** | 📱 Galactic-AI Mobile (Android app, QR pairing, biometric lock), 🌐 Remote Access mode, 🔑 JWT authentication, 🛡️ rate limiting, 🔒 CORS, 📷 QR pairing endpoint, 🎙️ voice API (TTS/STT), settings model save bug fix |
 | **v0.9.2** | Resilient model fallback chain with cooldowns, 16 new tools (archives, HTTP, env vars, window management, system info, QR codes, text transforms), expanded Status screen with 30+ fields, per-tool configurable timeouts, speak() wall-clock timeout, shell command timeout |
 | **v0.9.0** | Discord/WhatsApp/Gmail bridges, Imagen 4, Telegram image model selector, Thinking tab persistence, chat timestamps, per-tool timeout, graceful shutdown fix, all providers in Telegram model menu |
 | **v0.8.1** | Typing indicator heartbeat fix, fast Ctrl+C shutdown, duplicate message guard |

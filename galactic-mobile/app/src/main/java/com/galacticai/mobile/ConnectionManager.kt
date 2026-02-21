@@ -53,7 +53,7 @@ class ConnectionManager(private val storage: SecureStorage) {
                     conn.errorStream?.bufferedReader()?.readText() ?: "Unknown error"
                 }
 
-                if (responseCode == 200 && response.contains("\"success\":true")) {
+                if (responseCode == 200 && (response.contains("\"success\":true") || response.contains("\"success\": true"))) {
                     // Parse token and expiry from JSON response
                     val token = extractJsonString(response, "token") ?: ""
                     val expires = extractJsonLong(response, "expires")

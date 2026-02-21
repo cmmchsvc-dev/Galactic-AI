@@ -1,6 +1,6 @@
 # Galactic AI — Architecture Reference
 
-**v1.0.0** — System design, component breakdown, and data flows.
+**v1.0.3** — System design, component breakdown, and data flows.
 
 ---
 
@@ -127,7 +127,7 @@ The web Control Deck served on `web.port` (default 17789). Single-file aiohttp s
 **Tabs:**
 | Tab | Description |
 |-----|-------------|
-| Chat | Full conversational UI with tool output, timestamps, chat history |
+| Chat | Full conversational UI with tool output, voice input mic button, timestamps, chat history |
 | Thinking | Real-time ReAct trace viewer |
 | Status | 30+ telemetry fields across 6 sections |
 | Models | Browse/switch 100+ models; per-model overrides |
@@ -213,11 +213,12 @@ Security module for remote connections. Activated when `web.remote_access: true`
 
 **Components:**
 - **JWT Authentication** — HMAC-SHA256 tokens with 24-hour expiry, auto-generated 64-char hex secret
-- **Auth Middleware** — aiohttp middleware that validates JWT on all `/api/*` routes (exempts login and setup endpoints)
-- **TLS Certificate Generation** — auto-generates self-signed cert (`certs/cert.pem`, `certs/key.pem`) using the `cryptography` library
+- **Auth Middleware** — aiohttp middleware that validates JWT on all `/api/*` routes; `127.0.0.1`/`::1` bypass auth so the PC is never locked out
+- **Plain HTTP on LAN** — server binds to `0.0.0.0` with no TLS in remote mode; avoids `ERR_EMPTY_RESPONSE` caused by self-signed certs
+- **Auto Firewall Rule** — on Windows with `remote_access: true`, `galactic_core_v2.py` calls `New-NetFirewallRule` via PowerShell on startup to open TCP 17789 (private networks only)
 - **Rate Limiter** — per-IP sliding window (60 req/min API, 5 req/min login)
 - **CORS Middleware** — configurable `allowed_origins` whitelist
-- **QR Code Pairing** — generates pairing QR codes encoding host, port, and TLS cert fingerprint
+- **QR Code Pairing** — generates black-on-white pairing QR codes (`ERROR_CORRECT_H`) encoding host and port
 
 **New API endpoints:**
 ```
@@ -232,9 +233,9 @@ GET  /api/qr_pair     — QR code PNG for mobile pairing
 
 Native Android companion app (Kotlin + WebView). Wraps the existing web Control Deck in a native shell that provides TLS cert pinning, biometric auth, secure credential storage, voice I/O, and connection management.
 
-**Key classes:** `MainActivity` (WebView host), `ConnectActivity` (QR + manual connect), `GalacticWebViewClient` (TOFU cert pinning), `SecureStorage` (EncryptedSharedPreferences), `VoiceManager` (STT + TTS), `BiometricHelper`.
+**Key classes:** `MainActivity` (WebView host), `ConnectActivity` (QR + manual connect), `GalacticWebViewClient` (JWT injection, styled error pages), `SecureStorage` (EncryptedSharedPreferences), `VoiceManager` (STT + TTS), `BiometricHelper`.
 
-**Security:** AES-256 encrypted storage (Android Keystore), TLS cert pinning with TOFU model, optional biometric/PIN lock.
+**Security:** AES-256 encrypted storage (Android Keystore), optional biometric/PIN lock. HTTPS toggle defaults to OFF — server uses plain HTTP on LAN.
 
 ---
 
