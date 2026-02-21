@@ -2,7 +2,7 @@
 
 **Sovereign. Universal. Fast.**
 
-A powerful, local-first AI automation platform with 100+ built-in tools, true persistent memory, voice I/O, browser automation, 14 AI providers, multi-platform messaging bridges, and a real-time web Control Deck. **v0.9.3**
+A powerful, local-first AI automation platform with 100+ built-in tools, true persistent memory, voice I/O, browser automation, 14 AI providers, multi-platform messaging bridges, and a real-time web Control Deck. **v1.0.0**
 
 Run fully local with Ollama (no API keys, no cloud, no tracking), or connect to any of 14 cloud providers. Your data stays yours.
 
@@ -308,6 +308,69 @@ The updater will:
 
 ---
 
+## Galactic-AI Mobile (Android)
+
+Access the full Control Deck from your phone — all 10 tabs, CRT effects, voice I/O, and the complete cyberpunk theme.
+
+### Quick Setup
+
+1. Enable remote access in `config.yaml`:
+   ```yaml
+   web:
+     remote_access: true
+   ```
+2. Restart Galactic AI — it generates TLS certificates automatically
+3. Install the APK on your Android phone (Android 8.0+)
+4. Open the PC Control Deck > Settings tab > "Mobile App Pairing"
+5. On your phone, tap "Scan QR Code" — enter your passphrase — done
+
+### Features
+
+- Full Control Deck with all 10 tabs
+- QR code pairing — scan and connect in seconds
+- Voice I/O — hands-free speech-to-text and text-to-speech
+- Biometric/PIN lock for app access
+- TLS encryption with certificate pinning (TOFU)
+- AES-256 encrypted credential storage
+- Auto-reconnect on network changes
+
+### Building from Source
+
+1. Open `galactic-mobile/` in Android Studio
+2. Sync Gradle
+3. Build > Generate Signed APK (or Build > Build APK for debug)
+
+See [`galactic-mobile/README.md`](galactic-mobile/README.md) for full build instructions.
+
+---
+
+## Remote Access
+
+Enable secure remote connections to Galactic AI from any device:
+
+```yaml
+# config.yaml
+web:
+  remote_access: true    # Binds to 0.0.0.0 instead of localhost
+```
+
+When enabled, Galactic AI:
+- Generates a self-signed TLS certificate automatically
+- Serves over HTTPS on port 17789
+- Requires JWT authentication on all API endpoints
+- Rate-limits API calls (60/min) and login attempts (5/min)
+- Logs a startup warning that remote access is active
+
+| Layer | Protection |
+|---|---|
+| Transport | TLS 1.2+ with auto-generated certificates |
+| Auth | JWT tokens (HMAC-SHA256, 24h expiry) |
+| Brute Force | Rate limiting (5 login attempts/min per IP) |
+| CORS | Configurable allowed origins |
+| WebSocket | WSS + JWT token validation |
+
+---
+
 ## File Structure
 
 ```
@@ -315,6 +378,7 @@ Galactic-AI/
 ├── galactic_core_v2.py       # Main entry point + orchestrator
 ├── gateway_v2.py             # LLM routing + 92-tool ReAct loop
 ├── web_deck.py               # Web Control Deck (http://127.0.0.1:17789)
+├── remote_access.py          # JWT auth, TLS, rate limiting, CORS middleware
 ├── telegram_bridge.py        # Telegram bot + voice I/O + image model selector
 ├── discord_bridge.py         # Discord bot bridge
 ├── whatsapp_bridge.py        # WhatsApp Cloud API bridge
@@ -331,6 +395,7 @@ Galactic-AI/
 ├── install.ps1 / install.sh  # One-command installers
 ├── launch.ps1 / launch.sh    # Launchers
 ├── update.ps1 / update.sh    # Safe updaters (never touch your data)
+├── galactic-mobile/          # Android companion app (Kotlin + WebView)
 └── plugins/
     ├── browser_executor_pro.py   # Playwright browser automation (56 actions)
     ├── shell_executor.py         # Shell command execution
@@ -343,7 +408,8 @@ Galactic-AI/
 
 ## Security
 
-- Web UI runs on **localhost only** (`127.0.0.1`) — not exposed to the internet
+- Web UI runs on **localhost only** by default (`127.0.0.1`) — not exposed to the internet
+- Optional **remote access mode** with TLS encryption, JWT authentication, and rate limiting
 - Protected by a passphrase set in the setup wizard (stored as SHA-256 hash, plaintext never saved)
 - API keys live in `config.yaml` on your machine — **never committed to git** (excluded by `.gitignore`)
 - `VAULT.md` (personal credentials) is gitignored and protected by the updater
@@ -404,7 +470,7 @@ MIT License — see LICENSE file.
 
 | Version | Highlights |
 |---|---|
-| **v0.9.3** | ⚙️ Settings tab (model/voice/system config in-browser), VAULT.md personal data file, TTS voice selector, GitHub auto-update checker, model dropdowns replace text inputs, per-model overrides dropdown, auto-fallback toggle, resilient model fallback chain, speak() wall-clock timeout, expanded Status screen, 16 new tools (108 total) |
+| **v1.0.0** | ⚙️ Settings tab (model/voice/system config in-browser), VAULT.md personal data file, TTS voice selector, GitHub auto-update checker, model dropdowns replace text inputs, per-model overrides dropdown, auto-fallback toggle, resilient model fallback chain, speak() wall-clock timeout, expanded Status screen, 16 new tools (108 total) |
 | **v0.9.2** | Resilient model fallback chain with cooldowns, 16 new tools (archives, HTTP, env vars, window management, system info, QR codes, text transforms), expanded Status screen with 30+ fields, per-tool configurable timeouts, speak() wall-clock timeout, shell command timeout |
 | **v0.9.0** | Discord/WhatsApp/Gmail bridges, Imagen 4, Telegram image model selector, Thinking tab persistence, chat timestamps, per-tool timeout, graceful shutdown fix, all providers in Telegram model menu |
 | **v0.8.1** | Typing indicator heartbeat fix, fast Ctrl+C shutdown, duplicate message guard |

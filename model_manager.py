@@ -324,10 +324,7 @@ class ModelManager:
         return fallback
 
     async def switch_to_primary(self):
-        """Switch back to primary model."""
-        if self.current_mode == 'primary':
-            return  # Already on primary
-
+        """Switch to primary model (or refresh gateway if primary model was changed)."""
         self.current_mode = 'primary'
         self.error_count = 0
         primary = self.get_current_model()
@@ -428,6 +425,12 @@ class ModelManager:
             config['models']['primary_model'] = self.primary_model
             config['models']['fallback_provider'] = self.fallback_provider
             config['models']['fallback_model'] = self.fallback_model
+
+            # Also sync gateway section so startup reads are consistent
+            if 'gateway' not in config:
+                config['gateway'] = {}
+            config['gateway']['provider'] = self.primary_provider
+            config['gateway']['model'] = self.primary_model
 
             # Write back
             with open(self.config_path, 'w') as f:

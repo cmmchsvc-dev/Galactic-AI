@@ -355,6 +355,29 @@
     .whats-new ul li { font-size: 0.875rem; color: var(--muted); }
     .whats-new ul li::before { content: '✦ '; color: var(--accent2); }
 
+    /* MOBILE */
+    .mobile-section {
+      text-align: center;
+      padding: 5rem 2rem;
+      background: linear-gradient(180deg, var(--bg) 0%, rgba(124,58,237,0.06) 100%);
+      border-top: 1px solid var(--border);
+    }
+    .mobile-section h2 { margin-bottom: 0.5rem; }
+    .mobile-section .section-sub { margin-bottom: 2rem; }
+    .mobile-features {
+      display: flex; flex-wrap: wrap; justify-content: center; gap: 1.5rem;
+      max-width: 900px; margin: 0 auto 2.5rem;
+    }
+    .mobile-feat {
+      background: var(--bg2); border: 1px solid var(--border); border-radius: 10px;
+      padding: 1.25rem 1.5rem; flex: 1 1 250px; max-width: 280px; text-align: left;
+    }
+    .mobile-feat h4 { font-size: 0.95rem; margin-bottom: 0.3rem; }
+    .mobile-feat p { font-size: 0.82rem; color: var(--muted); }
+    .mobile-dl-note {
+      font-size: 0.82rem; color: var(--muted); margin-top: 1rem;
+    }
+
     /* CTA */
     .cta-section {
       text-align: center;
@@ -398,6 +421,7 @@
     <li><a href="#features">Features</a></li>
     <li><a href="#providers">Providers</a></li>
     <li><a href="#tools">Tools</a></li>
+    <li><a href="#mobile">Mobile</a></li>
     <li><a href="#quickstart">Quick Start</a></li>
   </ul>
   <a href="https://github.com/cmmchsvc-dev/Galactic-AI/releases/latest" class="nav-cta">Download Free</a>
@@ -405,11 +429,11 @@
 
 <!-- HERO -->
 <div class="hero">
-  <div class="hero-badge">v0.9.3 — Ultimate Automation Suite · 100+ Tools</div>
+  <div class="hero-badge">v1.0.0 — Ultimate Automation Suite · 100+ Tools</div>
   <h1>Your AI that actually<br><span class="grad">does everything.</span></h1>
   <p>A local-first AI automation platform with true persistent memory, voice I/O, 100+ tools, 14 providers, and a real-time control deck. Runs on your machine. No subscriptions. No cloud required.</p>
   <div class="hero-actions">
-    <a href="https://github.com/cmmchsvc-dev/Galactic-AI/releases/latest" class="btn-primary">Download v0.9.3 Free</a>
+    <a href="https://github.com/cmmchsvc-dev/Galactic-AI/releases/latest" class="btn-primary">Download v1.0.0 Free</a>
     <a href="https://github.com/cmmchsvc-dev/Galactic-AI" class="btn-secondary">View on GitHub</a>
   </div>
   <p class="hero-sub">Free &amp; open source · Python 3.10+ · Windows / macOS / Linux</p>
@@ -485,16 +509,16 @@
   <h2>Everything you need. Nothing you don't.</h2>
   <p class="section-sub">Built for people who want their AI to actually do things.</p>
 
-  <!-- What's New in v0.9.3 -->
+  <!-- What's New in v1.0.0 -->
   <div class="whats-new">
-    <div class="whats-new-label">✦ NEW IN v0.9.3</div>
+    <div class="whats-new-label">✦ NEW IN v1.0.0</div>
     <ul>
-      <li>⚙️ Settings Tab — change models, voice, timeouts in-browser</li>
-      <li>🔐 VAULT.md — private credentials for automation tasks</li>
-      <li>🗣️ Voice Selector — switch TTS voice from the sidebar</li>
-      <li>🆕 GitHub Auto-Update Checker — notified when a new version drops</li>
-      <li>🔽 Model Dropdowns — no more typing model names</li>
-      <li>🔄 Auto-Fallback Toggle — on/off from the Settings tab</li>
+      <li>📱 Galactic-AI Mobile — Android companion app with full Control Deck access</li>
+      <li>🌐 Remote Access Mode — connect from anywhere over HTTPS with TLS encryption</li>
+      <li>🔑 JWT Authentication — enterprise-grade auth with 24h token expiry</li>
+      <li>📷 QR Code Pairing — scan from PC Settings tab to connect your phone instantly</li>
+      <li>🎙️ Mobile Voice I/O — hands-free speech-to-text and text-to-speech</li>
+      <li>🛡️ Rate Limiting — brute-force protection on all API endpoints</li>
     </ul>
   </div>
 
@@ -558,6 +582,16 @@
       <span class="feature-icon">🛡️</span>
       <h3>Safe Updates</h3>
       <p>Run update.ps1 or update.sh to update code. Your config, API keys, memory files, VAULT.md, and chat history are never touched.</p>
+    </div>
+    <div class="feature-card">
+      <span class="feature-icon">📱</span>
+      <h3>Android Mobile App</h3>
+      <p>Galactic-AI Mobile — full Control Deck on your phone. QR code pairing, voice I/O, biometric lock, CRT effects. Connect over LAN or internet.</p>
+    </div>
+    <div class="feature-card">
+      <span class="feature-icon">🔑</span>
+      <h3>Remote Access + TLS</h3>
+      <p>Access from anywhere with HTTPS, JWT auth (24h expiry), rate limiting, CORS protection, and auto-generated TLS certificates. Enterprise-grade security.</p>
     </div>
   </div>
 </section>
@@ -721,12 +755,49 @@
   </div>
 </section>
 
+<!-- MOBILE APP -->
+<div class="mobile-section" id="mobile">
+  <h2>Take it with you. 📱</h2>
+  <p class="section-sub">Galactic-AI Mobile — your full Control Deck on Android.</p>
+  <div class="mobile-features">
+    <div class="mobile-feat">
+      <h4>📷 QR Code Pairing</h4>
+      <p>Scan from your PC Settings tab — auto-connects in seconds. No typing URLs.</p>
+    </div>
+    <div class="mobile-feat">
+      <h4>🔒 Enterprise Security</h4>
+      <p>TLS encryption, JWT auth, certificate pinning, biometric app lock, encrypted storage.</p>
+    </div>
+    <div class="mobile-feat">
+      <h4>🎙️ Voice I/O</h4>
+      <p>Hands-free speech-to-text and text-to-speech. Talk to your AI from anywhere.</p>
+    </div>
+    <div class="mobile-feat">
+      <h4>🖥️ Full Control Deck</h4>
+      <p>All 10 tabs — Chat, Tools, Plugins, Models, Browser, Memory, Status, Settings, Logs, Thinking.</p>
+    </div>
+    <div class="mobile-feat">
+      <h4>🌐 LAN or Internet</h4>
+      <p>Connect over your home Wi-Fi or remotely over the internet. Auto-reconnect on network changes.</p>
+    </div>
+    <div class="mobile-feat">
+      <h4>✨ CRT Effects</h4>
+      <p>Same cyberpunk theme — scanlines, glow levels, and the full visual experience on mobile.</p>
+    </div>
+  </div>
+  <div class="hero-actions">
+    <a href="https://github.com/cmmchsvc-dev/Galactic-AI/releases/latest" class="btn-primary">Download APK</a>
+    <a href="https://github.com/cmmchsvc-dev/Galactic-AI/tree/main/galactic-mobile" class="btn-secondary">View Source</a>
+  </div>
+  <p class="mobile-dl-note">Android 8.0+ required · Enable "Install from unknown sources" · Build from source with Android Studio</p>
+</div>
+
 <!-- FINAL CTA -->
 <div class="cta-section">
   <h2>Ready to run your own AI?</h2>
   <p>Free. Open source. Runs on your machine. No subscriptions, no cloud lock-in, no data leaks.</p>
   <div class="hero-actions">
-    <a href="https://github.com/cmmchsvc-dev/Galactic-AI/releases/latest" class="btn-primary">Download v0.9.3 Free</a>
+    <a href="https://github.com/cmmchsvc-dev/Galactic-AI/releases/latest" class="btn-primary">Download v1.0.0 Free</a>
     <a href="https://github.com/cmmchsvc-dev/Galactic-AI" class="btn-secondary">View Source on GitHub</a>
   </div>
   <p style="margin-top:1.5rem;color:var(--muted);font-size:0.875rem;">Windows · macOS · Linux · Chromebook · WSL2</p>
@@ -734,7 +805,7 @@
 
 <!-- FOOTER -->
 <footer>
-  <span>⭐ Galactic AI v0.9.3</span>
+  <span>⭐ Galactic AI v1.0.0</span>
   <a href="https://github.com/cmmchsvc-dev/Galactic-AI">GitHub</a>
   <a href="https://github.com/cmmchsvc-dev/Galactic-AI/releases">Releases</a>
   <a href="https://github.com/cmmchsvc-dev/Galactic-AI/blob/main/README.md">Docs</a>

@@ -4,6 +4,58 @@ All notable changes to Galactic AI are documented here.
 
 ---
 
+## [v1.0.0] — 2026-02-21
+
+### Added
+- **📱 Galactic-AI Mobile** — Native Android companion app (Kotlin + WebView)
+  - Full Control Deck access with all 10 tabs (Chat, Tools, Plugins, Models, Browser, Memory, Status, Settings, Logs, Thinking)
+  - QR code pairing — scan from PC Settings tab to connect instantly
+  - Voice I/O — hands-free speech-to-text (Android SpeechRecognizer) and text-to-speech (server-side + local fallback)
+  - Biometric/PIN lock for app access (AndroidX Biometric)
+  - TLS certificate pinning with TOFU (Trust On First Use) model
+  - AES-256 encrypted credential storage (Android Keystore)
+  - Auto-reconnect on network changes with exponential backoff
+  - Hardware-accelerated WebView for smooth CRT effects
+  - Cyberpunk-themed native connection screen with QR scanner
+  - Animated splash screen matching desktop aesthetic
+- **🌐 Remote Access Mode** — Access Galactic AI from anywhere
+  - Enable with `remote_access: true` in config.yaml
+  - Auto-generated self-signed TLS certificates (HTTPS)
+  - Binds to `0.0.0.0` for LAN/internet access
+  - Startup warning when remote access is active
+- **🔑 JWT Authentication** — Enterprise-grade auth for remote connections
+  - HMAC-SHA256 signed tokens with 24-hour expiry
+  - Auto-generated 64-character hex secret stored in config.yaml
+  - Auth middleware on all `/api/*` endpoints
+  - WebSocket authentication via query parameter
+  - Backward-compatible with existing password hash for local mode
+- **🛡️ Rate Limiting** — Brute-force protection
+  - 60 requests/minute per IP for API endpoints
+  - 5 login attempts/minute per IP
+  - Returns 429 with `Retry-After` header
+- **🔒 CORS Middleware** — Cross-origin protection with configurable allowed origins
+- **📷 QR Code Pairing** — `GET /api/qr_pair` endpoint generates pairing QR code encoding host, port, and cert fingerprint
+- **🎙️ Voice API Endpoints** for mobile hands-free communication:
+  - `POST /api/tts` — text-to-speech via existing ElevenLabs/edge-tts/gTTS pipeline, returns MP3
+  - `POST /api/stt` — speech-to-text via OpenAI Whisper with Groq Whisper fallback, accepts multipart audio
+- **📱 Mobile Pairing Card** in Settings tab — displays QR code for instant mobile connection
+- **`remote_access.py`** — New security module centralizing JWT, TLS, rate limiting, CORS, and auth middleware
+
+### Fixed
+- **Settings model save bug** — Changing primary/fallback models in the Settings tab now takes effect immediately
+  - `switch_to_primary()` no longer short-circuits when already in primary mode
+  - `_save_config()` now syncs gateway provider/model in config.yaml for persistence across restarts
+
+### Changed
+- Version bumped from v0.9.3 to v1.0.0 across all files
+- `web_deck.py` login endpoint returns JWT tokens when remote access is enabled
+- `web_deck.py` JavaScript uses `authFetch()` wrapper for JWT auth headers on all API calls
+- `web_deck.py` WebSocket uses `wss://` protocol when on HTTPS
+- `galactic_core_v2.py` auto-generates JWT secret on first remote-mode startup
+- Website `index.html` updated with mobile app section and download link
+
+---
+
 ## [v0.9.3] — 2026-02-21
 
 ### Added

@@ -1,6 +1,6 @@
 # Galactic AI — Architecture Reference
 
-**v0.9.3** — System design, component breakdown, and data flows.
+**v1.0.0** — System design, component breakdown, and data flows.
 
 ---
 
@@ -207,6 +207,37 @@ Custom plugins: drop any `.py` file with a `run()` coroutine in `plugins/` — i
 
 ---
 
+### 11. Remote Access (`remote_access.py`)
+
+Security module for remote connections. Activated when `web.remote_access: true` in config.yaml.
+
+**Components:**
+- **JWT Authentication** — HMAC-SHA256 tokens with 24-hour expiry, auto-generated 64-char hex secret
+- **Auth Middleware** — aiohttp middleware that validates JWT on all `/api/*` routes (exempts login and setup endpoints)
+- **TLS Certificate Generation** — auto-generates self-signed cert (`certs/cert.pem`, `certs/key.pem`) using the `cryptography` library
+- **Rate Limiter** — per-IP sliding window (60 req/min API, 5 req/min login)
+- **CORS Middleware** — configurable `allowed_origins` whitelist
+- **QR Code Pairing** — generates pairing QR codes encoding host, port, and TLS cert fingerprint
+
+**New API endpoints:**
+```
+POST /api/tts         — text-to-speech (returns MP3 audio)
+POST /api/stt         — speech-to-text (accepts multipart audio)
+GET  /api/qr_pair     — QR code PNG for mobile pairing
+```
+
+---
+
+### 12. Galactic-AI Mobile (Android)
+
+Native Android companion app (Kotlin + WebView). Wraps the existing web Control Deck in a native shell that provides TLS cert pinning, biometric auth, secure credential storage, voice I/O, and connection management.
+
+**Key classes:** `MainActivity` (WebView host), `ConnectActivity` (QR + manual connect), `GalacticWebViewClient` (TOFU cert pinning), `SecureStorage` (EncryptedSharedPreferences), `VoiceManager` (STT + TTS), `BiometricHelper`.
+
+**Security:** AES-256 encrypted storage (Android Keystore), TLS cert pinning with TOFU model, optional biometric/PIN lock.
+
+---
+
 ## Data Flows
 
 ### Chat Message (Web UI → AI → Web UI)
@@ -264,7 +295,7 @@ personality:      # Mode + custom fields
 system:           # Version, port, update_check_interval
 paths:            # logs, images, plugins, workspace
 telegram:         # Bot token + admin chat ID
-web:              # Host, port, password hash
+web:              # Host, port, password hash, remote_access, jwt_secret
 ```
 
 `config.yaml` is read on startup and persisted by `_save_config()` whenever settings change via the API.
@@ -278,6 +309,7 @@ Galactic-AI/
 ├── galactic_core_v2.py     # Orchestrator, relay, update checker
 ├── gateway_v2.py           # LLM routing, ReAct loop, 100+ tools
 ├── web_deck.py             # Control Deck (aiohttp + inline HTML/JS)
+├── remote_access.py        # JWT auth, TLS, rate limiting, CORS
 ├── personality.py          # System prompt builder (loads all .md files)
 ├── model_manager.py        # Provider fallback chain
 ├── memory_module_v2.py     # memory_aura.json store
@@ -290,6 +322,7 @@ Galactic-AI/
 ├── gmail_bridge.py         # Gmail IMAP
 ├── VAULT-example.md        # Template for private credentials
 ├── config.yaml             # All configuration
+├── galactic-mobile/        # Android companion app (Kotlin + WebView)
 └── plugins/
     ├── browser_executor_pro.py   # Playwright (56 actions)
     ├── shell_executor.py         # Shell execution
