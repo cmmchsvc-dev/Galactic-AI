@@ -49,6 +49,10 @@ class GalacticWebDeck:
         self.app.router.add_get('/api/images/{subfolder}/{filename}', self.handle_serve_image_sub)
         self.app.router.add_get('/api/traces', self.handle_traces)
         self.app.router.add_post('/api/save_key', self.handle_save_key)
+        # Settings endpoints
+        self.app.router.add_post('/api/settings/models', self.handle_settings_models)
+        self.app.router.add_post('/api/settings/voice', self.handle_settings_voice)
+        self.app.router.add_post('/api/settings/system', self.handle_settings_system)
         self.trace_buffer = []  # last 500 agent trace entries for persistence
         
     async def handle_index(self, request):
@@ -751,6 +755,7 @@ body.glow-max .status-dot{box-shadow:0 0 14px var(--green),0 0 28px rgba(0,255,1
     <div class="sidebar-item" onclick="switchTab('browser')"><span class="icon">🌐</span> Browser</div>
     <div class="sidebar-item" onclick="switchTab('memory')"><span class="icon">💾</span> Memory</div>
     <div class="sidebar-item" onclick="switchTab('status')"><span class="icon">📊</span> Status</div>
+    <div class="sidebar-item" onclick="switchTab('settings')"><span class="icon">⚙️</span> Settings</div>
     <div class="sidebar-item" onclick="switchTab('logs')"><span class="icon">📋</span> Logs</div>
     <div class="sidebar-item" onclick="switchTab('thinking')"><span class="icon">🧠</span> Thinking</div>
   </div>
@@ -765,6 +770,7 @@ body.glow-max .status-dot{box-shadow:0 0 14px var(--green),0 0 28px rgba(0,255,1
       <button class="tab-btn" onclick="switchTab('browser')">🌐 Browser</button>
       <button class="tab-btn" onclick="switchTab('memory')">💾 Memory</button>
       <button class="tab-btn" onclick="switchTab('status')">📊 Status</button>
+      <button class="tab-btn" onclick="switchTab('settings')">⚙️ Settings</button>
       <button class="tab-btn" onclick="switchTab('logs')">📋 Logs</button>
       <button class="tab-btn" id="thinking-tab-btn" onclick="switchTab('thinking')">🧠 Thinking</button>
     </div>
@@ -798,6 +804,18 @@ body.glow-max .status-dot{box-shadow:0 0 14px var(--green),0 0 28px rgba(0,255,1
           <button class="quick-tool-btn" onclick="quickTool('memory_imprint')"><span class="tool-icon">💡</span>Imprint Memory</button>
           <button class="quick-tool-btn" onclick="quickTool('analyze_image')"><span class="tool-icon">👁️</span>Analyze Image</button>
           <button class="quick-tool-btn" onclick="quickTool('text_to_speech')"><span class="tool-icon">🔊</span>Text to Speech</button>
+          <div style="padding:2px 14px 8px;border-bottom:1px solid rgba(255,255,255,0.04)">
+            <div style="font-size:0.65em;color:var(--dim);letter-spacing:1px;margin-bottom:3px">VOICE</div>
+            <select id="quick-voice-select" onchange="saveQuickVoice(this.value)" style="width:100%;padding:5px 8px;background:var(--bg);border:1px solid var(--border);border-radius:5px;color:var(--text);font-size:0.78em;cursor:pointer">
+              <option value="Guy">🗣️ Guy — Edge TTS</option>
+              <option value="Aria">🗣️ Aria — Edge TTS</option>
+              <option value="Jenny">🗣️ Jenny — Edge TTS</option>
+              <option value="Davis">🗣️ Davis — Edge TTS</option>
+              <option value="Nova">⭐ Nova — ElevenLabs</option>
+              <option value="Byte">⭐ Byte — ElevenLabs</option>
+              <option value="gtts">🗣️ Google TTS</option>
+            </select>
+          </div>
           <button class="quick-tool-btn" onclick="quickTool('browser_save_session')"><span class="tool-icon">💾</span>Save Session</button>
           <button class="quick-tool-btn" onclick="quickTool('browser_response_body')"><span class="tool-icon">📡</span>Response Body</button>
           <button class="quick-tool-btn" onclick="quickTool('schedule_task')"><span class="tool-icon">⏰</span>Schedule Task</button>
@@ -879,8 +897,11 @@ body.glow-max .status-dot{box-shadow:0 0 14px var(--green),0 0 28px rgba(0,255,1
           </div>
           <div style="display:flex;gap:6px;flex-wrap:wrap;align-items:flex-end;margin-bottom:8px">
             <div style="flex:2;min-width:120px">
-              <div style="font-size:0.72em;color:var(--dim);margin-bottom:3px">Model ID / Alias</div>
-              <input id="pmo-model" type="text" placeholder="e.g. gemini-2.5-flash" style="width:100%;padding:7px 10px;background:var(--bg);border:1px solid var(--border);border-radius:7px;color:var(--text);font-size:0.88em">
+              <div style="font-size:0.72em;color:var(--dim);margin-bottom:3px">Model</div>
+              <select id="pmo-model" style="width:100%;padding:7px 10px;background:var(--bg);border:1px solid var(--border);border-radius:7px;color:var(--text);font-size:0.88em;cursor:pointer">
+                <option value="">-- select model --</option>
+              </select>
+              <input id="pmo-model-custom" type="text" placeholder="or type custom model ID..." style="width:100%;padding:5px 10px;background:var(--bg);border:1px solid var(--border);border-radius:5px;color:var(--dim);font-size:0.76em;margin-top:4px">
             </div>
             <div style="flex:1;min-width:90px">
               <div style="font-size:0.72em;color:var(--dim);margin-bottom:3px">Max Tokens</div>
@@ -1015,6 +1036,102 @@ body.glow-max .status-dot{box-shadow:0 0 14px var(--green),0 0 28px rgba(0,255,1
     </div>
 
     <!-- THINKING / AGENT TRACE -->
+    <!-- SETTINGS -->
+    <div class="tab-pane" id="tab-settings">
+      <div id="settings-pane" style="padding:18px;overflow-y:auto">
+        <h3>⚙️ SETTINGS</h3>
+
+        <!-- Section 1: Model Configuration -->
+        <div class="model-config-box">
+          <h4>MODEL CONFIGURATION</h4>
+          <div class="model-config-row">
+            <label>Primary Model</label>
+            <div style="display:flex;gap:8px;flex:1">
+              <select id="set-primary-provider" onchange="updateSettingsModelList('primary')" style="flex:0.4;padding:7px 10px;background:var(--bg);border:1px solid var(--border);border-radius:7px;color:var(--text);font-size:0.88em">
+              </select>
+              <select id="set-primary-model" style="flex:0.6;padding:7px 10px;background:var(--bg);border:1px solid var(--border);border-radius:7px;color:var(--text);font-size:0.88em">
+              </select>
+            </div>
+          </div>
+          <div class="model-config-row">
+            <label>Fallback Model</label>
+            <div style="display:flex;gap:8px;flex:1">
+              <select id="set-fallback-provider" onchange="updateSettingsModelList('fallback')" style="flex:0.4;padding:7px 10px;background:var(--bg);border:1px solid var(--border);border-radius:7px;color:var(--text);font-size:0.88em">
+              </select>
+              <select id="set-fallback-model" style="flex:0.6;padding:7px 10px;background:var(--bg);border:1px solid var(--border);border-radius:7px;color:var(--text);font-size:0.88em">
+              </select>
+            </div>
+          </div>
+          <div style="display:flex;gap:18px;flex-wrap:wrap;margin-top:14px">
+            <label style="display:flex;align-items:center;gap:8px;cursor:pointer;font-size:0.88em">
+              <input type="checkbox" id="set-auto-fallback" checked style="accent-color:var(--cyan);width:18px;height:18px;cursor:pointer">
+              <span>Auto-Fallback</span>
+              <span style="font-size:0.72em;color:var(--dim)">(automatically switch models on API errors)</span>
+            </label>
+            <label style="display:flex;align-items:center;gap:8px;cursor:pointer;font-size:0.88em">
+              <input type="checkbox" id="set-smart-routing" style="accent-color:var(--cyan);width:18px;height:18px;cursor:pointer">
+              <span>Smart Routing</span>
+              <span style="font-size:0.72em;color:var(--dim)">(route tasks to best model by type)</span>
+            </label>
+            <label style="display:flex;align-items:center;gap:8px;cursor:pointer;font-size:0.88em">
+              <input type="checkbox" id="set-streaming" checked style="accent-color:var(--cyan);width:18px;height:18px;cursor:pointer">
+              <span>Streaming</span>
+            </label>
+          </div>
+          <div style="margin-top:12px">
+            <button class="btn primary" onclick="saveModelSettings()">Save Model Settings</button>
+          </div>
+        </div>
+
+        <!-- Section 2: Voice -->
+        <div class="model-config-box" style="margin-top:18px">
+          <h4>VOICE</h4>
+          <div style="font-size:0.78em;color:var(--dim);margin-bottom:10px">
+            Select the default voice for text-to-speech. ElevenLabs voices require an API key.
+          </div>
+          <div style="display:flex;gap:8px;align-items:center">
+            <select id="set-voice" style="flex:1;padding:9px 12px;background:var(--bg);border:1px solid var(--border);border-radius:7px;color:var(--text);font-size:0.88em;cursor:pointer">
+              <option value="Guy">🗣️ Guy — Edge TTS (Free, male)</option>
+              <option value="Aria">🗣️ Aria — Edge TTS (Free, female)</option>
+              <option value="Jenny">🗣️ Jenny — Edge TTS (Free, female)</option>
+              <option value="Davis">🗣️ Davis — Edge TTS (Free, male)</option>
+              <option value="Nova">⭐ Nova — ElevenLabs (Premium, female)</option>
+              <option value="Byte">⭐ Byte — ElevenLabs (Premium, male)</option>
+              <option value="gtts">🗣️ Google TTS (Free, female)</option>
+            </select>
+            <button class="btn primary" onclick="saveVoiceSettings()">Save</button>
+            <button class="btn secondary" onclick="testVoice()">Test Voice</button>
+          </div>
+        </div>
+
+        <!-- Section 3: System -->
+        <div class="model-config-box" style="margin-top:18px">
+          <h4>SYSTEM</h4>
+          <div class="model-config-row">
+            <label>Update Check Interval</label>
+            <select id="set-update-interval" style="flex:1;padding:7px 10px;background:var(--bg);border:1px solid var(--border);border-radius:7px;color:var(--text);font-size:0.88em">
+              <option value="21600">Every 6 hours (default)</option>
+              <option value="43200">Every 12 hours</option>
+              <option value="86400">Every 24 hours</option>
+              <option value="0">Disabled</option>
+            </select>
+          </div>
+          <div class="model-config-row">
+            <label title="Maximum time a single speak() call can run before being stopped">Speak Timeout (seconds)</label>
+            <input id="set-speak-timeout" type="number" value="600" min="60" max="3600" style="flex:1;padding:7px 10px;background:var(--bg);border:1px solid var(--border);border-radius:7px;color:var(--text);font-size:0.88em">
+          </div>
+          <div class="model-config-row">
+            <label title="Maximum ReAct loop turns per query">Max ReAct Turns</label>
+            <input id="set-max-turns" type="number" value="50" min="5" max="200" style="flex:1;padding:7px 10px;background:var(--bg);border:1px solid var(--border);border-radius:7px;color:var(--text);font-size:0.88em">
+          </div>
+          <div style="margin-top:12px">
+            <button class="btn primary" onclick="saveSystemSettings()">Save System Settings</button>
+          </div>
+        </div>
+
+      </div>
+    </div>
+
     <div class="tab-pane" id="tab-thinking">
       <div id="thinking-pane">
         <div id="thinking-controls">
@@ -1426,6 +1543,10 @@ async function init() {
   renderModelGrid();
   refreshStatus();
   loadFileList();
+  // Settings tab initialization
+  populateSettingsProviders();
+  populatePmoDropdown();
+  loadSettingsValues();
   // Restore the last active tab (defaults to 'chat' if none saved)
   const savedTab = localStorage.getItem('gal_activeTab') || 'chat';
   switchTab(savedTab);
@@ -1484,6 +1605,10 @@ function connectWS() {
       // Fallback activation toast — show when primary model fails and chain kicks in
       const fb = p.data || {};
       showToast(`⚡ Fallback active: ${fb.fallback || '?'} (${fb.reason || 'error'})`, 'warning', 10000);
+    } else if (p.type === 'update_available') {
+      const u = p.data || {};
+      showToast(`🆕 Update available: v${u.latest} — Run ./update.ps1`, 'info', 30000);
+      showUpdateBanner(u);
     }
   };
   socket.onclose = () => setTimeout(connectWS, 3000);
@@ -2124,13 +2249,25 @@ function pmoRender(overrides) {
 }
 
 function pmoEdit(model, maxTokens, contextWindow) {
-  document.getElementById('pmo-model').value = model;
+  // Try to select in dropdown first, fall back to custom input
+  const sel = document.getElementById('pmo-model');
+  const custom = document.getElementById('pmo-model-custom');
+  sel.value = model;
+  if (sel.value !== model && custom) {
+    sel.value = '';
+    custom.value = model;
+  } else if (custom) {
+    custom.value = '';
+  }
   document.getElementById('pmo-max-tokens').value = maxTokens || '';
   document.getElementById('pmo-context-window').value = contextWindow || '';
 }
 
 async function pmoSave() {
-  const model = document.getElementById('pmo-model').value.trim();
+  // Get model from dropdown OR custom input
+  let model = document.getElementById('pmo-model').value.trim();
+  const custom = document.getElementById('pmo-model-custom');
+  if (!model && custom) model = custom.value.trim();
   if (!model) { addLog('[Web] Per-model override: model name required'); return; }
   const maxTokens = parseInt(document.getElementById('pmo-max-tokens').value) || 0;
   const contextWindow = parseInt(document.getElementById('pmo-context-window').value) || 0;
@@ -2140,6 +2277,7 @@ async function pmoSave() {
     if (d.ok) {
       addLog(`[Web] Override saved for ${model}: max_tokens=${maxTokens||'global'}, context_window=${contextWindow||'global'}`);
       document.getElementById('pmo-model').value = '';
+      if (custom) custom.value = '';
       document.getElementById('pmo-max-tokens').value = '';
       document.getElementById('pmo-context-window').value = '';
       pmoLoad();
@@ -2303,6 +2441,233 @@ async function refreshStatus() {
     el('st-ollama-models').textContent = d.ollama?.model_count ?? '--';
 
   } catch(e) { console.error('Status refresh error:', e); }
+}
+
+// ── Settings Tab ──────────────────────────────────────────────────────
+
+// Build a flat list of {provider, id, name} from ALL_MODELS for dropdown use
+function _flatModels() {
+  const flat = [];
+  for (const [group, models] of Object.entries(ALL_MODELS)) {
+    models.forEach(m => flat.push(m));
+  }
+  return flat;
+}
+
+// Get unique provider list from ALL_MODELS (excluding image-only providers)
+function _modelProviders() {
+  const IMAGE_ONLY = ['Google Imagen', 'FLUX'];
+  const provs = new Map();
+  for (const [group, models] of Object.entries(ALL_MODELS)) {
+    if (IMAGE_ONLY.some(x => group.includes(x))) continue;
+    models.forEach(m => {
+      if (!provs.has(m.provider)) provs.set(m.provider, group);
+    });
+  }
+  return provs;
+}
+
+function populateSettingsProviders() {
+  const provs = _modelProviders();
+  ['primary', 'fallback'].forEach(role => {
+    const sel = document.getElementById(`set-${role}-provider`);
+    sel.innerHTML = '';
+    for (const [prov, label] of provs) {
+      const opt = document.createElement('option');
+      opt.value = prov;
+      opt.textContent = prov.charAt(0).toUpperCase() + prov.slice(1);
+      sel.appendChild(opt);
+    }
+  });
+}
+
+function updateSettingsModelList(role) {
+  const provSel = document.getElementById(`set-${role}-provider`);
+  const modSel = document.getElementById(`set-${role}-model`);
+  const prov = provSel.value;
+  modSel.innerHTML = '';
+  const flat = _flatModels();
+  const provModels = flat.filter(m => m.provider === prov);
+  provModels.forEach(m => {
+    const opt = document.createElement('option');
+    opt.value = m.id;
+    opt.textContent = m.name.replace(/\[LATEST\]/g, '').trim();
+    modSel.appendChild(opt);
+  });
+  // If Ollama, add discovered models
+  if (prov === 'ollama') {
+    const ollamaKey = Object.keys(ALL_MODELS).find(k => k.includes('Ollama'));
+    if (ollamaKey) {
+      ALL_MODELS[ollamaKey].forEach(m => {
+        if (!provModels.find(x => x.id === m.id)) {
+          const opt = document.createElement('option');
+          opt.value = m.id;
+          opt.textContent = m.name;
+          modSel.appendChild(opt);
+        }
+      });
+    }
+  }
+}
+
+function populatePmoDropdown() {
+  const sel = document.getElementById('pmo-model');
+  if (!sel || sel.tagName !== 'SELECT') return;
+  const flat = _flatModels();
+  sel.innerHTML = '<option value="">-- select model --</option>';
+  const IMAGE_ONLY = ['Google Imagen', 'FLUX'];
+  for (const [group, models] of Object.entries(ALL_MODELS)) {
+    if (IMAGE_ONLY.some(x => group.includes(x))) continue;
+    if (!models.length) continue;
+    const optGroup = document.createElement('optgroup');
+    optGroup.label = group;
+    models.forEach(m => {
+      const opt = document.createElement('option');
+      opt.value = m.id;
+      opt.textContent = m.name.replace(/\[LATEST\]/g, '').trim();
+      optGroup.appendChild(opt);
+    });
+    sel.appendChild(optGroup);
+  }
+}
+
+async function loadSettingsValues() {
+  try {
+    const r = await fetch('/api/status');
+    const d = await r.json();
+    // Model settings
+    const prim = (d.primary_model || '/').split('/');
+    const fb = (d.fallback_model || '/').split('/');
+    const primProv = prim.length > 1 ? prim[0] : '';
+    const primModel = prim.length > 1 ? prim.slice(1).join('/') : prim[0];
+    const fbProv = fb.length > 1 ? fb[0] : '';
+    const fbModel = fb.length > 1 ? fb.slice(1).join('/') : fb[0];
+
+    const setProv = (role, val) => {
+      const sel = document.getElementById(`set-${role}-provider`);
+      if (sel) { sel.value = val; updateSettingsModelList(role); }
+    };
+    const setModel = (role, val) => {
+      const sel = document.getElementById(`set-${role}-model`);
+      if (sel) sel.value = val;
+    };
+    setProv('primary', primProv); setModel('primary', primModel);
+    setProv('fallback', fbProv); setModel('fallback', fbModel);
+
+    // Toggles
+    const el = id => document.getElementById(id);
+    if (el('set-auto-fallback')) el('set-auto-fallback').checked = d.auto_fallback !== false;
+    if (el('set-smart-routing')) el('set-smart-routing').checked = !!d.smart_routing;
+    if (el('set-streaming')) el('set-streaming').checked = d.streaming !== false;
+
+    // Voice
+    if (d.voice && el('set-voice')) el('set-voice').value = d.voice;
+    if (d.voice && el('quick-voice-select')) el('quick-voice-select').value = d.voice;
+
+    // System
+    if (d.update_check_interval !== undefined && el('set-update-interval'))
+      el('set-update-interval').value = String(d.update_check_interval);
+    if (d.speak_timeout && el('set-speak-timeout')) el('set-speak-timeout').value = d.speak_timeout;
+    if (d.max_turns && el('set-max-turns')) el('set-max-turns').value = d.max_turns;
+  } catch(e) { console.error('loadSettingsValues:', e); }
+}
+
+async function saveModelSettings() {
+  const primProv = document.getElementById('set-primary-provider').value;
+  const primModel = document.getElementById('set-primary-model').value;
+  const fbProv = document.getElementById('set-fallback-provider').value;
+  const fbModel = document.getElementById('set-fallback-model').value;
+  if (!primProv || !primModel) { showToast('Select a primary model', 'error', 3000); return; }
+  if (!fbProv || !fbModel) { showToast('Select a fallback model', 'error', 3000); return; }
+  try {
+    const r = await fetch('/api/settings/models', {
+      method: 'POST', headers: {'Content-Type':'application/json'},
+      body: JSON.stringify({
+        primary_provider: primProv, primary_model: primModel,
+        fallback_provider: fbProv, fallback_model: fbModel,
+        auto_fallback: document.getElementById('set-auto-fallback').checked,
+        smart_routing: document.getElementById('set-smart-routing').checked,
+        streaming: document.getElementById('set-streaming').checked,
+      })
+    });
+    const d = await r.json();
+    if (d.ok) {
+      showToast('Model settings saved!', 'success', 3000);
+      refreshStatus();
+    } else {
+      showToast(d.error || 'Failed to save', 'error', 4000);
+    }
+  } catch(e) { showToast('Error: ' + e.message, 'error', 4000); }
+}
+
+async function saveVoiceSettings() {
+  const voice = document.getElementById('set-voice').value;
+  try {
+    const r = await fetch('/api/settings/voice', {
+      method: 'POST', headers: {'Content-Type':'application/json'},
+      body: JSON.stringify({voice})
+    });
+    const d = await r.json();
+    if (d.ok) {
+      showToast(`Voice set to ${voice}`, 'success', 3000);
+      // Sync the Quick Tools voice selector
+      const qs = document.getElementById('quick-voice-select');
+      if (qs) qs.value = voice;
+    }
+  } catch(e) { showToast('Error: ' + e.message, 'error', 4000); }
+}
+
+async function saveQuickVoice(voice) {
+  try {
+    await fetch('/api/settings/voice', {
+      method: 'POST', headers: {'Content-Type':'application/json'},
+      body: JSON.stringify({voice})
+    });
+    showToast(`Voice changed to ${voice}`, 'success', 3000);
+    // Sync Settings tab voice selector
+    const sv = document.getElementById('set-voice');
+    if (sv) sv.value = voice;
+  } catch(e) {}
+}
+
+function testVoice() {
+  const voice = document.getElementById('set-voice').value;
+  const msg = `Hello! I am ${voice}, your AI assistant's voice.`;
+  // Send as a chat command to trigger TTS
+  fetch('/api/tool_invoke', {
+    method: 'POST', headers: {'Content-Type':'application/json'},
+    body: JSON.stringify({tool: 'text_to_speech', args: {text: msg, voice: voice}})
+  }).then(r => r.json()).then(d => {
+    if (d.result && d.result.includes('[VOICE]')) showToast('Voice preview playing', 'success', 3000);
+    else showToast('Voice test: ' + (d.result || 'no output'), 'info', 4000);
+  }).catch(e => showToast('Error: ' + e.message, 'error', 4000));
+}
+
+async function saveSystemSettings() {
+  try {
+    const r = await fetch('/api/settings/system', {
+      method: 'POST', headers: {'Content-Type':'application/json'},
+      body: JSON.stringify({
+        update_check_interval: parseInt(document.getElementById('set-update-interval').value) || 21600,
+        speak_timeout: parseInt(document.getElementById('set-speak-timeout').value) || 600,
+        max_turns: parseInt(document.getElementById('set-max-turns').value) || 50,
+      })
+    });
+    const d = await r.json();
+    if (d.ok) showToast('System settings saved!', 'success', 3000);
+    else showToast(d.error || 'Failed to save', 'error', 4000);
+  } catch(e) { showToast('Error: ' + e.message, 'error', 4000); }
+}
+
+// ── Update Banner ─────────────────────────────────────────────────────
+function showUpdateBanner(info) {
+  if (document.getElementById('update-banner')) return;
+  const banner = document.createElement('div');
+  banner.id = 'update-banner';
+  banner.style.cssText = 'padding:10px 20px;background:rgba(0,160,255,0.12);border-bottom:1px solid rgba(0,200,255,0.3);display:flex;align-items:center;gap:12px;font-size:0.85em;flex-shrink:0';
+  banner.innerHTML = `<span style="font-size:1.2em">🆕</span><span><strong>Galactic AI v${info.latest}</strong> is available <span style="color:var(--dim)">(you have v${info.current})</span></span><code style="padding:3px 8px;background:var(--bg);border-radius:5px;font-size:0.85em">./update.ps1</code><button onclick="this.parentElement.remove()" style="margin-left:auto;background:none;border:1px solid var(--border);border-radius:5px;color:var(--text);padding:3px 10px;cursor:pointer;font-size:0.85em">Dismiss</button>`;
+  const topbar = document.getElementById('topbar');
+  if (topbar) topbar.after(banner);
 }
 
 // Memory
@@ -2976,6 +3341,10 @@ setInterval(() => {
 
             # Tool count
             'tool_count': len(self.core.gateway.tools) if hasattr(self.core, 'gateway') else 0,
+
+            # Voice + update check (for Settings tab)
+            'voice': self.core.config.get('elevenlabs', {}).get('voice', 'Guy'),
+            'update_check_interval': self.core.config.get('system', {}).get('update_check_interval', 21600),
         })
 
     async def handle_plugin_toggle(self, request):
@@ -3083,6 +3452,116 @@ setInterval(() => {
             return web.json_response({'ok': True})
         except Exception as e:
             return web.json_response({'error': str(e)}, status=500)
+
+    # ── Settings Endpoints ─────────────────────────────────────────────
+
+    async def handle_settings_models(self, request):
+        """POST /api/settings/models — save primary/fallback model + toggles."""
+        try:
+            data = await request.json()
+        except Exception:
+            return web.json_response({'error': 'Invalid JSON'}, status=400)
+        mm = getattr(self.core, 'model_manager', None)
+        if not mm:
+            return web.json_response({'error': 'Model manager not initialized'}, status=503)
+
+        try:
+            pp = data.get('primary_provider', '').strip()
+            pm = data.get('primary_model', '').strip()
+            fp = data.get('fallback_provider', '').strip()
+            fm = data.get('fallback_model', '').strip()
+
+            if pp and pm:
+                await mm.set_primary(pp, pm)
+            if fp and fm:
+                await mm.set_fallback(fp, fm)
+
+            # Toggles
+            if 'auto_fallback' in data:
+                mm.auto_fallback_enabled = bool(data['auto_fallback'])
+                cfg = self.core.config
+                if 'models' not in cfg:
+                    cfg['models'] = {}
+                cfg['models']['auto_fallback'] = mm.auto_fallback_enabled
+                self._save_config(cfg)
+
+            if 'smart_routing' in data:
+                cfg = self.core.config
+                if 'models' not in cfg:
+                    cfg['models'] = {}
+                cfg['models']['smart_routing'] = bool(data['smart_routing'])
+                self._save_config(cfg)
+
+            if 'streaming' in data:
+                cfg = self.core.config
+                if 'models' not in cfg:
+                    cfg['models'] = {}
+                cfg['models']['streaming'] = bool(data['streaming'])
+                self._save_config(cfg)
+
+            await self.core.log("⚙️ Model settings updated via Settings tab", priority=2)
+            return web.json_response({'ok': True})
+        except Exception as e:
+            return web.json_response({'ok': False, 'error': str(e)})
+
+    async def handle_settings_voice(self, request):
+        """POST /api/settings/voice — save default TTS voice."""
+        try:
+            data = await request.json()
+        except Exception:
+            return web.json_response({'error': 'Invalid JSON'}, status=400)
+        voice = (data.get('voice') or '').strip()
+        if not voice:
+            return web.json_response({'error': 'voice is required'}, status=400)
+
+        cfg = self.core.config
+        if 'elevenlabs' not in cfg:
+            cfg['elevenlabs'] = {}
+        cfg['elevenlabs']['voice'] = voice
+        try:
+            self._save_config(cfg)
+            await self.core.log(f"🔊 Voice set to {voice} via Settings", priority=2)
+            return web.json_response({'ok': True, 'voice': voice})
+        except Exception as e:
+            return web.json_response({'ok': False, 'error': str(e)})
+
+    async def handle_settings_system(self, request):
+        """POST /api/settings/system — save system settings."""
+        try:
+            data = await request.json()
+        except Exception:
+            return web.json_response({'error': 'Invalid JSON'}, status=400)
+
+        cfg = self.core.config
+        if 'system' not in cfg:
+            cfg['system'] = {}
+        if 'models' not in cfg:
+            cfg['models'] = {}
+
+        if 'update_check_interval' in data:
+            try:
+                cfg['system']['update_check_interval'] = int(data['update_check_interval'])
+            except (TypeError, ValueError):
+                pass
+
+        if 'speak_timeout' in data:
+            try:
+                cfg['models']['speak_timeout'] = int(data['speak_timeout'])
+            except (TypeError, ValueError):
+                pass
+
+        if 'max_turns' in data:
+            try:
+                cfg['models']['max_turns'] = int(data['max_turns'])
+            except (TypeError, ValueError):
+                pass
+
+        try:
+            self._save_config(cfg)
+            await self.core.log("⚙️ System settings updated via Settings tab", priority=2)
+            return web.json_response({'ok': True})
+        except Exception as e:
+            return web.json_response({'ok': False, 'error': str(e)})
 
     async def handle_browser_cmd(self, request):
         """POST /api/browser_cmd — {command, args} — browser quick commands."""
@@ -3290,7 +3769,7 @@ setInterval(() => {
         """GET /api/check_openclaw — detect OpenClaw installation and list importable .md files."""
         import pathlib
         openclaw_workspace = pathlib.Path.home() / '.openclaw' / 'workspace'
-        md_files = ['USER.md', 'IDENTITY.md', 'SOUL.md', 'MEMORY.md', 'TOOLS.md']
+        md_files = ['USER.md', 'IDENTITY.md', 'SOUL.md', 'MEMORY.md', 'TOOLS.md', 'VAULT.md']
         found_files = []
         if openclaw_workspace.exists():
             for f in md_files:
@@ -3320,7 +3799,7 @@ setInterval(() => {
         dest_dir = pathlib.Path(os.path.dirname(os.path.abspath(__file__))).parent
         imported = []
         failed = []
-        allowed = {'USER.md', 'IDENTITY.md', 'SOUL.md', 'MEMORY.md', 'TOOLS.md'}
+        allowed = {'USER.md', 'IDENTITY.md', 'SOUL.md', 'MEMORY.md', 'TOOLS.md', 'VAULT.md'}
         for fname in files_to_import:
             if fname not in allowed:
                 failed.append(fname + ' (not allowed)')
@@ -3600,6 +4079,7 @@ setInterval(() => {
                 'IDENTITY.md': '# Identity\n\nDefine who your AI is here.\n',
                 'SOUL.md': '# Soul\n\nDefine your AI\'s core values and personality here.\n',
                 'TOOLS.md': '# Tools\n\nNotes about available tools and workflows.\n',
+                'VAULT.md': '# VAULT — Personal Credentials & Private Data\n\nStore login credentials, API keys, and personal info here.\nThe AI loads this file into every prompt for automation tasks.\n**Never share this file publicly.**\n',
             }
             os.makedirs(workspace, exist_ok=True)
             for fname, default_content in DEFAULTS.items():
@@ -3612,7 +4092,7 @@ setInterval(() => {
                         pass
 
             files = []
-            for f in ['MEMORY.md', 'USER.md', 'SOUL.md', 'IDENTITY.md', 'TOOLS.md', 'HEARTBEAT.md']:
+            for f in ['MEMORY.md', 'USER.md', 'SOUL.md', 'IDENTITY.md', 'TOOLS.md', 'VAULT.md', 'HEARTBEAT.md']:
                 path = os.path.join(workspace, f)
                 if os.path.exists(path):
                     files.append({'name': f, 'size': os.path.getsize(path)})

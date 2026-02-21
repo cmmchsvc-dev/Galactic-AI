@@ -14,7 +14,7 @@
 #   workspace/          — your workspace files
 #   watch/              — your watch folder
 #   memory/             — your memory folder
-#   MEMORY.md, USER.md, IDENTITY.md, SOUL.md, TOOLS.md
+#   MEMORY.md, USER.md, IDENTITY.md, SOUL.md, TOOLS.md, VAULT.md
 #
 # What is UPDATED (safe to overwrite):
 #   All .py source files, plugins, launch scripts, requirements.txt, docs
@@ -125,7 +125,7 @@ echo "  Download complete."
 # ── Step 5: Apply update (skip protected files) ───────────────────────────────
 echo "[5/6] Applying update..."
 
-PROTECTED="config.yaml logs workspace watch memory MEMORY.md USER.md IDENTITY.md SOUL.md TOOLS.md HEARTBEAT.md"
+PROTECTED="config.yaml logs workspace watch memory MEMORY.md USER.md IDENTITY.md SOUL.md TOOLS.md VAULT.md HEARTBEAT.md"
 
 EXTRACT_DIR="$TEMP_DIR/extracted"
 mkdir -p "$EXTRACT_DIR"

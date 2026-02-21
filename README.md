@@ -2,7 +2,7 @@
 
 **Sovereign. Universal. Fast.**
 
-A powerful, local-first AI automation platform with 92+ built-in tools, true persistent memory, voice I/O, browser automation, 14 AI providers, multi-platform messaging bridges, and a real-time web Control Deck. **v0.9.1**
+A powerful, local-first AI automation platform with 100+ built-in tools, true persistent memory, voice I/O, browser automation, 14 AI providers, multi-platform messaging bridges, and a real-time web Control Deck. **v0.9.3**
 
 Run fully local with Ollama (no API keys, no cloud, no tracking), or connect to any of 14 cloud providers. Your data stays yours.
 
@@ -20,7 +20,7 @@ This is fundamentally different from session memory or expensive vector search o
 ### 14 AI Providers, One Interface
 Switch between Google Gemini, Claude, GPT, Grok, Groq, Mistral, DeepSeek, NVIDIA, and more — or run completely offline with Ollama. Change providers mid-conversation. Set automatic fallback so the AI never goes down.
 
-### 92+ Tools, Real Agent Behavior
+### 100+ Tools, Real Agent Behavior
 The AI doesn't just answer questions — it acts. It browses the web, reads and writes files, runs shell commands, controls a full Chromium browser, generates images, manages schedules, sends messages across platforms, and more. It chains tool calls in a ReAct loop until the task is done.
 
 ### Voice I/O + Multi-Platform Messaging
@@ -123,11 +123,12 @@ The Control Deck at **http://127.0.0.1:17789** gives you full control:
 |---|---|
 | **Chat** | Talk to your AI with full tool support; timestamps on every message; chat history survives page refreshes |
 | **Thinking** | Real-time agent trace — watch the ReAct loop think and act step by step; persists across page refreshes |
-| **Status** | Live provider, model, token usage, uptime, and plugin telemetry |
-| **Models** | Browse and switch all 92+ models, ordered best-to-worst with tier indicators |
-| **Tools** | Browse all 92+ built-in tools with descriptions and parameters |
+| **Status** | Live provider, model, token usage, uptime, fallback chain, and plugin telemetry |
+| **Models** | Browse and switch all 100+ models, ordered best-to-worst with tier indicators |
+| **Tools** | Browse all 100+ built-in tools with descriptions and parameters |
 | **Plugins** | Enable/disable plugins with one click |
-| **Memory** | Edit MEMORY.md, IDENTITY.md, SOUL.md, USER.md, TOOLS.md directly in-browser |
+| **Memory** | Edit MEMORY.md, IDENTITY.md, SOUL.md, USER.md, TOOLS.md, VAULT.md directly in-browser |
+| **⚙️ Settings** | Primary/fallback model dropdowns, auto-fallback toggle, voice selector, system tuning |
 | **Ollama** | Health status, discovered models, context window sizes |
 | **Logs** | Real-time log stream with tool call highlighting and 500-line history |
 
@@ -142,14 +143,56 @@ Galactic AI has three layers of memory, all persistent across restarts:
 - **SOUL.md** — core values and personality
 - **USER.md** — who you are, your preferences, context
 - **MEMORY.md** — things the AI has learned over time
+- **VAULT.md** — private credentials and personal data for automation (see [VAULT section](#vault--personal-data-for-automation) below)
 
-All four files are loaded from disk on startup and injected into every system prompt. The AI always knows who it is and who you are.
+All five files are loaded from disk on startup and injected into every system prompt. The AI always knows who it is and who you are.
 
 ### 2. MEMORY.md (grows automatically)
 When you tell the AI to remember something, or when it decides something is worth keeping, it appends a timestamped entry to `MEMORY.md`. This file is then available in **every future conversation** automatically. You can also edit it directly in the Memory tab.
 
 ### 3. memory_aura.json (searchable knowledge base)
 Facts, documents, and imprinted knowledge stored in a local JSON index. The AI can search this store at any time using the `memory_search` tool.
+
+---
+
+## VAULT — Personal Data for Automation
+
+**VAULT.md** is a private credentials file that the AI loads into every prompt. It lets the agent log into services, fill forms, and automate tasks on your behalf without you having to re-type credentials every time.
+
+### Setup
+
+1. Copy the included template: `cp VAULT-example.md VAULT.md`
+2. Edit `VAULT.md` with your real credentials
+3. Restart Galactic AI — the AI now has access to your credentials in every conversation
+
+### What Goes in VAULT.md
+
+```markdown
+## Login Credentials
+- **Email:** your-email@example.com
+- **GitHub Username:** your-username
+- **GitHub Token:** ghp_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+
+## Personal Info
+- **Full Name:** Your Name
+- **Phone:** +1-555-555-5555
+- **Address:** 123 Main St, City, State, ZIP
+
+## Payment
+- **PayPal Email:** your-paypal@example.com
+
+## Custom Fields
+- **Company Name:** Your Company
+- **Project Name:** Your Project
+```
+
+### Security
+
+- **VAULT.md is gitignored** — it is never committed to the public repository
+- **Protected by the updater** — `update.ps1` and `update.sh` never overwrite VAULT.md
+- The AI is instructed to **never share or expose** VAULT.md contents
+- Editable directly in the **Memory tab** of the Control Deck
+- Store only what you need for automation — keep truly sensitive data (bank passwords, SSNs) out of any file
 
 ---
 
@@ -276,13 +319,14 @@ Galactic-AI/
 ├── discord_bridge.py         # Discord bot bridge
 ├── whatsapp_bridge.py        # WhatsApp Cloud API bridge
 ├── gmail_bridge.py           # Gmail IMAP bridge
-├── personality.py            # AI personality + MEMORY.md loader
+├── personality.py            # AI personality + MEMORY.md + VAULT.md loader
 ├── memory_module_v2.py       # Persistent memory (memory_aura.json)
 ├── model_manager.py          # 14-provider model management
 ├── ollama_manager.py         # Ollama auto-discovery + health monitoring
 ├── scheduler.py              # Cron-style task scheduler (APScheduler)
 ├── nvidia_gateway.py         # NVIDIA NIM image generation gateway
 ├── splash.py                 # Startup splash screen
+├── VAULT-example.md          # Template for private credentials (copy to VAULT.md)
 ├── config.yaml               # All configuration (generated by setup wizard)
 ├── install.ps1 / install.sh  # One-command installers
 ├── launch.ps1 / launch.sh    # Launchers
@@ -302,8 +346,11 @@ Galactic-AI/
 - Web UI runs on **localhost only** (`127.0.0.1`) — not exposed to the internet
 - Protected by a passphrase set in the setup wizard (stored as SHA-256 hash, plaintext never saved)
 - API keys live in `config.yaml` on your machine — **never committed to git** (excluded by `.gitignore`)
+- `VAULT.md` (personal credentials) is gitignored and protected by the updater
 - Ollama runs 100% on your machine — zero data leaves your computer in local mode
-- Per-tool timeout (60s) prevents any single operation from hanging the system
+- Per-tool timeout (configurable, default 60s) prevents any single operation from hanging the system
+- speak() wall-clock timeout (default 600s) caps the entire ReAct loop duration
+- Automatic GitHub update notifications keep you on the latest version
 
 ---
 
@@ -357,6 +404,8 @@ MIT License — see LICENSE file.
 
 | Version | Highlights |
 |---|---|
+| **v0.9.3** | ⚙️ Settings tab (model/voice/system config in-browser), VAULT.md personal data file, TTS voice selector, GitHub auto-update checker, model dropdowns replace text inputs, per-model overrides dropdown, auto-fallback toggle, resilient model fallback chain, speak() wall-clock timeout, expanded Status screen, 16 new tools (108 total) |
+| **v0.9.2** | Resilient model fallback chain with cooldowns, 16 new tools (archives, HTTP, env vars, window management, system info, QR codes, text transforms), expanded Status screen with 30+ fields, per-tool configurable timeouts, speak() wall-clock timeout, shell command timeout |
 | **v0.9.0** | Discord/WhatsApp/Gmail bridges, Imagen 4, Telegram image model selector, Thinking tab persistence, chat timestamps, per-tool timeout, graceful shutdown fix, all providers in Telegram model menu |
 | **v0.8.1** | Typing indicator heartbeat fix, fast Ctrl+C shutdown, duplicate message guard |
 | **v0.8.0** | 17 new tools — clipboard, notifications, window management, HTTP requests, QR codes, system info, text transforms, SD3.5 image gen, FLUX auto-generate |

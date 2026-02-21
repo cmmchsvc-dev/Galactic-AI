@@ -10,7 +10,7 @@
 #   workspace/          — your workspace files
 #   watch/              — your watch folder
 #   memory/             — your memory folder
-#   MEMORY.md, USER.md, IDENTITY.md, SOUL.md, TOOLS.md
+#   MEMORY.md, USER.md, IDENTITY.md, SOUL.md, TOOLS.md, VAULT.md
 #
 # What is UPDATED (safe to overwrite):
 #   All .py source files, plugins, launch scripts, requirements.txt, docs
@@ -125,7 +125,7 @@ try {
 Write-Host "[5/6] Applying update..." -ForegroundColor Yellow
 
 $protected = @("config.yaml", "logs", "workspace", "watch", "memory",
-               "MEMORY.md", "USER.md", "IDENTITY.md", "SOUL.md", "TOOLS.md", "HEARTBEAT.md")
+               "MEMORY.md", "USER.md", "IDENTITY.md", "SOUL.md", "TOOLS.md", "VAULT.md", "HEARTBEAT.md")
 
 $tempDir = "$env:TEMP\galactic-update-extracted-$timestamp"
 New-Item -ItemType Directory -Force -Path $tempDir | Out-Null
