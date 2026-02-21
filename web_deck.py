@@ -820,6 +820,7 @@ body.glow-max .status-dot{box-shadow:0 0 14px var(--green),0 0 28px rgba(0,255,1
             <input type="file" id="chat-file-input" multiple accept=".txt,.md,.py,.js,.ts,.json,.yaml,.yml,.xml,.html,.css,.csv,.log,.toml,.ini,.cfg,.sh,.ps1,.bat,.rs,.go,.java,.c,.cpp,.h,.hpp,.rb,.php,.sql,.r,.swift,.kt,.dart,.env,.conf,.properties,.jpg,.jpeg,.png,.gif,.webp,.bmp,.tiff,.tif,.heic,.heif,.avif,.svg,image/*" style="display:none" onchange="handleFileAttach(this)">
             <button id="attach-btn" onclick="document.getElementById('chat-file-input').click()" title="Attach files" style="padding:10px 12px;background:var(--bg3);border:1px solid var(--border);border-radius:10px;color:var(--dim);cursor:pointer;font-size:1.1em;transition:border .2s,color .2s" onmouseover="this.style.borderColor='var(--cyan)';this.style.color='var(--cyan)'" onmouseout="this.style.borderColor='var(--border)';this.style.color='var(--dim)'">📎</button>
             <textarea id="chat-input-main" placeholder="Message Byte... (Enter to send, Shift+Enter for newline)" style="flex:1;background:var(--bg3);border:1px solid var(--border);border-radius:10px;padding:10px 14px;color:var(--text);font-family:var(--font);font-size:0.9em;resize:none;height:44px;max-height:200px;overflow-y:auto;outline:none;transition:border .2s" onkeydown="handleKeyMain(event)" oninput="autoResize(this)"></textarea>
+            <button id="voice-btn" onclick="toggleVoiceInput()" title="Voice input (hold or click to record)" style="padding:10px 12px;background:var(--bg3);border:1px solid var(--border);border-radius:10px;color:var(--dim);cursor:pointer;font-size:1.1em;transition:border .2s,color .2s,background .2s" onmouseover="if(!this.classList.contains('recording'))this.style.borderColor='var(--cyan)',this.style.color='var(--cyan)'" onmouseout="if(!this.classList.contains('recording'))this.style.borderColor='var(--border)',this.style.color='var(--dim)'">🎤</button>
             <button id="send-btn-main" onclick="sendChatMain()" style="padding:10px 22px;background:linear-gradient(135deg,var(--cyan),var(--pink));border:none;border-radius:10px;color:#000;font-weight:700;cursor:pointer;font-size:0.9em">Send ▶</button>
           </div>
         </div>
@@ -2740,6 +2741,76 @@ function testVoice() {
   }).catch(e => showToast('Error: ' + e.message, 'error', 4000));
 }
 
+// ── Voice Input (Microphone) ──────────────────────────────────────────
+let _voiceRecorder = null;
+let _voiceChunks = [];
+let _voiceRecording = false;
+
+function toggleVoiceInput() {
+  if (_voiceRecording) { stopVoiceInput(); return; }
+  startVoiceInput();
+}
+
+async function startVoiceInput() {
+  const btn = document.getElementById('voice-btn');
+  try {
+    const stream = await navigator.mediaDevices.getUserMedia({audio: true});
+    _voiceChunks = [];
+    _voiceRecorder = new MediaRecorder(stream, {mimeType: MediaRecorder.isTypeSupported('audio/webm') ? 'audio/webm' : 'audio/mp4'});
+    _voiceRecorder.ondataavailable = e => { if (e.data.size > 0) _voiceChunks.push(e.data); };
+    _voiceRecorder.onstop = () => {
+      stream.getTracks().forEach(t => t.stop());
+      if (_voiceChunks.length > 0) sendVoiceForTranscription();
+    };
+    _voiceRecorder.start();
+    _voiceRecording = true;
+    btn.classList.add('recording');
+    btn.style.background = 'var(--red)';
+    btn.style.color = '#fff';
+    btn.style.borderColor = 'var(--red)';
+    btn.title = 'Click to stop recording';
+    showToast('Recording... click mic to stop', 'info', 10000);
+  } catch(e) {
+    showToast('Microphone access denied: ' + e.message, 'error', 4000);
+  }
+}
+
+function stopVoiceInput() {
+  const btn = document.getElementById('voice-btn');
+  if (_voiceRecorder && _voiceRecorder.state !== 'inactive') _voiceRecorder.stop();
+  _voiceRecording = false;
+  btn.classList.remove('recording');
+  btn.style.background = 'var(--bg3)';
+  btn.style.color = 'var(--dim)';
+  btn.style.borderColor = 'var(--border)';
+  btn.title = 'Voice input (click to record)';
+}
+
+async function sendVoiceForTranscription() {
+  const btn = document.getElementById('voice-btn');
+  btn.textContent = '...';
+  showToast('Transcribing...', 'info', 5000);
+  try {
+    const blob = new Blob(_voiceChunks, {type: _voiceChunks[0]?.type || 'audio/webm'});
+    const form = new FormData();
+    form.append('audio', blob, 'recording.webm');
+    const r = await authFetch('/api/stt', {method: 'POST', body: form});
+    const d = await r.json();
+    if (d.text) {
+      const inp = document.getElementById('chat-input-main');
+      inp.value = inp.value ? inp.value + ' ' + d.text : d.text;
+      inp.focus();
+      autoResize(inp);
+      showToast('Transcribed!', 'success', 2000);
+    } else {
+      showToast(d.error || 'Transcription failed', 'error', 4000);
+    }
+  } catch(e) {
+    showToast('STT error: ' + e.message, 'error', 4000);
+  }
+  btn.textContent = '\uD83C\uDFA4';
+}
+
 async function saveSystemSettings() {
   try {
     const r = await authFetch('/api/settings/system', {
@@ -4396,25 +4467,37 @@ setInterval(() => {
         runner = web.AppRunner(self.app, access_log=None)
         await runner.setup()
 
-        ssl_ctx = None
         protocol = 'http'
         if self.remote_access:
+            # Remote mode: plain HTTP on 0.0.0.0 so both PC and phone can connect
+            # TLS with self-signed certs causes browser warnings and phone rejections,
+            # so we skip it for LAN use. Auth is handled by JWT + password.
             try:
-                from remote_access import generate_self_signed_cert, create_ssl_context
+                # Still generate cert for fingerprint (used in QR pairing)
+                from remote_access import generate_self_signed_cert
                 cert_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'certs')
-                cert_path, key_path, fingerprint = generate_self_signed_cert(cert_dir)
+                _, _, fingerprint = generate_self_signed_cert(cert_dir)
                 self.cert_fingerprint = fingerprint
-                ssl_ctx = create_ssl_context(cert_path, key_path)
-                protocol = 'https'
-                await self.core.log(f"TLS certificate loaded — fingerprint: {fingerprint[:16]}...", priority=1)
-            except Exception as e:
-                await self.core.log(f"TLS setup failed ({e}) — running without encryption", priority=1)
+            except Exception:
+                pass
 
-        site = web.TCPSite(runner, self.host, self.port, ssl_context=ssl_ctx)
-        await site.start()
+            site = web.TCPSite(runner, '0.0.0.0', self.port, ssl_context=None)
+            await site.start()
 
-        if self.remote_access:
+            # Detect LAN IP for the log message
+            try:
+                import socket
+                s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+                s.connect(('8.8.8.8', 80))
+                local_ip = s.getsockname()[0]
+                s.close()
+            except Exception:
+                local_ip = '0.0.0.0'
+
             await self.core.log(
-                f"REMOTE ACCESS ENABLED — Control Deck at {protocol}://{self.host}:{self.port}",
+                f"REMOTE ACCESS ENABLED - Control Deck at http://{local_ip}:{self.port}  (LAN + localhost)",
                 priority=1
             )
+        else:
+            site = web.TCPSite(runner, self.host, self.port)
+            await site.start()

@@ -164,7 +164,7 @@ class ConnectActivity : AppCompatActivity() {
                 if (json.optString("app") == "galactic-ai") {
                     hostInput.setText(json.getString("host"))
                     portInput.setText(json.getInt("port").toString())
-                    httpsToggle.isChecked = true
+                    httpsToggle.isChecked = false  // Server uses plain HTTP on LAN
 
                     val fingerprint = json.optString("fingerprint", "")
                     if (fingerprint.isNotBlank()) {

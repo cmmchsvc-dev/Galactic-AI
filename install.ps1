@@ -4,7 +4,7 @@
 Write-Host ""
 Write-Host "============================================" -ForegroundColor Cyan
 Write-Host "  GALACTIC AI - Automation Suite Installer" -ForegroundColor Cyan
-Write-Host "  v1.0.2" -ForegroundColor DarkCyan
+Write-Host "  v1.0.3" -ForegroundColor DarkCyan
 Write-Host "============================================" -ForegroundColor Cyan
 Write-Host ""
 
