@@ -3,6 +3,13 @@
 galactic-core/
 galactic-core_BACKUP*/
 
+# ─── Android build artifacts ─────────────────────────────────────────────────
+local.properties
+*.apk
+galactic-mobile/app/build/
+galactic-mobile/build/
+galactic-mobile/.gradle/
+
 # Releases (large binary archives, not source)
 releases/
 
@@ -41,7 +48,9 @@ debug_core.log
 # ─── NEVER COMMIT — Personal projects & unrelated files ──────────────────────
 PocketAgent/
 app/
+!galactic-mobile/app/
 src/
+!galactic-mobile/app/src/
 context/
 leads/
 leads_*/
@@ -82,6 +91,7 @@ viral-*.txt
 social-media-promo.md
 *.csv
 *.bat
+!galactic-mobile/gradlew.bat
 *.html
 !index.html
 *.jpg
@@ -93,6 +103,8 @@ test*.html
 test*.pdf
 serve_website.py
 build.gradle.kts
+!galactic-mobile/build.gradle.kts
+!galactic-mobile/app/build.gradle.kts
 etsy-*.html
 etsy-*.jpg
 gumroad-*.html
