@@ -237,6 +237,41 @@ class GalacticCore:
 
         await self.relay.emit(priority, "log", log_entry)
 
+    async def _ensure_firewall_rule(self, port: int):
+        """Add a Windows Firewall inbound rule for the Control Deck port if one doesn't exist."""
+        import subprocess
+        rule_name = "Galactic AI Control Deck"
+        try:
+            # Check if rule already exists
+            check = subprocess.run(
+                ['powershell', '-Command',
+                 f'Get-NetFirewallRule -DisplayName "{rule_name}" -ErrorAction SilentlyContinue'],
+                capture_output=True, text=True, timeout=10
+            )
+            if rule_name in check.stdout:
+                return  # Rule already exists
+
+            # Add the rule (private profile only for LAN safety)
+            result = subprocess.run(
+                ['powershell', '-Command',
+                 f'New-NetFirewallRule -DisplayName "{rule_name}" '
+                 f'-Direction Inbound -LocalPort {port} -Protocol TCP '
+                 f'-Action Allow -Profile Private '
+                 f'-Description "Allow Galactic AI mobile app to connect on LAN"'],
+                capture_output=True, text=True, timeout=10
+            )
+            if result.returncode == 0:
+                await self.log(f"Firewall rule added for port {port} (private networks)", priority=1)
+            else:
+                # May need admin privileges — that's OK, just inform user
+                await self.log(
+                    f"Could not auto-add firewall rule (may need admin). "
+                    f"Run as admin or manually allow port {port} in Windows Firewall.",
+                    priority=1
+                )
+        except Exception as e:
+            await self.log(f"Firewall check skipped: {e}", priority=2)
+
     async def handle_client(self, reader, writer):
         self.clients.append(writer)
         addr = writer.get_extra_info('peername')
@@ -395,7 +430,7 @@ class GalacticCore:
         web_cfg = self.config.get('web', {})
         if web_cfg.get('remote_access', False):
             port = web_cfg.get('port', 17789)
-            await self.log(f"REMOTE ACCESS ENABLED — Galactic AI is accessible from the network on port {port}", priority=1)
+            await self.log(f"REMOTE ACCESS ENABLED - Galactic AI is accessible from the network on port {port}", priority=1)
             # Auto-generate JWT secret if missing
             if not web_cfg.get('jwt_secret'):
                 from remote_access import generate_api_secret
@@ -408,6 +443,9 @@ class GalacticCore:
                         yaml.dump(self.config, f, default_flow_style=False, allow_unicode=True)
                 except Exception:
                     pass
+            # Auto-add Windows Firewall rule for the Control Deck port
+            if os.name == 'nt':
+                await self._ensure_firewall_rule(port)
 
         # Start Bridge (Socket Server)
         server = await asyncio.start_server(self.handle_client, '127.0.0.1', self.config['system']['port'])
