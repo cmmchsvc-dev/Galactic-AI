@@ -1,0 +1,47 @@
+# Galactic AI v0.7.0 — Python Dependencies
+# Install with: pip install -r requirements.txt
+
+# ─── Core web framework ───────────────────────────────────────────────────────
+aiohttp>=3.9.0
+httpx[http2]>=0.27.0
+pyyaml>=6.0
+jinja2>=3.1.0
+requests>=2.31.0
+
+# ─── Browser & desktop automation ────────────────────────────────────────────
+playwright>=1.44.0           # Chromium/Firefox/WebKit browser control
+pyautogui>=0.9.54            # OS-level mouse/keyboard/screenshot (desktop_tool.py)
+pyperclip>=1.8.2             # Clipboard access for Unicode typing support
+opencv-python>=4.8.0         # Template matching for desktop_locate tool
+
+# ─── AI Provider SDKs ─────────────────────────────────────────────────────────
+openai>=1.40.0               # OpenAI + compatible (Groq, Cerebras, etc.)
+anthropic>=0.34.0            # Anthropic Claude SDK
+google-generativeai>=0.8.0   # Google Gemini SDK
+
+# ─── Text-to-Speech ───────────────────────────────────────────────────────────
+edge-tts>=7.0.0              # FREE Microsoft neural voices — Guy (male), Aria (female), etc.
+elevenlabs>=1.9.0            # Premium TTS voices (optional, needs API key)
+gtts>=2.5.0                  # Free Google TTS fallback (no key needed)
+pygame>=2.5.0                # Audio playback for TTS output
+
+# ─── Web scraping / content parsing ──────────────────────────────────────────
+beautifulsoup4>=4.12.0
+lxml>=5.0.0                  # Faster HTML/XML parser for beautifulsoup4
+
+# ─── Data / memory / ML ──────────────────────────────────────────────────────
+numpy>=1.26.0                # Semantic memory module
+scikit-learn>=1.4.0          # Semantic memory module (TF-IDF, cosine similarity)
+
+# ─── File format support ──────────────────────────────────────────────────────
+python-docx>=1.1.0           # Read .docx Word documents
+PyPDF2>=3.0.0                # Read .pdf files
+Pillow>=10.4.0               # Image processing (analyze_image tool)
+
+# ─── Scheduling / tasks ──────────────────────────────────────────────────────
+apscheduler>=3.10.0          # Advanced task scheduling
+
+# ─── Utilities ────────────────────────────────────────────────────────────────
+python-dotenv>=1.0.0         # Load .env files
+rich>=13.7.0                 # Beautiful terminal output / formatted logs
+tqdm>=4.66.0                 # Progress bars for long operations
