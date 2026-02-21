@@ -134,10 +134,10 @@
             android:id="@+id/toggle_https"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:text="Use HTTPS (recommended)"
+            android:text="Use HTTPS (for internet access)"
             android:textColor="@color/text_primary"
             android:textSize="14sp"
-            android:checked="true"
+            android:checked="false"
             android:buttonTint="@color/cyan"
             android:layout_marginBottom="6dp" />
 
