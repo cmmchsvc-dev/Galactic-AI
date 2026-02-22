@@ -3813,12 +3813,19 @@ setInterval(() => {
     async def handle_restart(self, request):
         """POST /api/restart — restart the Galactic AI process."""
         await self.core.log("🔄 Restart requested via Control Deck", priority=1)
-        import sys
+        import sys, subprocess
         # Give the response time to reach the client before restarting
         async def _do_restart():
             await asyncio.sleep(1.5)
             await self.core.log("🔄 Restarting now...", priority=1)
-            os.execv(sys.executable, [sys.executable] + sys.argv)
+            # Spawn a new process, then shut down this one cleanly
+            subprocess.Popen([sys.executable] + sys.argv)
+            # Trigger clean shutdown of this process
+            shutdown_event = getattr(self.core, 'shutdown_event', None)
+            if shutdown_event:
+                shutdown_event.set()
+            else:
+                sys.exit(0)
         asyncio.create_task(_do_restart())
         return web.json_response({'ok': True, 'message': 'Restarting...'})
 
@@ -3828,9 +3835,15 @@ setInterval(() => {
         async def _do_shutdown():
             await asyncio.sleep(1.5)
             await self.core.log("⏻ Shutting down now...", priority=1)
-            # Stop the event loop cleanly
-            loop = asyncio.get_event_loop()
-            loop.call_soon(loop.stop)
+            # Trigger the proper shutdown chain via shutdown_event
+            # This unblocks main_loop() → server.close() → self.shutdown() → clean exit
+            shutdown_event = getattr(self.core, 'shutdown_event', None)
+            if shutdown_event:
+                shutdown_event.set()
+            else:
+                # Fallback: force exit if shutdown_event not available
+                import sys
+                sys.exit(0)
         asyncio.create_task(_do_shutdown())
         return web.json_response({'ok': True, 'message': 'Shutting down...'})
 
@@ -4540,6 +4553,7 @@ setInterval(() => {
 
     async def run(self):
         runner = web.AppRunner(self.app, access_log=None)
+        self._runner = runner  # Store for cleanup on shutdown
         await runner.setup()
 
         protocol = 'http'
