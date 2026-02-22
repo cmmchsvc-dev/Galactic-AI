@@ -4359,6 +4359,15 @@ class GalacticGateway:
             try:
                 async with httpx.AsyncClient(timeout=300.0, verify=False) as client:
                     async with client.stream("POST", url, headers=headers, json=payload) as response:
+                        # Check HTTP status before parsing SSE stream
+                        if response.status_code != 200:
+                            body = await response.aread()
+                            try:
+                                err_data = json.loads(body)
+                                err_msg = err_data.get('error', {}).get('message', '') or err_data.get('detail', '') or body.decode()[:500]
+                            except Exception:
+                                err_msg = body.decode('utf-8', errors='replace')[:500]
+                            return f"[ERROR] {provider} HTTP {response.status_code}: {err_msg}"
                         token_buf = []
                         async for line in response.aiter_lines():
                             if not line.startswith("data: "):
@@ -4368,7 +4377,15 @@ class GalacticGateway:
                                 break
                             try:
                                 chunk = json.loads(data_str)
-                                delta_obj = chunk.get('choices', [{}])[0].get('delta', {})
+                                choices = chunk.get('choices', [])
+                                if not choices:
+                                    # Empty choices — could be error, heartbeat, or model loading
+                                    # Check for error payload
+                                    if 'error' in chunk:
+                                        err_msg = chunk['error'].get('message', str(chunk['error']))
+                                        return f"[ERROR] {provider}: {err_msg}"
+                                    continue
+                                delta_obj = choices[0].get('delta', {})
                                 delta = delta_obj.get('content', '') or ''
                                 # NVIDIA thinking models may also stream reasoning_content
                                 if not delta:
