@@ -4451,43 +4451,69 @@ class GalacticGateway:
                 payload.update(extra)
         if max_tokens:
             payload["max_tokens"] = max_tokens
-        try:
-            _timeout = httpx.Timeout(connect=30.0, read=600.0, write=30.0, pool=30.0)
-            async with httpx.AsyncClient(timeout=_timeout, verify=False) as client:
-                response = await client.post(url, headers=headers, json=payload)
-                # Check HTTP status before parsing JSON
-                if response.status_code != 200:
-                    body_text = response.text[:500]
+        # NVIDIA NIM is serverless — large models (397B, 744B) get unloaded when
+        # idle and cold-start can exceed NVIDIA's 5-min gateway timeout (HTTP 504).
+        # Retry up to 2 times on 504 to ride out the cold-start window.
+        _max_retries = 2 if provider == "nvidia" else 0
+        for _attempt in range(_max_retries + 1):
+            try:
+                _timeout = httpx.Timeout(connect=30.0, read=600.0, write=30.0, pool=30.0)
+                async with httpx.AsyncClient(timeout=_timeout, verify=False) as client:
+                    response = await client.post(url, headers=headers, json=payload)
+                    # Check HTTP status before parsing JSON
+                    if response.status_code != 200:
+                        body_text = response.text[:500]
+                        # NVIDIA 504 = model cold-starting — retry
+                        if response.status_code in (502, 503, 504) and _attempt < _max_retries:
+                            await self.core.log(
+                                f"⏳ NVIDIA model loading (HTTP {response.status_code}) — "
+                                f"retry {_attempt + 1}/{_max_retries}, waiting for cold-start...",
+                                priority=2
+                            )
+                            await asyncio.sleep(10)  # brief pause before retry
+                            continue
+                        try:
+                            err_data = json.loads(body_text)
+                            err_msg = (err_data.get('error', {}).get('message', '')
+                                       or err_data.get('error', '')
+                                       or err_data.get('detail', '')
+                                       or body_text)
+                        except Exception:
+                            err_msg = body_text or f"HTTP {response.status_code} (empty body)"
+                        if response.status_code in (502, 503, 504):
+                            err_msg = (f"NVIDIA model cold-start timeout after "
+                                       f"{_max_retries + 1} attempts — model may be "
+                                       f"unavailable. Try again in a few minutes.")
+                        return f"[ERROR] {provider} HTTP {response.status_code}: {err_msg}"
+                    # Safe JSON parse — guard against empty body
+                    body_text = response.text.strip()
+                    if not body_text:
+                        return f"[ERROR] {provider}: empty response body (HTTP 200)"
                     try:
-                        err_data = json.loads(body_text)
-                        err_msg = (err_data.get('error', {}).get('message', '')
-                                   or err_data.get('error', '')
-                                   or err_data.get('detail', '')
-                                   or body_text)
-                    except Exception:
-                        err_msg = body_text or f"HTTP {response.status_code} (empty body)"
-                    return f"[ERROR] {provider} HTTP {response.status_code}: {err_msg}"
-                # Safe JSON parse — guard against empty body
-                body_text = response.text.strip()
-                if not body_text:
-                    return f"[ERROR] {provider}: empty response body (HTTP 200)"
-                try:
-                    data = json.loads(body_text)
-                except json.JSONDecodeError as je:
-                    return f"[ERROR] {provider}: invalid JSON — {je} — body: {body_text[:200]}"
-                if 'choices' not in data:
-                    return f"[ERROR] {provider}: {json.dumps(data)[:500]}"
-                msg = data['choices'][0]['message']
-                content = (msg.get('content') or '').strip()
-                reasoning = (msg.get('reasoning_content') or '').strip()
-                if content:
-                    return content
-                elif reasoning:
-                    return f"[Reasoning]\n{reasoning}"
-                else:
-                    return '[No response]'
-        except Exception as e:
-            return f"[ERROR] {provider}: {str(e)}"
+                        data = json.loads(body_text)
+                    except json.JSONDecodeError as je:
+                        return f"[ERROR] {provider}: invalid JSON — {je} — body: {body_text[:200]}"
+                    if 'choices' not in data:
+                        return f"[ERROR] {provider}: {json.dumps(data)[:500]}"
+                    msg = data['choices'][0]['message']
+                    content = (msg.get('content') or '').strip()
+                    reasoning = (msg.get('reasoning_content') or '').strip()
+                    if content:
+                        return content
+                    elif reasoning:
+                        return f"[Reasoning]\n{reasoning}"
+                    else:
+                        return '[No response]'
+            except Exception as e:
+                if _attempt < _max_retries and provider == "nvidia":
+                    await self.core.log(
+                        f"⏳ NVIDIA request error ({e.__class__.__name__}) — "
+                        f"retry {_attempt + 1}/{_max_retries}...",
+                        priority=2
+                    )
+                    await asyncio.sleep(10)
+                    continue
+                return f"[ERROR] {provider}: {str(e)}"
 
 
     # ═══════════════════════════════════════════════════════════════════════════
