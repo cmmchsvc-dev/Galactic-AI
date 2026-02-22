@@ -136,7 +136,8 @@ class ModelManager:
             return ERROR_NETWORK
 
         # Empty response
-        if any(k in low for k in ("empty response", "no content", "empty", "no candidates")):
+        if any(k in low for k in ("empty response", "no content", "empty reply",
+                                   "empty result", "no candidates", "generated no")):
             return ERROR_EMPTY
 
         return ERROR_UNKNOWN
@@ -438,7 +439,18 @@ class ModelManager:
 
             # Write back
             with open(self.config_path, 'w') as f:
-                yaml.dump(config, f, default_flow_style=False)
+                yaml.dump(config, f, default_flow_style=False, allow_unicode=True)
+
+            # Sync in-memory config so subsequent saves by other code paths
+            # (e.g. web_deck toggle saves) don't overwrite with stale values
+            self.core.config.setdefault('models', {})
+            self.core.config['models']['primary_provider'] = self.primary_provider
+            self.core.config['models']['primary_model'] = self.primary_model
+            self.core.config['models']['fallback_provider'] = self.fallback_provider
+            self.core.config['models']['fallback_model'] = self.fallback_model
+            self.core.config.setdefault('gateway', {})
+            self.core.config['gateway']['provider'] = self.primary_provider
+            self.core.config['gateway']['model'] = self.primary_model
 
             await self.core.log("💾 Model config saved", priority=2)
 
@@ -526,6 +538,29 @@ class ModelManager:
                 model = ollama_mgr.discovered_models[0]
             else:
                 return  # No Ollama models available, skip
+
+        # Availability guard: don't route to providers in cooldown or missing API keys
+        if not self._is_provider_available(provider):
+            await self.core.log(
+                f"Smart routing: {provider} is in cooldown, skipping route",
+                priority=3
+            )
+            return
+
+        if provider != 'ollama':
+            providers_cfg = self.core.config.get('providers', {})
+            prov_cfg = providers_cfg.get(provider, {})
+            api_key = (prov_cfg.get('apiKey', '') or prov_cfg.get('api_key', '')
+                       or prov_cfg.get('apikey', ''))
+            if provider == 'nvidia' and not api_key:
+                sub_keys = prov_cfg.get('keys', {})
+                api_key = next((v for v in sub_keys.values() if v), '') if sub_keys else ''
+            if not api_key or api_key == 'NONE':
+                await self.core.log(
+                    f"Smart routing: {provider} has no API key, skipping route",
+                    priority=3
+                )
+                return
 
         if model:
             # Save current state so speak() can restore after the request

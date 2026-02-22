@@ -75,6 +75,8 @@ class GalacticGateway:
         self._speaking = False
         # Queued model switch: if user switches model during active speak(), apply after
         self._queued_switch = None
+        # Lock to serialize sub-agent speak_isolated() calls (prevents concurrent state corruption)
+        self._speak_lock = asyncio.Lock()
         
         # Tool Registry
         self.tools = {}
@@ -2469,30 +2471,51 @@ class GalacticGateway:
     async def tool_edit_file(self, args):
         """Edit a file by finding and replacing exact text."""
         path = args.get('path')
+
+        # Normalize alternative parameter formats LLMs sometimes use
         old_text = args.get('old_text')
+        if old_text is None:
+            old_text = args.get('old')
         new_text = args.get('new_text')
-        
+        if new_text is None:
+            new_text = args.get('new')
+
+        # Handle replacements array: {replacements: [{old/old_text, new/new_text}]}
+        if old_text is None and 'replacements' in args:
+            replacements = args['replacements']
+            if isinstance(replacements, list) and len(replacements) > 0:
+                first = replacements[0]
+                old_text = first.get('old_text') or first.get('old')
+                new_text = first.get('new_text') or first.get('new')
+
+        if not path:
+            return "Error: 'path' parameter is required."
+        if old_text is None or new_text is None:
+            return ("Error: 'old_text' and 'new_text' parameters are required. "
+                    "Accepted formats: {old_text, new_text} or {old, new} or "
+                    "{replacements: [{old, new}]}.")
+
         try:
             # Read current content
             with open(path, 'r', encoding='utf-8') as f:
                 content = f.read()
-            
+
             # Check if old_text exists
             if old_text not in content:
                 return f"Error: Could not find exact text in {path}. No changes made."
-            
+
             # Count occurrences
             count = content.count(old_text)
             if count > 1:
                 return f"Warning: Found {count} occurrences of text. Please be more specific. No changes made."
-            
+
             # Replace
             new_content = content.replace(old_text, new_text, 1)
-            
+
             # Write back
             with open(path, 'w', encoding='utf-8') as f:
                 f.write(new_content)
-            
+
             return f"[OK] Successfully edited {path} (replaced 1 occurrence)"
         except Exception as e:
             return f"Error editing file: {e}"
@@ -3609,6 +3632,52 @@ class GalacticGateway:
                         priority=2
                     )
 
+    # ── Isolated speak for sub-agents ─────────────────────────────────
+
+    async def speak_isolated(self, user_input, context="", chat_id=None, images=None):
+        """
+        Run speak() with isolated state for sub-agents.
+        Saves and restores all mutable gateway state so concurrent calls
+        don't corrupt the main agent's session.
+        Serialized via _speak_lock to prevent sub-agents from interfering
+        with each other.
+        """
+        async with self._speak_lock:
+            # Snapshot current state
+            saved_speaking = self._speaking
+            saved_history = self.history
+            saved_provider = self.llm.provider
+            saved_model = self.llm.model
+            saved_api_key = self.llm.api_key
+            saved_queued = self._queued_switch
+
+            # Snapshot model_manager routing state
+            model_mgr = getattr(self.core, 'model_manager', None)
+            saved_routed = getattr(model_mgr, '_routed', False) if model_mgr else False
+            saved_pre_route = getattr(model_mgr, '_pre_route_state', None) if model_mgr else None
+
+            try:
+                # Use isolated history (sub-agent has no prior conversation)
+                self.history = []
+                self._speaking = False
+                self._queued_switch = None
+                if model_mgr:
+                    model_mgr._routed = False
+                    model_mgr._pre_route_state = None
+
+                return await self.speak(user_input, context=context, chat_id=chat_id, images=images)
+            finally:
+                # Restore all state
+                self._speaking = saved_speaking
+                self.history = saved_history
+                self.llm.provider = saved_provider
+                self.llm.model = saved_model
+                self.llm.api_key = saved_api_key
+                self._queued_switch = saved_queued
+                if model_mgr:
+                    model_mgr._routed = saved_routed
+                    model_mgr._pre_route_state = saved_pre_route
+
     # ── Tool timeout defaults ────────────────────────────────────────
     _TOOL_TIMEOUTS = {
         'exec_shell': 120, 'execute_python': 60, 'open_browser': 60,
@@ -3716,8 +3785,11 @@ class GalacticGateway:
                             self.llm.model = orig_model
                             self.llm.api_key = orig_key
                             return result
-                    except Exception:
-                        pass
+                    except Exception as e:
+                        await self.core.log(
+                            f"Fallback cache miss ({fb_p}/{fb_m}): {type(e).__name__}: {e}",
+                            priority=3
+                        )
 
             # Walk the full chain
             for entry in chain:
