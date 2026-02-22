@@ -3947,7 +3947,7 @@ setInterval(() => {
             'mistral':     ('apiKey',  'https://api.mistral.ai/v1'),
             'cerebras':    ('apiKey',  'https://api.cerebras.ai/v1'),
             'openrouter':  ('apiKey',  'https://openrouter.ai/api/v1'),
-            'huggingface': ('apiKey',  'https://api-inference.huggingface.co/v1'),
+            'huggingface': ('apiKey',  'https://router.huggingface.co/v1'),
             'kimi':        ('apiKey',  'https://api.kimi.com/v1'),
             'zai':         ('apiKey',  'https://api.z.ai/api/paas/v4'),
             'minimax':     ('apiKey',  'https://api.minimax.io/v1'),
