@@ -379,14 +379,22 @@ class GalacticCore:
         except Exception:
             pass
 
+        # Clean up aiohttp web server (release port)
+        try:
+            if hasattr(self, 'web') and hasattr(self.web, '_runner') and self.web._runner:
+                await self.web._runner.cleanup()
+        except Exception:
+            pass
+
         timestamp = datetime.now().strftime("%H:%M:%S")
         print(f"[{timestamp}] [Core] Galactic AI shut down cleanly. See you among the stars.")
 
     async def main_loop(self):
         self.loop = asyncio.get_running_loop()
 
-        # Register signal handlers for graceful shutdown (Ctrl+C)
+        # Register signal handlers for graceful shutdown (Ctrl+C / Control Deck)
         shutdown_event = asyncio.Event()
+        self.shutdown_event = shutdown_event  # Expose so web_deck can trigger it
 
         def _signal_handler():
             if shutdown_event.is_set():
