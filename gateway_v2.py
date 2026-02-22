@@ -1070,6 +1070,35 @@ class GalacticGateway:
                 },
                 "fn": self.tool_generate_image_imagen
             },
+            "generate_video": {
+                "description": "Generate a short video clip using Google Veo AI. Returns the path to the saved MP4 file. Supports text-to-video with configurable duration, resolution, and aspect ratio.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "prompt":          {"type": "string",  "description": "Scene description for the video"},
+                        "duration":        {"type": "integer", "description": "Video duration in seconds: 4, 6, or 8 (default: 8)"},
+                        "aspect_ratio":    {"type": "string",  "description": "Aspect ratio: 16:9 or 9:16 (default: 16:9)"},
+                        "resolution":      {"type": "string",  "description": "Resolution: 720p, 1080p, or 4k (default: 1080p)"},
+                        "negative_prompt": {"type": "string",  "description": "Things to avoid in the video (optional)"},
+                    },
+                    "required": ["prompt"]
+                },
+                "fn": self.tool_generate_video
+            },
+            "generate_video_from_image": {
+                "description": "Animate a still image into a short video clip using Google Veo. Takes an image (from Imagen, FLUX, or SD3.5) and turns it into motion video. Returns path to saved MP4.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "prompt":       {"type": "string",  "description": "Description of the motion/animation to apply"},
+                        "image_path":   {"type": "string",  "description": "Path to the source image file"},
+                        "duration":     {"type": "integer", "description": "Video duration in seconds: 4, 6, or 8 (default: 8)"},
+                        "aspect_ratio": {"type": "string",  "description": "Aspect ratio: 16:9 or 9:16 (default: 16:9)"},
+                    },
+                    "required": ["prompt", "image_path"]
+                },
+                "fn": self.tool_generate_video_from_image
+            },
 
             # ── File & system utilities ────────────────────────────────────────
             "list_dir": {
@@ -4660,6 +4689,169 @@ class GalacticGateway:
             return "[ERROR] google-genai not installed. Run: pip install google-genai"
         except Exception as e:
             return f"[ERROR] generate_image_imagen: {e}"
+
+    async def tool_generate_video(self, args):
+        """Generate a video using Google Veo via the google-genai SDK."""
+        import time as _time
+        prompt = args.get('prompt', '')
+        if not prompt:
+            return "[ERROR] generate_video requires a 'prompt' argument."
+
+        video_cfg = self.core.config.get('video', {}).get('google', {})
+        duration = str(args.get('duration', video_cfg.get('default_duration', 8)))
+        aspect_ratio = args.get('aspect_ratio', video_cfg.get('default_aspect_ratio', '16:9'))
+        resolution = args.get('resolution', video_cfg.get('default_resolution', '1080p'))
+        negative_prompt = args.get('negative_prompt', '')
+        model_name = video_cfg.get('model', 'veo-3.1')
+
+        model_map = {
+            'veo-2': 'veo-2-generate-preview',
+            'veo-3': 'veo-3.0-generate-preview',
+            'veo-3.1': 'veo-3.1-generate-preview',
+        }
+        model_id = model_map.get(model_name, model_name)
+
+        google_key = self.core.config.get('providers', {}).get('google', {}).get('apiKey', '')
+        if not google_key:
+            return "[ERROR] No google.apiKey found in config.yaml"
+
+        try:
+            from google import genai
+            from google.genai import types
+
+            client = genai.Client(api_key=google_key)
+
+            await self.core.log(f"🎬 Generating video with {model_id}...", priority=2)
+
+            gen_config = types.GenerateVideosConfig(
+                aspect_ratio=aspect_ratio,
+                resolution=resolution,
+                duration_seconds=duration,
+            )
+            if negative_prompt:
+                gen_config.negative_prompt = negative_prompt
+
+            operation = client.models.generate_videos(
+                model=model_id,
+                prompt=prompt,
+                config=gen_config,
+            )
+
+            poll_count = 0
+            while not operation.done:
+                poll_count += 1
+                if poll_count % 6 == 0:
+                    await self.core.log(
+                        f"🎬 Video still generating... ({poll_count * 10}s elapsed)",
+                        priority=3
+                    )
+                await asyncio.sleep(10)
+                operation = client.operations.get(operation)
+
+            if not operation.response or not operation.response.generated_videos:
+                return "[ERROR] Video generation returned no results."
+
+            video = operation.response.generated_videos[0]
+            client.files.download(file=video.video)
+
+            images_dir = self.core.config.get('paths', {}).get('images', './images')
+            vid_subdir = os.path.join(images_dir, 'video')
+            os.makedirs(vid_subdir, exist_ok=True)
+            fname = f"veo_{int(_time.time())}.mp4"
+            path = os.path.join(vid_subdir, fname)
+            video.video.save(path)
+
+            self.last_video_file = path
+            return (
+                f"✅ Video generated: {path}\n"
+                f"Model: {model_id}\n"
+                f"Duration: {duration}s | Resolution: {resolution} | Aspect: {aspect_ratio}\n"
+                f"Prompt: {prompt}"
+            )
+        except Exception as e:
+            return f"[ERROR] generate_video: {e}"
+
+    async def tool_generate_video_from_image(self, args):
+        """Animate a still image into video using Google Veo."""
+        import time as _time
+        prompt = args.get('prompt', '')
+        image_path = args.get('image_path', '')
+        if not prompt:
+            return "[ERROR] generate_video_from_image requires a 'prompt' argument."
+        if not image_path or not os.path.exists(image_path):
+            return f"[ERROR] Image not found: {image_path}"
+
+        video_cfg = self.core.config.get('video', {}).get('google', {})
+        duration = str(args.get('duration', video_cfg.get('default_duration', 8)))
+        aspect_ratio = args.get('aspect_ratio', video_cfg.get('default_aspect_ratio', '16:9'))
+        model_name = video_cfg.get('model', 'veo-3.1')
+
+        model_map = {
+            'veo-2': 'veo-2-generate-preview',
+            'veo-3': 'veo-3.0-generate-preview',
+            'veo-3.1': 'veo-3.1-generate-preview',
+        }
+        model_id = model_map.get(model_name, model_name)
+
+        google_key = self.core.config.get('providers', {}).get('google', {}).get('apiKey', '')
+        if not google_key:
+            return "[ERROR] No google.apiKey found in config.yaml"
+
+        try:
+            from google import genai
+            from google.genai import types
+            from PIL import Image as _PILImage
+
+            client = genai.Client(api_key=google_key)
+
+            await self.core.log(f"🎬 Animating image to video with {model_id}...", priority=2)
+
+            img = _PILImage.open(image_path)
+
+            operation = client.models.generate_videos(
+                model=model_id,
+                prompt=prompt,
+                image=img,
+                config=types.GenerateVideosConfig(
+                    aspect_ratio=aspect_ratio,
+                    duration_seconds=duration,
+                ),
+            )
+
+            poll_count = 0
+            while not operation.done:
+                poll_count += 1
+                if poll_count % 6 == 0:
+                    await self.core.log(
+                        f"🎬 Video still generating... ({poll_count * 10}s elapsed)",
+                        priority=3
+                    )
+                await asyncio.sleep(10)
+                operation = client.operations.get(operation)
+
+            if not operation.response or not operation.response.generated_videos:
+                return "[ERROR] Video generation returned no results."
+
+            video = operation.response.generated_videos[0]
+            client.files.download(file=video.video)
+
+            images_dir = self.core.config.get('paths', {}).get('images', './images')
+            vid_subdir = os.path.join(images_dir, 'video')
+            os.makedirs(vid_subdir, exist_ok=True)
+            fname = f"veo_{int(_time.time())}.mp4"
+            path = os.path.join(vid_subdir, fname)
+            video.video.save(path)
+
+            self.last_video_file = path
+            return (
+                f"✅ Image animated to video: {path}\n"
+                f"Model: {model_id}\n"
+                f"Source: {image_path}\n"
+                f"Duration: {duration}s | Aspect: {aspect_ratio}\n"
+                f"Prompt: {prompt}"
+            )
+        except Exception as e:
+            return f"[ERROR] generate_video_from_image: {e}"
 
     async def tool_list_dir(self, args):
         """List directory contents with sizes and dates."""

@@ -128,6 +128,23 @@ tool_timeouts:
   generate_image: 180
   generate_image_imagen: 180
   generate_image_sd35: 180
+  generate_video: 300
+  generate_video_from_image: 300
+video:
+  provider: google
+  google:
+    model: veo-3.1
+    use_vertex: false
+    default_duration: 8
+    default_resolution: 1080p
+    default_aspect_ratio: '16:9'
+  runway:
+    apiKey: ''
+    model: gen4
+  kling:
+    apiKey: ''
+  luma:
+    apiKey: ''
 web:
   enabled: true
   host: 127.0.0.1

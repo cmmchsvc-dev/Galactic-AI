@@ -73,6 +73,7 @@ class GalacticWebDeck:
         self.app.router.add_get('/api/history', self.handle_history)
         self.app.router.add_get('/api/logs', self.handle_logs)
         self.app.router.add_get('/api/image/{filename}', self.handle_serve_image)
+        self.app.router.add_get('/api/video/{filename}', self.handle_serve_video)
         self.app.router.add_get('/api/images/{subfolder}/{filename}', self.handle_serve_image_sub)
         self.app.router.add_get('/api/traces', self.handle_traces)
         self.app.router.add_post('/api/save_key', self.handle_save_key)
@@ -1747,6 +1748,23 @@ function appendBotImage(url) {
   if (autoScroll) log.scrollTop = log.scrollHeight;
 }
 
+function appendBotVideo(url) {
+  const log = document.getElementById('chat-log');
+  const sb = document.getElementById('stream-bubble');
+  const div = document.createElement('div');
+  div.className = 'msg bot';
+  div.innerHTML = `<div class="bubble" style="padding:8px">
+    <video src="${url}" controls autoplay muted loop
+           style="max-width:100%;max-height:512px;border-radius:8px;display:block"></video>
+    <div style="display:flex;align-items:center;gap:8px;margin-top:6px">
+      <span style="font-size:0.75em;color:var(--dim)">🎬 Generated video</span>
+      <a href="${url}" download style="font-size:0.75em;color:var(--cyan);text-decoration:none">⬇ Download MP4</a>
+    </div>
+  </div><div class="meta">Byte \u2022 ${fmtTime()}</div>`;
+  log.insertBefore(div, sb.nextSibling);
+  if (autoScroll) log.scrollTop = log.scrollHeight;
+}
+
 async function loadChatHistory() {
   try {
     const r = await authFetch('/api/history?limit=50');
@@ -1905,6 +1923,7 @@ async function sendChatMain() {
     appendBotMsg(d.response || d.error || 'No response');
     console.log('[Image Delivery] response keys:', Object.keys(d), 'image_url:', d.image_url || 'NONE');
     if (d.image_url) appendBotImage(d.image_url);
+    if (d.video_url) appendBotVideo(d.video_url);
   } catch(err) {
     stream.style.display = 'none';
     appendBotMsg('[ERROR] ' + err.message);
@@ -3317,6 +3336,20 @@ setInterval(() => {
             status = {"healthy": False, "base_url": "unknown", "models": [], "model_count": 0}
         return web.json_response(status)
 
+    async def handle_serve_video(self, request):
+        """GET /api/video/{filename} — serve a generated video."""
+        filename = request.match_info.get('filename', '')
+        filename = os.path.basename(filename)
+        images_dir = self.core.config.get('paths', {}).get('images', './images')
+        video_dir = os.path.join(images_dir, 'video')
+        path = os.path.join(video_dir, filename)
+        if not os.path.exists(path):
+            return web.Response(status=404, text='Video not found')
+        return web.FileResponse(path, headers={
+            'Content-Type': 'video/mp4',
+            'Cache-Control': 'public, max-age=86400',
+        })
+
     async def handle_serve_image(self, request):
         """GET /api/image/{filename} — serve a generated image from the logs directory."""
         import mimetypes
@@ -3479,6 +3512,18 @@ setInterval(() => {
                     f"(CWD={os.getcwd()})",
                     priority=1
                 )
+
+            # Video delivery (same pattern as image delivery)
+            video_file = getattr(self.core.gateway, 'last_video_file', None)
+            if video_file and os.path.exists(video_file):
+                fname = os.path.basename(video_file)
+                resp_data['video_url'] = f'/api/video/{fname}'
+                self.core.gateway.last_video_file = None
+                await self.core.log(
+                    f"[Video Delivery] serving {fname}",
+                    priority=3
+                )
+
             return web.json_response(resp_data)
         except Exception as e:
             return web.json_response({'error': str(e)}, status=500)
