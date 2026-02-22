@@ -4414,7 +4414,7 @@ class GalacticGateway:
         if not nvidia_key:
             return "[ERROR] No nvidia.apiKey found in config.yaml"
 
-        url = "https://ai.api.nvidia.com/v1/genai/stabilityai/stable-diffusion-3_5-large"
+        url = "https://ai.api.nvidia.com/v1/genai/stabilityai/stable-diffusion-3.5-large"
         headers = {
             "Authorization": f"Bearer {nvidia_key}",
             "Accept": "application/json",
@@ -4422,6 +4422,7 @@ class GalacticGateway:
         }
         payload = {
             "prompt": prompt,
+            "mode": "base",
             "width": width,
             "height": height,
             "steps": steps,
@@ -4463,8 +4464,8 @@ class GalacticGateway:
             return f"[ERROR] generate_image_sd35: {e}"
 
     async def tool_generate_image_imagen(self, args):
-        """Generate an image using Google Imagen 4 via the Google Generative AI API."""
-        import base64 as _b64, time as _time
+        """Generate an image using Google Imagen 4 via the google-genai SDK."""
+        import time as _time
         prompt       = args.get('prompt', '')
         model        = args.get('model', 'imagen-4')
         aspect_ratio = args.get('aspect_ratio', '1:1')
@@ -4473,10 +4474,13 @@ class GalacticGateway:
         if not prompt:
             return "[ERROR] generate_image_imagen: 'prompt' is required."
 
-        # Validate model name
-        valid_models = {'imagen-4-ultra', 'imagen-4', 'imagen-4-fast'}
-        if model not in valid_models:
-            model = 'imagen-4'
+        # Map user-friendly names to SDK model identifiers
+        model_map = {
+            'imagen-4':       'imagen-4.0-generate-001',
+            'imagen-4-ultra': 'imagen-4.0-ultra-generate-001',
+            'imagen-4-fast':  'imagen-4.0-fast-generate-001',
+        }
+        sdk_model = model_map.get(model, 'imagen-4.0-generate-001')
 
         google_cfg = self.core.config.get('providers', {}).get('google', {})
         api_key = google_cfg.get('apiKey', '')
@@ -4484,30 +4488,39 @@ class GalacticGateway:
             return "[ERROR] generate_image_imagen: No Google API key configured. Add it at providers.google.apiKey in config.yaml."
 
         try:
-            import google.generativeai as genai
-            genai.configure(api_key=api_key)
+            from google import genai
+            from google.genai import types
 
-            imagen = genai.ImageGenerationModel(model)
-            result = imagen.generate_images(
+            client = genai.Client(api_key=api_key)
+
+            result = client.models.generate_images(
+                model=sdk_model,
                 prompt=prompt,
-                number_of_images=max(1, min(4, n_images)),
-                aspect_ratio=aspect_ratio,
-                safety_filter_level="block_only_high",
-                person_generation="allow_adult",
+                config=types.GenerateImagesConfig(
+                    number_of_images=max(1, min(4, n_images)),
+                    aspect_ratio=aspect_ratio,
+                    safety_filter_level="BLOCK_ONLY_HIGH",
+                    person_generation="ALLOW_ADULT",
+                ),
             )
 
-            if not result.images:
-                return f"[ERROR] Imagen returned no images. Check your prompt for policy violations."
+            if not result.generated_images:
+                return "[ERROR] Imagen returned no images. Check your prompt for policy violations."
 
             images_dir = self.core.config.get('paths', {}).get('images', './images')
             img_subdir = os.path.join(images_dir, 'imagen')
             os.makedirs(img_subdir, exist_ok=True)
 
             saved = []
-            for i, img in enumerate(result.images):
+            for i, gen_img in enumerate(result.generated_images):
                 fname = f"imagen_{int(_time.time())}_{i}.png"
                 path = os.path.join(img_subdir, fname)
-                img.save(path)
+                # Use .save() if available, else write raw bytes
+                if hasattr(gen_img.image, 'save'):
+                    gen_img.image.save(path)
+                else:
+                    with open(path, 'wb') as f:
+                        f.write(gen_img.image.image_bytes)
                 saved.append(path)
 
             # Deliver the first image inline via Control Deck / Telegram
@@ -4515,7 +4528,7 @@ class GalacticGateway:
             paths_str = '\n'.join(f"  {p}" for p in saved)
             return f"✅ Imagen image(s) generated ({model}):\n{paths_str}\nPrompt: {prompt}"
         except ImportError:
-            return "[ERROR] google-generativeai not installed. Run: pip install google-generativeai"
+            return "[ERROR] google-genai not installed. Run: pip install google-genai"
         except Exception as e:
             return f"[ERROR] generate_image_imagen: {e}"
 
