@@ -33,9 +33,14 @@ _NVIDIA_THINKING_MODELS = {
     "z-ai/glm5":              {"chat_template_kwargs": {"enable_thinking": True, "clear_thinking": False}},
     "moonshotai/kimi-k2.5":   {"chat_template_kwargs": {"thinking": True}},
     "qwen/qwen3.5-397b-a17b": {"chat_template_kwargs": {"enable_thinking": True}},
+    "deepseek-ai/deepseek-v3.2": {"chat_template_kwargs": {"thinking": True}},
     "nvidia/nemotron-3-nano-30b-a3b": {
         "reasoning_budget": 16384,
         "chat_template_kwargs": {"enable_thinking": True},
+    },
+    "nvidia/nvidia-nemotron-nano-9b-v2": {
+        "min_thinking_tokens": 1024,
+        "max_thinking_tokens": 2048,
     },
 }
 
