@@ -673,22 +673,36 @@ class TelegramBridge:
         except: return []
 
     def _get_speak_timeout(self) -> float:
-        """Return the appropriate speak() timeout based on the active model provider.
+        """Return the speak() timeout for Telegram calls.
 
-        Ollama (local inference) gets a much higher ceiling because:
-          - 30B models: 60-180s per LLM call
-          - Browser/Playwright tools: up to 30s per navigation
-          - ReAct loop: up to 50 turns
-        Cloud models keep the original fast timeout.
+        Uses the global speak_timeout from config.models as the authoritative
+        ceiling.  The gateway's own asyncio.wait_for() already enforces this
+        limit, but Telegram wraps the call in its own wait_for too — if the
+        Telegram timeout is shorter than the gateway timeout, the task gets
+        killed early even though the agent is still working.
+
+        Priority:
+          1. config.models.speak_timeout  (global ceiling — default 600s)
+          2. Telegram-specific overrides (only if they are LARGER):
+             - ollama_timeout_seconds for local models
+             - timeout_seconds for cloud models
         """
+        global_timeout = float(
+            self.core.config.get('models', {}).get('speak_timeout', 600)
+        )
         tg_cfg = self.core.config.get('telegram', {})
         is_ollama = (
             hasattr(self.core, 'gateway') and
             self.core.gateway.llm.provider == 'ollama'
         )
         if is_ollama:
-            return float(tg_cfg.get('ollama_timeout_seconds', 600))
-        return float(tg_cfg.get('timeout_seconds', 120))
+            tg_timeout = float(tg_cfg.get('ollama_timeout_seconds', 600))
+        else:
+            tg_timeout = float(tg_cfg.get('timeout_seconds', 120))
+
+        # Use whichever is larger — never cut off a task that the gateway
+        # is still allowed to work on
+        return max(global_timeout, tg_timeout)
 
     async def _save_provider_key(self, provider: str, api_key: str):
         """Persist an API key for a provider to config.yaml and update in-memory config."""

@@ -1,0 +1,143 @@
+aliases:
+  coder30: ollama/qwen3-coder:30b
+  deepseek: nvidia/deepseek-ai/deepseek-v3.2
+  flash: google/gemini-2.5-flash
+  flux-dev: nvidia/black-forest-labs/flux.1-dev
+  flux-schnell: nvidia/black-forest-labs/flux.1-schnell
+  gemini: google/gemini-3.1-pro-preview
+  gemma27: nvidia/google/gemma-3-27b-it
+  glm5: nvidia/z-ai/glm5
+  grok: xai/grok-4
+  kimi25: nvidia/moonshotai/kimi-k2.5
+  llama405: nvidia/meta/llama-3.1-405b-instruct
+  minimax-m2: nvidia/minimaxai/minimax-m2.1
+  mistral: nvidia/mistralai/mistral-large-3-675b-instruct-2512
+  nemotron-nano: nvidia/nvidia/nemotron-3-nano-30b-a3b
+  nemotron-vl: nvidia/nvidia/nemotron-nano-12b-v2-vl
+  phi-vision: nvidia/microsoft/phi-3.5-vision-instruct
+  pro: google/gemini-2.5-pro
+  q30: ollama/qwen3:30b
+  q8: ollama/qwen3:8b
+  qwen397: nvidia/qwen/qwen3.5-397b-a17b
+  qwen480: nvidia/qwen/qwen3-coder-480b-a35b-instruct
+  sd35: nvidia/stabilityai/stable-diffusion-3.5-large
+  step35: nvidia/stepfun-ai/step-3.5-flash
+browser:
+  engine: chromium
+  headless: false
+elevenlabs:
+  api_key: ""
+  voice: Guy
+gateway:
+  api_key: ""
+  model: gemini-2.5-flash
+  provider: google
+model_overrides: {}
+models:
+  auto_fallback: true
+  context_window: 0
+  context_window_trim: true
+  error_threshold: 3
+  fallback_model: qwen3:8b
+  fallback_provider: ollama
+  max_tokens: 0
+  max_turns: 50
+  primary_model: gemini-2.5-flash
+  primary_provider: google
+  recovery_time_seconds: 300
+  smart_routing: false
+  streaming: true
+  speak_timeout: 600
+  fallback_cooldowns:
+    RATE_LIMIT: 60
+    SERVER_ERROR: 30
+    TIMEOUT: 10
+    AUTH_ERROR: 86400
+    QUOTA_EXHAUSTED: 3600
+tool_timeouts:
+  exec_shell: 120
+  execute_python: 60
+  generate_image: 180
+  generate_image_sd35: 180
+  generate_image_imagen: 180
+paths:
+  logs: ./logs
+  images: ./images
+  plugins: ./plugins
+  watch: ./watch
+  workspace: ./workspace
+personality:
+  mode: byte
+  name: Byte
+providers:
+  anthropic:
+    apiKey: ""
+    baseUrl: https://api.anthropic.com/v1
+  deepseek:
+    apiKey: ""
+    baseUrl: https://api.deepseek.com/v1
+  google:
+    apiKey: ""
+    baseUrl: https://generativelanguage.googleapis.com/v1beta
+  groq:
+    apiKey: ""
+    baseUrl: https://api.groq.com/openai/v1
+  nvidia:
+    apiKey: ""
+    fluxApiKey: ""
+    fluxDevApiKey: ""
+    baseUrl: https://integrate.api.nvidia.com/v1
+    keys:
+      deepseek: ""
+      glm: ""
+      kimi: ""
+      qwen: ""
+      stepfun: ""
+  ollama:
+    baseUrl: http://127.0.0.1:11434/v1
+  openai:
+    apiKey: ""
+    baseUrl: https://api.openai.com/v1
+  xai:
+    apiKey: ""
+    baseUrl: https://api.x.ai/v1
+shell_tasks:
+- command: adb devices
+  name: ADB Check
+- command: tasklist | findstr python
+  name: Watchdog Status
+system:
+  heartbeat_interval: 5
+  name: Galactic AI
+  port: 9999
+  version: 1.0.6
+  update_check_interval: 21600
+gmail:
+  email: ""
+  app_password: ""
+  check_interval: 60
+  notify_telegram: true
+telegram:
+  admin_chat_id: ""
+  bot_token: ""
+  ollama_timeout_seconds: 600
+  timeout_seconds: 180
+whatsapp:
+  phone_number_id: ""
+  access_token: ""
+  verify_token: ""
+  webhook_secret: ""
+  api_version: v21.0
+discord:
+  bot_token: ""
+  allowed_channels: []
+  admin_user_id: ""
+  timeout_seconds: 120
+  ollama_timeout_seconds: 600
+webhooks:
+  secret: ""
+web:
+  enabled: true
+  host: 127.0.0.1
+  password_hash: ""
+  port: 17789
