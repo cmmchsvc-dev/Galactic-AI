@@ -116,7 +116,7 @@ system:
   name: Galactic AI
   port: 9999
   update_check_interval: 21600
-  version: 1.0.7
+  version: 1.0.8
 telegram:
   admin_chat_id: ''
   bot_token: ''
