@@ -3681,17 +3681,8 @@ setInterval(() => {
             if provider not in cfg['providers']:
                 cfg['providers'][provider] = {}
             cfg['providers'][provider]['apiKey'] = api_key
-            # Persist to config.yaml
-            cfg_path = getattr(self.core, 'config_path', 'config.yaml')
-            with open(cfg_path, 'r', encoding='utf-8') as f:
-                file_config = yaml.safe_load(f) or {}
-            if 'providers' not in file_config:
-                file_config['providers'] = {}
-            if provider not in file_config['providers']:
-                file_config['providers'][provider] = {}
-            file_config['providers'][provider]['apiKey'] = api_key
-            with open(cfg_path, 'w', encoding='utf-8') as f:
-                yaml.dump(file_config, f, default_flow_style=False, allow_unicode=True)
+            # Persist to config.yaml (safe read-modify-write with model-key protection)
+            self._save_config(cfg)
             # Apply to live gateway
             self.core.gateway.llm.api_key = api_key
             await self.core.log(f"API key saved for {provider} via Web Deck", priority=2)
@@ -3722,27 +3713,21 @@ setInterval(() => {
             if fp and fm:
                 await mm.set_fallback(fp, fm)
 
-            # Toggles
+            # Toggles — update in-memory, then save ONCE (not 3x)
+            cfg = self.core.config
+            cfg.setdefault('models', {})
+            toggle_changed = False
             if 'auto_fallback' in data:
                 mm.auto_fallback_enabled = bool(data['auto_fallback'])
-                cfg = self.core.config
-                if 'models' not in cfg:
-                    cfg['models'] = {}
                 cfg['models']['auto_fallback'] = mm.auto_fallback_enabled
-                self._save_config(cfg)
-
+                toggle_changed = True
             if 'smart_routing' in data:
-                cfg = self.core.config
-                if 'models' not in cfg:
-                    cfg['models'] = {}
                 cfg['models']['smart_routing'] = bool(data['smart_routing'])
-                self._save_config(cfg)
-
+                toggle_changed = True
             if 'streaming' in data:
-                cfg = self.core.config
-                if 'models' not in cfg:
-                    cfg['models'] = {}
                 cfg['models']['streaming'] = bool(data['streaming'])
+                toggle_changed = True
+            if toggle_changed:
                 self._save_config(cfg)
 
             await self.core.log("⚙️ Model settings updated via Settings tab", priority=2)
@@ -3867,13 +3852,10 @@ setInterval(() => {
             if 'web' not in cfg:
                 cfg['web'] = {}
             cfg['web']['password_hash'] = h
-            # Save to config.yaml
+            # Save to config.yaml (safe read-modify-write)
             try:
-                import yaml
-                cfg_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'config.yaml')
-                with open(cfg_path, 'w', encoding='utf-8') as f:
-                    yaml.dump(cfg, f, default_flow_style=False, allow_unicode=True)
-            except Exception as e:
+                self._save_config(cfg)
+            except Exception:
                 pass  # Non-fatal — hash saved in memory
             # Return JWT if remote access is enabled, otherwise legacy hash token
             token_resp = self._make_token_response(h)
@@ -3899,9 +3881,7 @@ setInterval(() => {
         except Exception:
             return web.json_response({'error': 'Invalid JSON'}, status=400)
 
-        import yaml
         cfg = self.core.config
-        cfg_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'config.yaml')
 
         # Password
         pw = data.get('password', '')
@@ -4013,10 +3993,15 @@ setInterval(() => {
         elif persona_mode == 'generic':
             cfg['personality']['name'] = 'Assistant'
 
-        # Save
+        # Save (safe read-modify-write)
         try:
-            with open(cfg_path, 'w', encoding='utf-8') as f:
-                yaml.dump(cfg, f, default_flow_style=False, allow_unicode=True)
+            # Update ModelManager so defensive writeback preserves the wizard's choice
+            if provider and model:
+                mm = getattr(self.core, 'model_manager', None)
+                if mm:
+                    mm.primary_provider = provider
+                    mm.primary_model = model
+            self._save_config(cfg)
             # Apply to live gateway immediately
             if provider and model:
                 self.core.gateway.llm.provider = provider
@@ -4117,21 +4102,50 @@ setInterval(() => {
                 cfg['models']['context_window'] = int(context_window) if context_window else 0
             except (ValueError, TypeError):
                 pass
-        # Persist to config.yaml
+        # Persist to config.yaml (safe read-modify-write)
         try:
-            cfg_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'config.yaml')
-            with open(cfg_path, 'w', encoding='utf-8') as f:
-                yaml.dump(cfg, f, default_flow_style=False, allow_unicode=True)
+            self._save_config(cfg)
         except Exception as e:
             return web.json_response({'ok': False, 'error': str(e)})
         return web.json_response({'ok': True, 'max_tokens': cfg['models'].get('max_tokens', 0), 'context_window': cfg['models'].get('context_window', 0)})
 
     def _save_config(self, cfg):
-        """Write config dict to config.yaml."""
+        """Safely merge in-memory config into config.yaml (read-modify-write).
+
+        Reads the existing file first so keys written by other code paths
+        (especially model_manager._save_config) are never lost.
+        """
         import yaml
-        cfg_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'config.yaml')
+        cfg_path = getattr(self.core, 'config_path', None)
+        if not cfg_path:
+            cfg_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'config.yaml')
+        # 1. Read existing config from disk to preserve all keys
+        try:
+            with open(cfg_path, 'r', encoding='utf-8') as f:
+                on_disk = yaml.safe_load(f) or {}
+        except Exception:
+            on_disk = {}
+        # 2. Deep-merge: update top-level sections from in-memory cfg
+        for key, value in cfg.items():
+            if isinstance(value, dict) and isinstance(on_disk.get(key), dict):
+                on_disk[key].update(value)
+            else:
+                on_disk[key] = value
+        # 3. Defensive: always write current model keys from ModelManager
+        #    This makes it IMPOSSIBLE for any save to erase model settings.
+        mm = getattr(self.core, 'model_manager', None)
+        if mm:
+            on_disk.setdefault('models', {})
+            on_disk['models']['primary_provider'] = mm.primary_provider
+            on_disk['models']['primary_model'] = mm.primary_model
+            on_disk['models']['fallback_provider'] = mm.fallback_provider
+            on_disk['models']['fallback_model'] = mm.fallback_model
+            on_disk.setdefault('gateway', {})
+            on_disk['gateway']['provider'] = mm.primary_provider
+            on_disk['gateway']['model'] = mm.primary_model
+        # 4. Write back
         with open(cfg_path, 'w', encoding='utf-8') as f:
-            yaml.dump(cfg, f, default_flow_style=False, allow_unicode=True)
+            yaml.dump(on_disk, f, default_flow_style=False, allow_unicode=True, sort_keys=False)
 
     async def handle_get_model_overrides(self, request):
         """GET /api/model_overrides — return all per-model overrides."""

@@ -76,6 +76,18 @@ class ModelManager:
         self.fallback_provider = model_config.get('fallback_provider', 'ollama')
         self.fallback_model = model_config.get('fallback_model', 'qwen3:8b')
 
+        # Startup diagnostic — shows exactly what was loaded and whether defaults were used
+        import logging
+        _pp_src = 'config' if 'primary_provider' in model_config else 'DEFAULT'
+        _pm_src = 'config' if 'primary_model' in model_config else 'DEFAULT'
+        _fp_src = 'config' if 'fallback_provider' in model_config else 'DEFAULT'
+        _fm_src = 'config' if 'fallback_model' in model_config else 'DEFAULT'
+        logging.info(
+            f"ModelManager init: primary={self.primary_provider}/{self.primary_model} "
+            f"[{_pp_src}/{_pm_src}] fallback={self.fallback_provider}/{self.fallback_model} "
+            f"[{_fp_src}/{_fm_src}] config_path={self.config_path}"
+        )
+
         self.current_mode = 'primary'  # 'primary' or 'fallback'
         self.error_count = 0
         self.last_error_time = None
@@ -419,7 +431,7 @@ class ModelManager:
         """Save model config to config.yaml."""
         try:
             # Read current config
-            with open(self.config_path, 'r') as f:
+            with open(self.config_path, 'r', encoding='utf-8') as f:
                 config = yaml.safe_load(f)
 
             # Update models section
@@ -438,8 +450,8 @@ class ModelManager:
             config['gateway']['model'] = self.primary_model
 
             # Write back
-            with open(self.config_path, 'w') as f:
-                yaml.dump(config, f, default_flow_style=False, allow_unicode=True)
+            with open(self.config_path, 'w', encoding='utf-8') as f:
+                yaml.dump(config, f, default_flow_style=False, allow_unicode=True, sort_keys=False)
 
             # Sync in-memory config so subsequent saves by other code paths
             # (e.g. web_deck toggle saves) don't overwrite with stale values
