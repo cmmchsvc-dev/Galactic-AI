@@ -4499,7 +4499,7 @@ class GalacticGateway:
                 config=types.GenerateImagesConfig(
                     number_of_images=max(1, min(4, n_images)),
                     aspect_ratio=aspect_ratio,
-                    safety_filter_level="BLOCK_ONLY_HIGH",
+                    safety_filter_level="BLOCK_LOW_AND_ABOVE",
                     person_generation="ALLOW_ADULT",
                 ),
             )
