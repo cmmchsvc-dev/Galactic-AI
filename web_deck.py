@@ -1891,8 +1891,9 @@ async function sendChatMain() {
       r = await authFetch('/api/chat', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({message: msg})});
     }
     const d = await r.json();
-    stream.style.display = 'none'; stream.textContent = '';
+    stream.style.display = 'none'; stream.textContent = ''; stream._rawText = '';
     appendBotMsg(d.response || d.error || 'No response');
+    console.log('[Image Delivery] response keys:', Object.keys(d), 'image_url:', d.image_url || 'NONE');
     if (d.image_url) appendBotImage(d.image_url);
   } catch(err) {
     stream.style.display = 'none';
@@ -3433,6 +3434,11 @@ setInterval(() => {
             # Deliver any generated image inline — fix path for new images/ subfolders
             resp_data = {'response': response}
             image_file = getattr(self.core.gateway, 'last_image_file', None)
+            await self.core.log(
+                f"[Image Delivery] last_image_file={image_file!r}, "
+                f"exists={os.path.exists(image_file) if image_file else 'N/A'}",
+                priority=3
+            )
             if image_file and os.path.exists(image_file):
                 images_dir = os.path.abspath(
                     self.core.config.get('paths', {}).get('images', './images')
@@ -3450,6 +3456,16 @@ setInterval(() => {
                     # Legacy logs/ path
                     resp_data['image_url'] = f'/api/image/{os.path.basename(image_file)}'
                 self.core.gateway.last_image_file = None
+                await self.core.log(
+                    f"[Image Delivery] ✅ image_url={resp_data['image_url']}",
+                    priority=2
+                )
+            elif image_file:
+                await self.core.log(
+                    f"[Image Delivery] ⚠️ File not found: {os.path.abspath(image_file)} "
+                    f"(CWD={os.getcwd()})",
+                    priority=1
+                )
             return web.json_response(resp_data)
         except Exception as e:
             return web.json_response({'error': str(e)}, status=500)
