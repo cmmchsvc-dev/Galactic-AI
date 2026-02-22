@@ -476,8 +476,29 @@ class ModelManager:
     }
 
     def classify_task(self, user_input: str) -> str:
-        """Classify a user message into a task type for smart routing."""
-        lower = user_input.lower()
+        """Classify a user message into a task type for smart routing.
+
+        Strips attached file content (Telegram documents, pasted code blocks)
+        so classification is based on the user's intent, not file contents.
+        """
+        text = user_input
+
+        # Strip Telegram-style attached file blocks: "[Attached file: X]\n---\n...\n---"
+        import re
+        text = re.sub(
+            r'\[Attached file:[^\]]*\]\s*\n-{3,}\n.*?\n-{3,}',
+            '', text, flags=re.DOTALL
+        )
+
+        # Strip markdown code blocks (``` ... ```)
+        text = re.sub(r'```[\s\S]*?```', '', text)
+
+        # If nothing left after stripping, default (don't classify based on file content)
+        text = text.strip()
+        if not text:
+            return "default"
+
+        lower = text.lower()
         for task_type, keywords in self.SMART_ROUTING_KEYWORDS.items():
             if any(kw in lower for kw in keywords):
                 return task_type

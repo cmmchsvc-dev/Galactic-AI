@@ -4,6 +4,15 @@ All notable changes to Galactic AI are documented here.
 
 ---
 
+## [v1.0.6] — 2026-02-21
+
+### Fixed
+- **🧠 VAULT / Personality not loading** — `config.yaml` → `paths.workspace` was still pointing to the old OpenClaw workspace directory after install migration. The personality system (`personality.py`) reads VAULT.md, IDENTITY.md, USER.md, SOUL.md, and MEMORY.md from the workspace path. With the stale path, the AI had no access to the user's vault (credentials, personal data) and responded with "I don't have access to your personal credentials." Fixed by updating the workspace path to the current install directory
+- **🎯 Smart routing misclassification of file uploads** — When a user sends a document via Telegram (e.g., CHANGELOG.md, README.md), the entire file content was fed into `classify_task()` for smart routing. Any .md file describing code changes would contain keywords like "script", "function", "implement", triggering a "coding" classification and routing to the Qwen Coder 480B model — even when the user wanted help with marketing or social media. `classify_task()` now strips attached file content and code blocks before classification, so routing is based on the user's actual message/caption, not file contents
+- **⏱ Telegram timeout killing active tasks early** — Telegram bridge had its own `timeout_seconds: 180` that wrapped `speak()` in a separate `asyncio.wait_for()`. The global `speak_timeout` is 600s, but Telegram's 180s limit killed the task before the gateway finished. `_get_speak_timeout()` now uses `max(global_timeout, telegram_timeout)` so the Telegram bridge never cuts off a task that the gateway is still allowed to work on
+
+---
+
 ## [v1.0.5] — 2026-02-21
 
 ### Added

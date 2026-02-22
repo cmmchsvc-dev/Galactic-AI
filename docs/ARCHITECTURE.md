@@ -1,6 +1,6 @@
 # Galactic AI — Architecture Reference
 
-**v1.0.5** — System design, component breakdown, and data flows.
+**v1.0.6** — System design, component breakdown, and data flows.
 
 ---
 
