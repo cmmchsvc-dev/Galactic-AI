@@ -1470,10 +1470,28 @@ class GalacticGateway:
         except Exception as e:
             return f"Error reading file: {e}"
 
+    # Core files that should never be overwritten by the AI agent
+    _PROTECTED_FILES = {
+        'gateway_v2.py', 'galactic_core_v2.py', 'web_deck.py', 'model_manager.py',
+        'remote_access.py', 'personality.py', 'memory_module_v2.py', 'scheduler.py',
+        'nvidia_gateway.py', 'splash.py', 'telegram_bridge.py', 'discord_bridge.py',
+        'whatsapp_bridge.py', 'gmail_bridge.py', 'imprint_engine.py', 'ollama_manager.py',
+        'requirements.txt', 'config.yaml', 'personality.yaml',
+        'install.ps1', 'install.sh', 'update.ps1', 'update.sh',
+        'launch.ps1', 'launch.sh', '.gitignore', 'LICENSE',
+    }
+
     async def tool_write_file(self, args):
         path = args.get('path')
         content = args.get('content')
         try:
+            # Guard: prevent overwriting core system files
+            filename = os.path.basename(path)
+            if filename in self._PROTECTED_FILES:
+                return (
+                    f"[BLOCKED] Cannot overwrite protected core file '{filename}'. "
+                    f"Create a new file with a different name instead."
+                )
             with open(path, 'w', encoding='utf-8') as f:
                 f.write(content)
             return f"Successfully wrote to {path}"
@@ -3180,6 +3198,9 @@ class GalacticGateway:
                 "4. For complex tasks: chain up to 10 tool calls, then answer.\n"
                 "5. NEVER repeat a tool call with the same args — trust the output.\n"
                 "6. If you don't need a tool, just answer in plain text — no JSON.\n"
+                "7. BEFORE writing scripts: read config.yaml for real credentials. NEVER use placeholder values.\n"
+                "8. NEVER overwrite requirements.txt, config.yaml, or core .py files. Create NEW files with unique names.\n"
+                "9. NEVER run scripts with while True loops or sleep() via exec_shell — they timeout. Tell the user how to launch them.\n"
             )
 
             system_prompt = (
@@ -3209,6 +3230,11 @@ class GalacticGateway:
                 f"- If you write a file: deliver it to the user. Do NOT immediately run it to test — let the user verify\n"
                 f"- NEVER launch long-running background processes via exec_shell — they timeout after 120s. Write the script and tell the user how to run it\n"
                 f"- If stuck after 3+ failed attempts: STOP. Tell the user what you tried, what went wrong, and ask for guidance\n"
+                f"\nCRITICAL RULES:\n"
+                f"- BEFORE writing any script: read config.yaml to get real credentials (Telegram token, API keys, etc.). NEVER use placeholder values like 'YOUR_TOKEN_HERE'\n"
+                f"- NEVER overwrite requirements.txt, config.yaml, or any core .py file unless explicitly asked. Create NEW files with unique names for scripts\n"
+                f"- When asked to 'create a script': write ONE complete file with all logic, then STOP. Do not write multiple draft versions\n"
+                f"- NEVER run a script that has a while True loop or sleep() via exec_shell — it WILL timeout. Tell the user how to launch it instead\n"
                 f"Context: {context}"
             )
 
