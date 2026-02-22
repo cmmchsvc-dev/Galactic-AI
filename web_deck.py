@@ -1639,6 +1639,16 @@ async function init() {
   // Restore the last active tab (defaults to 'chat' if none saved)
   const savedTab = localStorage.getItem('gal_activeTab') || 'chat';
   switchTab(savedTab);
+
+  // Smart auto-scroll: pause auto-scroll when user scrolls up, resume at bottom
+  document.getElementById('chat-log').addEventListener('scroll', function() {
+    const atBottom = (this.scrollHeight - this.scrollTop - this.clientHeight) < 60;
+    autoScroll = atBottom;
+  });
+  document.getElementById('thinking-scroll').addEventListener('scroll', function() {
+    const atBottom = (this.scrollHeight - this.scrollTop - this.clientHeight) < 60;
+    traceAutoScroll = atBottom;
+  });
 }
 
 
@@ -1654,7 +1664,7 @@ function connectWS() {
       // accumulate raw text on a data attr, render formatted
       sb._rawText = (sb._rawText || '') + p.data;
       sb.innerHTML = formatMsg(sb._rawText);
-      if (autoScroll) document.getElementById('chat-log').scrollTop = 0;
+      if (autoScroll) document.getElementById('chat-log').scrollTop = document.getElementById('chat-log').scrollHeight;
     } else if (p.type === 'log') {
       const sb = document.getElementById('stream-bubble');
       sb.style.display = 'none'; sb.textContent = '';
@@ -1720,7 +1730,7 @@ function appendBotMsg(text, ts) {
   div.className = 'msg bot';
   div.innerHTML = `<div class="bubble">${formatMsg(text)}</div><div class="meta">Byte \u2022 ${fmtTime(ts)}</div>`;
   log.insertBefore(div, sb.nextSibling);
-  if (autoScroll) log.scrollTop = 0;
+  if (autoScroll) log.scrollTop = log.scrollHeight;
 }
 
 function appendBotImage(url) {
@@ -1734,7 +1744,7 @@ function appendBotImage(url) {
     <div style="font-size:0.75em;color:var(--dim);margin-top:4px">🎨 Click image to open full size</div>
   </div><div class="meta">Byte \u2022 ${fmtTime()}</div>`;
   log.insertBefore(div, sb.nextSibling);
-  if (autoScroll) log.scrollTop = 0;
+  if (autoScroll) log.scrollTop = log.scrollHeight;
 }
 
 async function loadChatHistory() {
@@ -1769,7 +1779,7 @@ function appendUserMsg(text, ts) {
   div.className = 'msg user';
   div.innerHTML = `<div class="bubble">${escHtml(text)}</div><div class="meta">You \u2022 ${fmtTime(ts)}</div>`;
   log.insertBefore(div, sb.nextSibling);
-  if (autoScroll) log.scrollTop = 0;
+  if (autoScroll) log.scrollTop = log.scrollHeight;
 }
 
 // ─── File Attachment State ───
@@ -2896,8 +2906,8 @@ function addLog(msg) {
     const div = document.createElement('div');
     div.className = 'log-line' + (msg.includes('ERROR')||msg.includes('Error') ? ' err' : msg.includes('✅')||msg.includes('ONLINE') ? ' ok' : msg.includes('⚠️')||msg.includes('WARN') ? ' warn' : '');
     div.textContent = msg;
-    el.prepend(div);
-    if (autoScroll) el.scrollTop = 0;
+    el.append(div);
+    if (autoScroll) el.scrollTop = el.scrollHeight;
     // Trim DOM for performance — keep max 500 visible entries
     while (el.children.length > 500) el.removeChild(el.lastChild);
   }
@@ -2939,23 +2949,23 @@ function switchTab(name) {
     const tBtn = document.getElementById('thinking-tab-btn');
     if (tBtn) { tBtn.style.color = ''; tBtn.style.textShadow = ''; }
   }
-  // Scroll to top when switching to content tabs (newest-first layout)
+  // Scroll to bottom when switching to content tabs (newest-last layout)
   if (name === 'chat') {
     requestAnimationFrame(() => {
       const el = document.getElementById('chat-log');
-      if (el) el.scrollTop = 0;
+      if (el) el.scrollTop = el.scrollHeight;
     });
   }
   if (name === 'logs') {
     requestAnimationFrame(() => {
       const el = document.getElementById('logs-scroll');
-      if (el) el.scrollTop = 0;
+      if (el) el.scrollTop = el.scrollHeight;
     });
   }
   if (name === 'thinking') {
     requestAnimationFrame(() => {
       const el = document.getElementById('thinking-scroll');
-      if (el) el.scrollTop = 0;
+      if (el) el.scrollTop = el.scrollHeight;
     });
   }
   try { localStorage.setItem('gal_activeTab', name); } catch(e) {}
@@ -3020,9 +3030,9 @@ function handleAgentTrace(data) {
         '<span class="trace-toggle">&#9660;</span>' +
       '</div>' +
       '<div class="trace-session-body"></div>';
-    scroll.prepend(sEl);
+    scroll.append(sEl);
     traceSessions[sid] = { el: sEl, body: sEl.querySelector('.trace-session-body'), turnEls: {}, maxTurn: 0 };
-    if (traceAutoScroll) scroll.scrollTop = 0;
+    if (traceAutoScroll) scroll.scrollTop = scroll.scrollHeight;
     return;
   }
 
@@ -3038,7 +3048,7 @@ function handleAgentTrace(data) {
         '<span class="trace-toggle">&#9660;</span>' +
       '</div>' +
       '<div class="trace-session-body"></div>';
-    scroll.prepend(sEl);
+    scroll.append(sEl);
     traceSessions[sid] = { el: sEl, body: sEl.querySelector('.trace-session-body'), turnEls: {}, maxTurn: 0 };
   }
   const sess = traceSessions[sid];
@@ -3051,14 +3061,14 @@ function handleAgentTrace(data) {
     tEl.innerHTML =
       '<div class="trace-turn-header" onclick="this.parentElement.classList.toggle(\'collapsed\')">TURN ' + turn + ' &#9660;</div>' +
       '<div class="trace-turn-entries"></div>';
-    sess.body.prepend(tEl);
+    sess.body.append(tEl);
     sess.turnEls[turn] = tEl;
     if (turn > sess.maxTurn) {
       sess.maxTurn = turn;
       const ctr = document.getElementById('thinking-turn-counter');
       if (ctr) ctr.textContent = 'Turns: ' + turn;
     }
-    if (traceAutoScroll) scroll.scrollTop = 0;
+    if (traceAutoScroll) scroll.scrollTop = scroll.scrollHeight;
     return;
   }
 
@@ -3071,7 +3081,7 @@ function handleAgentTrace(data) {
     turnEl.innerHTML =
       '<div class="trace-turn-header" onclick="this.parentElement.classList.toggle(\'collapsed\')">TURN ' + turn + ' &#9660;</div>' +
       '<div class="trace-turn-entries"></div>';
-    sess.body.prepend(turnEl);
+    sess.body.append(turnEl);
     sess.turnEls[turn] = turnEl;
   }
   const entries = turnEl.querySelector('.trace-turn-entries');
@@ -3139,7 +3149,7 @@ function handleAgentTrace(data) {
   entries.appendChild(entry);
   applyTraceEntryFilter(entry);
 
-  if (traceAutoScroll) scroll.scrollTop = 0;
+  if (traceAutoScroll) scroll.scrollTop = scroll.scrollHeight;
 }
 
 function applyTraceEntryFilter(entry) {
