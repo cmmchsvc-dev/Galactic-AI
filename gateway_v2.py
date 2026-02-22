@@ -4357,7 +4357,10 @@ class GalacticGateway:
                 payload["max_tokens"] = max_tokens
             full_response = []
             try:
-                async with httpx.AsyncClient(timeout=300.0, verify=False) as client:
+                # Granular timeout: fast connect (30s) but long read (600s) for
+                # large models (Qwen 397B, GLM5 744B) with slow first-token latency
+                _timeout = httpx.Timeout(connect=30.0, read=600.0, write=30.0, pool=30.0)
+                async with httpx.AsyncClient(timeout=_timeout, verify=False) as client:
                     async with client.stream("POST", url, headers=headers, json=payload) as response:
                         # Check HTTP status before parsing SSE stream
                         if response.status_code != 200:
@@ -4422,7 +4425,8 @@ class GalacticGateway:
             if max_tokens:
                 payload["max_tokens"] = max_tokens
             try:
-                async with httpx.AsyncClient(timeout=300.0, verify=False) as client:
+                _timeout = httpx.Timeout(connect=30.0, read=600.0, write=30.0, pool=30.0)
+                async with httpx.AsyncClient(timeout=_timeout, verify=False) as client:
                     response = await client.post(url, headers=headers, json=payload)
                     data = response.json()
                     if 'choices' not in data:
