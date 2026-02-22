@@ -20,6 +20,13 @@ logger = logging.getLogger("GalacticGateway")
 logging.getLogger("httpx").setLevel(logging.WARNING)
 logging.getLogger("httpcore").setLevel(logging.WARNING)
 
+# NVIDIA models where the streaming endpoint is broken or unreliable.
+# These will be forced to non-streaming mode even when streaming is enabled.
+# (e.g. Qwen 3.5 397B returns 200 on stream request but never sends SSE data)
+_NVIDIA_NO_STREAM = {
+    "qwen/qwen3.5-397b-a17b",
+}
+
 # NVIDIA models that require extra body params for thinking/reasoning.
 # These are injected into the payload when the active model is on this list.
 _NVIDIA_THINKING_MODELS = {
@@ -4335,6 +4342,7 @@ class GalacticGateway:
         use_streaming = (
             provider in ("ollama", "openai", "groq", "mistral", "cerebras", "openrouter", "nvidia")
             and self.core.config.get('models', {}).get('streaming', True)
+            and not (provider == "nvidia" and self.llm.model in _NVIDIA_NO_STREAM)
         )
 
         max_tokens = self._get_max_tokens()
@@ -4406,42 +4414,61 @@ class GalacticGateway:
                         # Flush remaining buffer
                         if token_buf:
                             await self.core.relay.emit(3, "stream_chunk", "".join(token_buf))
-                return "".join(full_response)
+                result = "".join(full_response)
+                if not result.strip() and provider == "nvidia":
+                    # Streaming returned no content — model may not support streaming.
+                    # Fall through to non-streaming path as a last resort.
+                    await self.core.log(
+                        f"⚠️ {provider}/{self.llm.model} streaming returned empty — "
+                        f"retrying non-streaming",
+                        priority=2
+                    )
+                else:
+                    return result if result.strip() else '[No response]'
             except Exception as e:
-                return f"[ERROR] {provider} (streaming): {str(e)}"
-        else:
-            payload = {
-                "model": self.llm.model,
-                "messages": messages,
-                "stream": False,
-            }
-            if provider == "ollama":
-                payload["options"] = {"temperature": 0.3}
-            # NVIDIA thinking/reasoning models need extra body params
-            if provider == "nvidia":
-                extra = _NVIDIA_THINKING_MODELS.get(self.llm.model, {})
-                if extra:
-                    payload.update(extra)
-            if max_tokens:
-                payload["max_tokens"] = max_tokens
-            try:
-                _timeout = httpx.Timeout(connect=30.0, read=600.0, write=30.0, pool=30.0)
-                async with httpx.AsyncClient(timeout=_timeout, verify=False) as client:
-                    response = await client.post(url, headers=headers, json=payload)
-                    data = response.json()
-                    if 'choices' not in data:
-                        return f"[ERROR] {provider}: {json.dumps(data)}"
-                    msg = data['choices'][0]['message']
-                    content = (msg.get('content') or '').strip()
-                    reasoning = (msg.get('reasoning_content') or '').strip()
-                    if content:
-                        return content
-                    elif reasoning:
-                        return f"[Reasoning]\n{reasoning}"
-                    else:
-                        return '[No response]'
-            except Exception as e:
-                return f"[ERROR] {provider}: {str(e)}"
+                if provider == "nvidia":
+                    # Streaming failed — fall through to non-streaming as fallback
+                    await self.core.log(
+                        f"⚠️ {provider}/{self.llm.model} streaming error: {e} — "
+                        f"retrying non-streaming",
+                        priority=2
+                    )
+                else:
+                    return f"[ERROR] {provider} (streaming): {str(e)}"
+
+        # ── Non-streaming path (also serves as NVIDIA streaming fallback) ──
+        payload = {
+            "model": self.llm.model,
+            "messages": messages,
+            "stream": False,
+        }
+        if provider == "ollama":
+            payload["options"] = {"temperature": 0.3}
+        # NVIDIA thinking/reasoning models need extra body params
+        if provider == "nvidia":
+            extra = _NVIDIA_THINKING_MODELS.get(self.llm.model, {})
+            if extra:
+                payload.update(extra)
+        if max_tokens:
+            payload["max_tokens"] = max_tokens
+        try:
+            _timeout = httpx.Timeout(connect=30.0, read=600.0, write=30.0, pool=30.0)
+            async with httpx.AsyncClient(timeout=_timeout, verify=False) as client:
+                response = await client.post(url, headers=headers, json=payload)
+                data = response.json()
+                if 'choices' not in data:
+                    return f"[ERROR] {provider}: {json.dumps(data)}"
+                msg = data['choices'][0]['message']
+                content = (msg.get('content') or '').strip()
+                reasoning = (msg.get('reasoning_content') or '').strip()
+                if content:
+                    return content
+                elif reasoning:
+                    return f"[Reasoning]\n{reasoning}"
+                else:
+                    return '[No response]'
+        except Exception as e:
+            return f"[ERROR] {provider}: {str(e)}"
 
 
     # ═══════════════════════════════════════════════════════════════════════════
