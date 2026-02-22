@@ -4105,7 +4105,7 @@ class GalacticGateway:
             "mistral":      "https://api.mistral.ai/v1",
             "cerebras":     "https://api.cerebras.ai/v1",
             "openrouter":   "https://openrouter.ai/api/v1",
-            "huggingface":  "https://api-inference.huggingface.co/v1",
+            "huggingface":  "https://router.huggingface.co/v1",
             "kimi":         "https://api.kimi.com/v1",
             "zai":          "https://api.z.ai/api/paas/v4",
             "minimax":      "https://api.minimax.io/v1",
@@ -4455,9 +4455,28 @@ class GalacticGateway:
             _timeout = httpx.Timeout(connect=30.0, read=600.0, write=30.0, pool=30.0)
             async with httpx.AsyncClient(timeout=_timeout, verify=False) as client:
                 response = await client.post(url, headers=headers, json=payload)
-                data = response.json()
+                # Check HTTP status before parsing JSON
+                if response.status_code != 200:
+                    body_text = response.text[:500]
+                    try:
+                        err_data = json.loads(body_text)
+                        err_msg = (err_data.get('error', {}).get('message', '')
+                                   or err_data.get('error', '')
+                                   or err_data.get('detail', '')
+                                   or body_text)
+                    except Exception:
+                        err_msg = body_text or f"HTTP {response.status_code} (empty body)"
+                    return f"[ERROR] {provider} HTTP {response.status_code}: {err_msg}"
+                # Safe JSON parse — guard against empty body
+                body_text = response.text.strip()
+                if not body_text:
+                    return f"[ERROR] {provider}: empty response body (HTTP 200)"
+                try:
+                    data = json.loads(body_text)
+                except json.JSONDecodeError as je:
+                    return f"[ERROR] {provider}: invalid JSON — {je} — body: {body_text[:200]}"
                 if 'choices' not in data:
-                    return f"[ERROR] {provider}: {json.dumps(data)}"
+                    return f"[ERROR] {provider}: {json.dumps(data)[:500]}"
                 msg = data['choices'][0]['message']
                 content = (msg.get('content') or '').strip()
                 reasoning = (msg.get('reasoning_content') or '').strip()
