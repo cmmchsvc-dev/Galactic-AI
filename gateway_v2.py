@@ -3930,15 +3930,15 @@ class GalacticGateway:
             # pass it directly so multi-turn tool-call context is preserved
             return await self._call_openai_compatible_messages(messages)
 
-        elif self.llm.provider in ["nvidia", "xai"]:
-            # NVIDIA / xAI: collapse to prompt+context (these are stateless one-shot)
+        elif self.llm.provider == "xai":
+            # xAI: collapse to prompt+context (stateless one-shot)
             prompt = messages[-1]['content']
             context_str = "\n".join(
                 [f"{m['role']}: {m['content']}" for m in messages[:-1]]
             )
             return await self._call_openai_compatible(prompt, context_str)
 
-        elif self.llm.provider in ["openai", "groq", "mistral", "cerebras",
+        elif self.llm.provider in ["nvidia", "openai", "groq", "mistral", "cerebras",
                                     "openrouter", "huggingface", "kimi", "zai", "minimax"]:
             # OpenAI-compatible providers: pass full messages array for proper multi-turn context
             return await self._call_openai_compatible_messages(messages)
@@ -4310,6 +4310,15 @@ class GalacticGateway:
           • Injects max_tokens if configured
         """
         provider = self.llm.provider
+
+        # FLUX models are image-generation only — auto-invoke generate_image
+        if provider == "nvidia" and "flux" in self.llm.model.lower():
+            prompt = messages[-1]['content'] if messages else ''
+            return await self.tool_generate_image({
+                "prompt": prompt,
+                "model": self.llm.model,
+            })
+
         url = f"{self._get_provider_base_url(provider)}/chat/completions"
 
         headers = {"Content-Type": "application/json"}
@@ -4324,7 +4333,7 @@ class GalacticGateway:
                 headers["X-Title"] = "Galactic AI"
 
         use_streaming = (
-            provider in ("ollama", "openai", "groq", "mistral", "cerebras", "openrouter")
+            provider in ("ollama", "openai", "groq", "mistral", "cerebras", "openrouter", "nvidia")
             and self.core.config.get('models', {}).get('streaming', True)
         )
 
@@ -4339,11 +4348,16 @@ class GalacticGateway:
             # Ollama benefits from explicit temperature in options
             if provider == "ollama":
                 payload["options"] = {"temperature": 0.3}
+            # NVIDIA thinking/reasoning models need extra body params
+            if provider == "nvidia":
+                extra = _NVIDIA_THINKING_MODELS.get(self.llm.model, {})
+                if extra:
+                    payload.update(extra)
             if max_tokens:
                 payload["max_tokens"] = max_tokens
             full_response = []
             try:
-                async with httpx.AsyncClient(timeout=180.0, verify=False) as client:
+                async with httpx.AsyncClient(timeout=300.0, verify=False) as client:
                     async with client.stream("POST", url, headers=headers, json=payload) as response:
                         token_buf = []
                         async for line in response.aiter_lines():
@@ -4354,7 +4368,11 @@ class GalacticGateway:
                                 break
                             try:
                                 chunk = json.loads(data_str)
-                                delta = chunk.get('choices', [{}])[0].get('delta', {}).get('content', '')
+                                delta_obj = chunk.get('choices', [{}])[0].get('delta', {})
+                                delta = delta_obj.get('content', '') or ''
+                                # NVIDIA thinking models may also stream reasoning_content
+                                if not delta:
+                                    delta = delta_obj.get('reasoning_content', '') or ''
                                 if delta:
                                     full_response.append(delta)
                                     token_buf.append(delta)
@@ -4379,15 +4397,28 @@ class GalacticGateway:
             }
             if provider == "ollama":
                 payload["options"] = {"temperature": 0.3}
+            # NVIDIA thinking/reasoning models need extra body params
+            if provider == "nvidia":
+                extra = _NVIDIA_THINKING_MODELS.get(self.llm.model, {})
+                if extra:
+                    payload.update(extra)
             if max_tokens:
                 payload["max_tokens"] = max_tokens
             try:
-                async with httpx.AsyncClient(timeout=180.0, verify=False) as client:
+                async with httpx.AsyncClient(timeout=300.0, verify=False) as client:
                     response = await client.post(url, headers=headers, json=payload)
                     data = response.json()
                     if 'choices' not in data:
                         return f"[ERROR] {provider}: {json.dumps(data)}"
-                    return data['choices'][0]['message']['content']
+                    msg = data['choices'][0]['message']
+                    content = (msg.get('content') or '').strip()
+                    reasoning = (msg.get('reasoning_content') or '').strip()
+                    if content:
+                        return content
+                    elif reasoning:
+                        return f"[Reasoning]\n{reasoning}"
+                    else:
+                        return '[No response]'
             except Exception as e:
                 return f"[ERROR] {provider}: {str(e)}"
 
