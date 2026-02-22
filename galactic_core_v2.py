@@ -48,7 +48,7 @@ class GalacticRelay:
 
 class GalacticCore:
     def __init__(self, config_path='config.yaml'):
-        self.config_path = config_path
+        self.config_path = os.path.abspath(config_path)
         self.config = self.load_config()
         self.plugins = []
         self.clients = []
@@ -144,6 +144,11 @@ class GalacticCore:
         self.gateway.llm.provider = initial_model['provider']
         self.gateway.llm.model = initial_model['model']
         self.model_manager._set_api_key(initial_model['provider'])
+        await self.log(
+            f"Model loaded: {initial_model['provider']}/{initial_model['model']} "
+            f"(fallback: {self.model_manager.fallback_provider}/{self.model_manager.fallback_model})",
+            priority=2
+        )
         
         # Initialize Plugins — all optional, missing files are skipped gracefully
         _BUILTIN_PLUGINS = [

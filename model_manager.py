@@ -452,7 +452,12 @@ class ModelManager:
             self.core.config['gateway']['provider'] = self.primary_provider
             self.core.config['gateway']['model'] = self.primary_model
 
-            await self.core.log("💾 Model config saved", priority=2)
+            await self.core.log(
+                f"💾 Model config saved → {self.primary_provider}/{self.primary_model} "
+                f"(fallback: {self.fallback_provider}/{self.fallback_model}) "
+                f"[{self.config_path}]",
+                priority=2
+            )
 
         except Exception as e:
             await self.core.log(f"Error saving model config: {e}", priority=1)

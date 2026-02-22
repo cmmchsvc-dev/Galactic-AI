@@ -83,6 +83,9 @@ class GalacticWebDeck:
         # Voice API endpoints
         self.app.router.add_post('/api/tts', self.handle_tts)
         self.app.router.add_post('/api/stt', self.handle_stt)
+        # Power control endpoints
+        self.app.router.add_post('/api/restart', self.handle_restart)
+        self.app.router.add_post('/api/shutdown', self.handle_shutdown)
         self.trace_buffer = []  # last 500 agent trace entries for persistence
         
     async def handle_index(self, request):
@@ -811,8 +814,8 @@ body.glow-max .status-dot{box-shadow:0 0 14px var(--green),0 0 28px rgba(0,255,1
       <div id="chat-wrap">
         <div style="display:flex;flex-direction:column;flex:1;overflow:hidden">
           <div id="chat-log">
-            <div class="msg bot"><div class="bubble">⬡ Galactic AI online. How can I help?</div></div>
             <div id="stream-bubble"></div>
+            <div class="msg bot"><div class="bubble">⬡ Galactic AI online. How can I help?</div></div>
           </div>
           <div id="chat-attach-bar" style="display:none;padding:4px 16px 0;border-top:1px solid var(--border);background:var(--bg2)"></div>
           <div id="chat-input-row" style="display:flex;gap:8px;padding:12px 16px;border-top:1px solid var(--border);flex-shrink:0;background:var(--bg2)">
@@ -1182,6 +1185,22 @@ body.glow-max .status-dot{box-shadow:0 0 14px var(--green),0 0 28px rgba(0,255,1
                 <option value="2" selected>Max</option>
               </select>
             </label>
+          </div>
+        </div>
+
+        <!-- Section 5: Power Controls -->
+        <div class="model-config-box" style="margin-top:18px">
+          <h4>POWER CONTROLS</h4>
+          <div style="font-size:0.78em;color:var(--dim);margin-bottom:12px">
+            Restart or shut down the Galactic AI process. Restart will reload all modules and reconnect.
+          </div>
+          <div style="display:flex;gap:12px;flex-wrap:wrap">
+            <button class="btn primary" onclick="confirmRestart()" style="background:linear-gradient(135deg,#f0c040,#e08020);color:#000;font-weight:700;padding:10px 28px;font-size:0.92em">
+              🔄 Restart Galactic AI
+            </button>
+            <button class="btn primary" onclick="confirmShutdown()" style="background:linear-gradient(135deg,#ff4060,#c00030);color:#fff;font-weight:700;padding:10px 28px;font-size:0.92em">
+              ⏻ Shutdown Galactic AI
+            </button>
           </div>
         </div>
 
@@ -1635,7 +1654,7 @@ function connectWS() {
       // accumulate raw text on a data attr, render formatted
       sb._rawText = (sb._rawText || '') + p.data;
       sb.innerHTML = formatMsg(sb._rawText);
-      if (autoScroll) document.getElementById('chat-log').scrollTop = 99999;
+      if (autoScroll) document.getElementById('chat-log').scrollTop = 0;
     } else if (p.type === 'log') {
       const sb = document.getElementById('stream-bubble');
       sb.style.display = 'none'; sb.textContent = '';
@@ -1700,12 +1719,13 @@ function appendBotMsg(text, ts) {
   const div = document.createElement('div');
   div.className = 'msg bot';
   div.innerHTML = `<div class="bubble">${formatMsg(text)}</div><div class="meta">Byte \u2022 ${fmtTime(ts)}</div>`;
-  log.appendChild(div);
-  if (autoScroll) log.scrollTop = 99999;
+  log.insertBefore(div, sb.nextSibling);
+  if (autoScroll) log.scrollTop = 0;
 }
 
 function appendBotImage(url) {
   const log = document.getElementById('chat-log');
+  const sb = document.getElementById('stream-bubble');
   const div = document.createElement('div');
   div.className = 'msg bot';
   div.innerHTML = `<div class="bubble" style="padding:8px">
@@ -1713,8 +1733,8 @@ function appendBotImage(url) {
          onclick="window.open('${url}','_blank')" title="Click to open full size" />
     <div style="font-size:0.75em;color:var(--dim);margin-top:4px">🎨 Click image to open full size</div>
   </div><div class="meta">Byte \u2022 ${fmtTime()}</div>`;
-  log.appendChild(div);
-  if (autoScroll) log.scrollTop = 99999;
+  log.insertBefore(div, sb.nextSibling);
+  if (autoScroll) log.scrollTop = 0;
 }
 
 async function loadChatHistory() {
@@ -1725,6 +1745,7 @@ async function loadChatHistory() {
     if (msgs.length > 0) {
       // Clear the default welcome message before restoring history
       document.getElementById('chat-log').innerHTML = '<div id="stream-bubble" style="display:none"></div>';
+      // Render oldest→newest; each insertBefore(sb.nextSibling) puts newest at top
       msgs.forEach(m => {
         if (m.role === 'user') appendUserMsg(m.content, m.ts);
         else if (m.role === 'assistant') appendBotMsg(m.content, m.ts);
@@ -1743,11 +1764,12 @@ async function loadLogHistory() {
 
 function appendUserMsg(text, ts) {
   const log = document.getElementById('chat-log');
+  const sb = document.getElementById('stream-bubble');
   const div = document.createElement('div');
   div.className = 'msg user';
   div.innerHTML = `<div class="bubble">${escHtml(text)}</div><div class="meta">You \u2022 ${fmtTime(ts)}</div>`;
-  log.appendChild(div);
-  if (autoScroll) log.scrollTop = 99999;
+  log.insertBefore(div, sb.nextSibling);
+  if (autoScroll) log.scrollTop = 0;
 }
 
 // ─── File Attachment State ───
@@ -1890,7 +1912,7 @@ function autoResize(el) {
 }
 function clearChat() {
   const log = document.getElementById('chat-log');
-  log.innerHTML = '<div class="msg bot"><div class="bubble">⬡ Galactic AI online. Context cleared.</div></div><div id="stream-bubble" style="display:none"></div>';
+  log.innerHTML = '<div id="stream-bubble" style="display:none"></div><div class="msg bot"><div class="bubble">⬡ Galactic AI online. Context cleared.</div></div>';
   pendingFiles = [];
   renderAttachBar();
 }
@@ -2861,7 +2883,7 @@ async function saveMemFile() {
   } catch(e) { alert('Save failed: ' + e.message); }
 }
 
-// Logs
+// Logs — newest at top
 function addLog(msg) {
   allLogs.push(msg);
   const filterVal = document.getElementById('log-filter').value || '';
@@ -2870,15 +2892,19 @@ function addLog(msg) {
     const div = document.createElement('div');
     div.className = 'log-line' + (msg.includes('ERROR')||msg.includes('Error') ? ' err' : msg.includes('✅')||msg.includes('ONLINE') ? ' ok' : msg.includes('⚠️')||msg.includes('WARN') ? ' warn' : '');
     div.textContent = msg;
-    el.appendChild(div);
-    if (autoScroll) el.scrollTop = 99999;
+    el.prepend(div);
+    if (autoScroll) el.scrollTop = 0;
+    // Trim DOM for performance — keep max 500 visible entries
+    while (el.children.length > 500) el.removeChild(el.lastChild);
   }
 }
 
 function filterLogs(q2) {
   const el = document.getElementById('logs-scroll');
   el.innerHTML = '';
-  allLogs.filter(l => !q2 || l.toLowerCase().includes(q2.toLowerCase())).forEach(l => {
+  const filtered = allLogs.filter(l => !q2 || l.toLowerCase().includes(q2.toLowerCase()));
+  // Render newest first (reverse), limit to 500
+  filtered.slice(-500).reverse().forEach(l => {
     const div = document.createElement('div');
     div.className = 'log-line';
     div.textContent = l;
@@ -2909,24 +2935,23 @@ function switchTab(name) {
     const tBtn = document.getElementById('thinking-tab-btn');
     if (tBtn) { tBtn.style.color = ''; tBtn.style.textShadow = ''; }
   }
-  // Scroll to bottom when switching to content tabs — must run after the
-  // pane becomes visible so the browser can compute scroll height.
+  // Scroll to top when switching to content tabs (newest-first layout)
   if (name === 'chat') {
     requestAnimationFrame(() => {
       const el = document.getElementById('chat-log');
-      if (el) el.scrollTop = el.scrollHeight;
+      if (el) el.scrollTop = 0;
     });
   }
   if (name === 'logs') {
     requestAnimationFrame(() => {
       const el = document.getElementById('logs-scroll');
-      if (el) el.scrollTop = el.scrollHeight;
+      if (el) el.scrollTop = 0;
     });
   }
   if (name === 'thinking') {
     requestAnimationFrame(() => {
       const el = document.getElementById('thinking-scroll');
-      if (el) el.scrollTop = el.scrollHeight;
+      if (el) el.scrollTop = 0;
     });
   }
   try { localStorage.setItem('gal_activeTab', name); } catch(e) {}
@@ -2991,9 +3016,9 @@ function handleAgentTrace(data) {
         '<span class="trace-toggle">&#9660;</span>' +
       '</div>' +
       '<div class="trace-session-body"></div>';
-    scroll.appendChild(sEl);
+    scroll.prepend(sEl);
     traceSessions[sid] = { el: sEl, body: sEl.querySelector('.trace-session-body'), turnEls: {}, maxTurn: 0 };
-    if (traceAutoScroll) scroll.scrollTop = 99999;
+    if (traceAutoScroll) scroll.scrollTop = 0;
     return;
   }
 
@@ -3009,7 +3034,7 @@ function handleAgentTrace(data) {
         '<span class="trace-toggle">&#9660;</span>' +
       '</div>' +
       '<div class="trace-session-body"></div>';
-    scroll.appendChild(sEl);
+    scroll.prepend(sEl);
     traceSessions[sid] = { el: sEl, body: sEl.querySelector('.trace-session-body'), turnEls: {}, maxTurn: 0 };
   }
   const sess = traceSessions[sid];
@@ -3022,14 +3047,14 @@ function handleAgentTrace(data) {
     tEl.innerHTML =
       '<div class="trace-turn-header" onclick="this.parentElement.classList.toggle(\'collapsed\')">TURN ' + turn + ' &#9660;</div>' +
       '<div class="trace-turn-entries"></div>';
-    sess.body.appendChild(tEl);
+    sess.body.prepend(tEl);
     sess.turnEls[turn] = tEl;
     if (turn > sess.maxTurn) {
       sess.maxTurn = turn;
       const ctr = document.getElementById('thinking-turn-counter');
       if (ctr) ctr.textContent = 'Turns: ' + turn;
     }
-    if (traceAutoScroll) scroll.scrollTop = 99999;
+    if (traceAutoScroll) scroll.scrollTop = 0;
     return;
   }
 
@@ -3042,7 +3067,7 @@ function handleAgentTrace(data) {
     turnEl.innerHTML =
       '<div class="trace-turn-header" onclick="this.parentElement.classList.toggle(\'collapsed\')">TURN ' + turn + ' &#9660;</div>' +
       '<div class="trace-turn-entries"></div>';
-    sess.body.appendChild(turnEl);
+    sess.body.prepend(turnEl);
     sess.turnEls[turn] = turnEl;
   }
   const entries = turnEl.querySelector('.trace-turn-entries');
@@ -3110,7 +3135,7 @@ function handleAgentTrace(data) {
   entries.appendChild(entry);
   applyTraceEntryFilter(entry);
 
-  if (traceAutoScroll) scroll.scrollTop = 99999;
+  if (traceAutoScroll) scroll.scrollTop = 0;
 }
 
 function applyTraceEntryFilter(entry) {
@@ -3136,6 +3161,30 @@ function clearTraces() {
 function toggleThinkingAutoScroll() {
   traceAutoScroll = !traceAutoScroll;
   document.getElementById('thinking-auto-scroll-btn').textContent = 'Auto-scroll: ' + (traceAutoScroll ? 'ON' : 'OFF');
+}
+
+// ─── POWER CONTROLS ─────────────────────────────────────────────────────────
+function confirmRestart() {
+  if (!confirm('⚠️ Restart Galactic AI?\\n\\nAll active sessions will be interrupted. The system will reload and reconnect automatically.')) return;
+  showToast('🔄 Restarting Galactic AI...', 'info', 8000);
+  authFetch('/api/restart', { method: 'POST' }).catch(() => {});
+  // Poll for reconnection after a few seconds
+  setTimeout(() => {
+    const poll = setInterval(async () => {
+      try {
+        const r = await fetch('/api/status');
+        if (r.ok) { clearInterval(poll); location.reload(); }
+      } catch(_) {}
+    }, 2000);
+    // Stop polling after 60s
+    setTimeout(() => clearInterval(poll), 60000);
+  }, 3000);
+}
+
+function confirmShutdown() {
+  if (!confirm('⚠️ Shutdown Galactic AI?\\n\\nThis will stop the entire process. You will need to manually restart the application.')) return;
+  showToast('⏻ Shutting down Galactic AI...', 'warning', 10000);
+  authFetch('/api/shutdown', { method: 'POST' }).catch(() => {});
 }
 
 // ─── DISPLAY SETTINGS ───────────────────────────────────────────────────────
@@ -3759,6 +3808,30 @@ setInterval(() => {
             return web.json_response({'ok': True})
         except Exception as e:
             return web.json_response({'ok': False, 'error': str(e)})
+
+    async def handle_restart(self, request):
+        """POST /api/restart — restart the Galactic AI process."""
+        await self.core.log("🔄 Restart requested via Control Deck", priority=1)
+        import sys
+        # Give the response time to reach the client before restarting
+        async def _do_restart():
+            await asyncio.sleep(1.5)
+            await self.core.log("🔄 Restarting now...", priority=1)
+            os.execv(sys.executable, [sys.executable] + sys.argv)
+        asyncio.create_task(_do_restart())
+        return web.json_response({'ok': True, 'message': 'Restarting...'})
+
+    async def handle_shutdown(self, request):
+        """POST /api/shutdown — gracefully shut down Galactic AI."""
+        await self.core.log("⏻ Shutdown requested via Control Deck", priority=1)
+        async def _do_shutdown():
+            await asyncio.sleep(1.5)
+            await self.core.log("⏻ Shutting down now...", priority=1)
+            # Stop the event loop cleanly
+            loop = asyncio.get_event_loop()
+            loop.call_soon(loop.stop)
+        asyncio.create_task(_do_shutdown())
+        return web.json_response({'ok': True, 'message': 'Shutting down...'})
 
     async def handle_browser_cmd(self, request):
         """POST /api/browser_cmd — {command, args} — browser quick commands."""
