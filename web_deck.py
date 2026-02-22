@@ -3842,8 +3842,7 @@ setInterval(() => {
                 shutdown_event.set()
             else:
                 # Fallback: force exit if shutdown_event not available
-                import sys
-                sys.exit(0)
+                os._exit(0)
         asyncio.create_task(_do_shutdown())
         return web.json_response({'ok': True, 'message': 'Shutting down...'})
 

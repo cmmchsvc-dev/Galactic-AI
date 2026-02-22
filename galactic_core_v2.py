@@ -359,11 +359,30 @@ class GalacticCore:
         timestamp = datetime.now().strftime("%H:%M:%S")
         print(f"\n[{timestamp}] [Core] Shutting down Galactic AI...")
 
-        # Cancel all background tasks
+        # Schedule a hard exit fallback — if graceful shutdown takes too long,
+        # force-kill the process. This prevents hanging on in-flight HTTP requests.
+        def _force_exit():
+            import time
+            time.sleep(8)
+            ts = datetime.now().strftime("%H:%M:%S")
+            print(f"[{ts}] [Core] Graceful shutdown timed out — forcing exit.")
+            os._exit(0)
+        import threading
+        exit_timer = threading.Thread(target=_force_exit, daemon=True)
+        exit_timer.start()
+
+        # Cancel all background tasks (with timeout — don't wait forever)
         tasks = [t for t in asyncio.all_tasks() if t is not asyncio.current_task()]
         for task in tasks:
             task.cancel()
-        await asyncio.gather(*tasks, return_exceptions=True)
+        try:
+            await asyncio.wait_for(
+                asyncio.gather(*tasks, return_exceptions=True),
+                timeout=5.0
+            )
+        except asyncio.TimeoutError:
+            ts = datetime.now().strftime("%H:%M:%S")
+            print(f"[{ts}] [Core] Some tasks didn't cancel in 5s, continuing shutdown...")
 
         # Close Telegram client
         try:
