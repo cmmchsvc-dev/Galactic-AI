@@ -1,6 +1,6 @@
 # Galactic AI — Feature Reference
 
-Complete feature reference for Galactic AI Automation Suite **v1.1.0**.
+Complete feature reference for Galactic AI Automation Suite **v1.1.1**.
 
 ---
 
@@ -117,7 +117,7 @@ Background health checks track when Ollama goes online or offline. The web UI sh
 The actual context window size is queried from Ollama for every model. Conversation history is trimmed accordingly.
 
 ### Tool Calling for Local Models
-Ollama models get enhanced system prompts with full parameter schemas for all 100+ tools, plus few-shot examples for reliable JSON tool call generation. Temperature tuned to 0.3 for consistent structured output.
+Ollama models get enhanced system prompts with full parameter schemas for all 110+ tools, plus few-shot examples for reliable JSON tool call generation. Temperature tuned to 0.3 for consistent structured output.
 
 ---
 
@@ -158,7 +158,7 @@ system:
 
 ---
 
-## 100+ Built-In Tools
+## 110+ Built-In Tools
 
 ### File System (7 tools)
 | Tool | Description |
@@ -383,6 +383,45 @@ Powered by Playwright. Supports **Chromium**, **Firefox**, and **WebKit** engine
 
 ---
 
+### Chrome Browser Tools (10 tools — via Galactic Browser extension)
+
+Control the user's real Chrome browser through the Galactic Browser extension. Requires the Chrome extension to be loaded and connected.
+
+| Tool | Description |
+|---|---|
+| `chrome_navigate` | Navigate the user's Chrome browser to a URL, or use 'back'/'forward' for history |
+| `chrome_read_page` | Get accessibility tree snapshot of the current page (roles, names, ref IDs) |
+| `chrome_screenshot` | Take a JPEG screenshot of the active tab |
+| `chrome_click` | Click an element by CSS selector or accessibility ref ID |
+| `chrome_find` | Find elements using natural language queries (e.g., "login button", "search bar") |
+| `chrome_execute_js` | Execute JavaScript in the page context |
+| `chrome_tabs_list` | List all open Chrome tabs with titles and URLs |
+| `chrome_form_input` | Fill form elements (inputs, selects, checkboxes) by ref ID |
+| `chrome_get_page_text` | Extract raw text content from the page, prioritizing article content |
+| `chrome_scroll_to` | Scroll an element into view by ref ID |
+
+### Social Media (8 tools — via SocialMediaPlugin)
+
+Post, search, and manage Twitter/X and Reddit directly through the AI.
+
+**Twitter/X (via Tweepy)**
+| Tool | Description |
+|---|---|
+| `twitter_post` | Post a tweet to your timeline |
+| `twitter_reply` | Reply to a specific tweet by ID |
+| `twitter_search` | Search Twitter for recent tweets matching a query |
+| `twitter_mentions` | Get recent mentions and notifications |
+
+**Reddit (via PRAW)**
+| Tool | Description |
+|---|---|
+| `reddit_post` | Submit a post to a subreddit (text or link) |
+| `reddit_comment` | Reply to a Reddit post or comment |
+| `reddit_search` | Search a subreddit for posts matching a query |
+| `reddit_inbox` | Read your Reddit inbox (unread messages and comment replies) |
+
+---
+
 ## Image Generation
 
 Galactic AI supports six image generation backends. The active image model is set per-session and persists across messages.
@@ -464,6 +503,34 @@ When a user sends a voice message via Telegram, the AI automatically:
 3. Converts the response to speech
 4. Sends the audio back as a voice message
 
+### Telegram Message Reliability
+- **Markdown fallback**: If Telegram rejects a message due to invalid Markdown formatting, the bridge automatically retries as plain text
+- **Message splitting**: Responses longer than 4096 characters are split at paragraph/line/word boundaries
+- **CancelledError handling**: All 4 handler methods (`process_and_respond`, `_handle_document`, `_handle_photo`, `_handle_audio`) properly handle task cancellation without crashing
+- **Empty response guard**: `[No response]` or empty responses are replaced with user-friendly messages instead of being sent literally
+- **Error logging**: All Telegram API errors are logged instead of silently swallowed
+
+---
+
+## Chrome Extension — Galactic Browser
+
+### Architecture
+The Galactic Browser extension connects to Galactic AI via a persistent WebSocket on `/ws/chrome_bridge`. The background service worker manages the connection lifecycle (auto-reconnect on disconnect, heartbeat every 30s). The content script runs in the page context and provides accessibility tree snapshots, element interaction, form filling, and JavaScript execution.
+
+### Side Panel Chat
+A Chrome side panel provides a chat interface that connects to both the `/api/chat` HTTP endpoint and the `/stream` WebSocket for streaming responses. If WebSocket streaming fails, the side panel falls back to reading the HTTP response body.
+
+### Authentication
+The popup authenticates using a SHA-256 hash of the user's passphrase, matching the web Control Deck's auth system. Localhost connections bypass token validation for seamless local usage.
+
+### Tool Capabilities
+- **Page reading**: Full accessibility tree with roles, names, values, and ref IDs for programmatic interaction
+- **Element finding**: Natural language element search (e.g., "login button", "search bar")
+- **Form interaction**: Fill inputs, select dropdowns, check checkboxes by ref ID
+- **Navigation**: URL navigation, back/forward history, tab listing
+- **Screenshots**: JPEG capture of the active tab
+- **JavaScript**: Execute arbitrary code in the page context
+
 ---
 
 ## Web Control Deck
@@ -473,7 +540,7 @@ When a user sends a voice message via Telegram, the AI automatically:
 - **Thinking** — Real-time agent trace viewer; watch the ReAct loop think and act step by step; persists across page refreshes via `/api/traces` backend buffer (last 500 entries)
 - **Status** — Live telemetry: provider, model, token usage, uptime, fallback chain status, plugin states, version badge; 30+ data fields across 6 sections; **Cost Dashboard** with 6 summary cards (Session Cost, Today, This Week, This Month, Last Request, Avg/Message), multi-currency selector (9 currencies), free model detection, persistent cost logging
 - **Models** — Browse and switch all available models, ordered best-to-worst with tier emoji indicators; per-model override dropdowns
-- **Tools** — Browse all 100+ tools with descriptions and parameter info
+- **Tools** — Browse all 110+ tools with descriptions and parameter info
 - **Plugins** — Enable/disable plugins with toggle switches
 - **Memory** — Read and edit MEMORY.md, IDENTITY.md, SOUL.md, USER.md, TOOLS.md, VAULT.md in-browser; auto-creates missing files with starter templates
 - **⚙️ Settings** — Primary/fallback model dropdowns, auto-fallback/smart-routing/streaming toggles, TTS voice selector, update check interval, speak timeout, max ReAct turns — all saved to config.yaml
@@ -700,4 +767,4 @@ Set `web.remote_access: true` in `config.yaml`. On next startup, Galactic AI:
 
 ---
 
-**v1.1.0** — Galactic AI Automation Suite
+**v1.1.1** — Galactic AI Automation Suite
