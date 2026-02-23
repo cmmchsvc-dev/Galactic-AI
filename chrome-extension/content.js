@@ -442,10 +442,12 @@
 
     if (!el) return { error: 'Element not found' };
 
+    const shouldClear = args?.clear !== false; // default: true
+
     el.focus();
 
     /* PRE-CLEAR: only for value-based inputs (contenteditable is cleared via execCommand below) */
-    if (args?.clear !== false && 'value' in el) {
+    if (shouldClear && 'value' in el) {
       el.value = '';
       el.dispatchEvent(new Event('input', { bubbles: true }));
     }
@@ -458,26 +460,33 @@
       el.dispatchEvent(new Event('input', { bubbles: true }));
       el.dispatchEvent(new Event('change', { bubbles: true }));
     } else if (el.contentEditable === 'true') {
-      el.focus();
       // Select and clear existing content if clear is requested
-      if (args?.clear !== false) {
+      if (shouldClear) {
         document.execCommand('selectAll', false, null);
         document.execCommand('delete', false, null);
       }
-      // insertText fires the full keydown/keypress/keyup event chain
-      // that modern SPAs (X.com, Notion, Reddit) require
+      // insertText fires the InputEvent with inputType='insertText'
+      // that modern SPAs (X.com, Notion, Reddit) need to update their internal state
       const inserted = document.execCommand('insertText', false, text);
       if (!inserted) {
         // execCommand fallback: dispatch keyboard events character by character
         for (const char of text) {
           ['keydown', 'keypress', 'keyup'].forEach(evtType => {
             el.dispatchEvent(new KeyboardEvent(evtType, {
-              key: char, char: char, charCode: char.charCodeAt(0),
-              keyCode: char.charCodeAt(0), which: char.charCodeAt(0),
+              key: char, char: char, charCode: char.codePointAt(0),
+              keyCode: char.codePointAt(0), which: char.codePointAt(0),
               bubbles: true, cancelable: true
             }));
           });
-          el.textContent += char;
+          const sel = window.getSelection();
+          if (sel && sel.rangeCount > 0) {
+            const range = sel.getRangeAt(0);
+            range.deleteContents();
+            range.insertNode(document.createTextNode(char));
+            range.collapse(false);
+          } else {
+            el.insertAdjacentText('beforeend', char);
+          }
           el.dispatchEvent(new Event('input', { bubbles: true }));
         }
       }
