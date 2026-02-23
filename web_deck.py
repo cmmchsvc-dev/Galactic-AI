@@ -2645,6 +2645,7 @@ const CURRENCY_SYMBOLS = {
   USD:'$', EUR:'€', GBP:'£', CAD:'CA$', AUD:'AU$', JPY:'¥', INR:'₹', BRL:'R$', KRW:'₩'
 };
 let costChartDaily = null, costChartModels = null, costChartTrend = null;
+let _costDashBusy = false; // concurrency guard
 
 function getCurrency() {
   try { return localStorage.getItem('gal_currency') || 'USD'; } catch(e) { return 'USD'; }
@@ -2683,7 +2684,13 @@ function applyChartDefaults() {
 }
 
 async function refreshCostDashboard() {
+  if (_costDashBusy) return;           // skip if already running
+  _costDashBusy = true;
   try {
+    // Only render charts when the status tab is actually visible
+    const statusPane = document.getElementById('tab-status');
+    const tabVisible = statusPane && statusPane.classList.contains('active');
+
     const r = await authFetch('/api/cost-stats');
     if (!r.ok) return;
     const d = await r.json();
@@ -2706,139 +2713,120 @@ async function refreshCostDashboard() {
     setCard('cost-last', d.last_request_cost);
     setCard('cost-avg', d.avg_per_message);
 
+    // Skip chart rendering if status tab isn't visible or Chart.js not loaded
+    if (!tabVisible) return;
     applyChartDefaults();
     if (typeof Chart === 'undefined') return;
 
     const cur = getCurrency();
     const rate = EXCHANGE_RATES[cur] || 1;
     const sym = CURRENCY_SYMBOLS[cur] || cur;
+    const PALETTE = ['#00f3ff','#a78bfa','#34d399','#f59e0b','#ef4444','#f472b6','#60a5fa','#10b981'];
+
+    // Helper: update chart data in-place or create new chart
+    function upsertChart(chartVar, canvas, type, labels, datasets, opts) {
+      if (chartVar) {
+        chartVar.data.labels = labels;
+        chartVar.data.datasets.forEach((ds, i) => {
+          if (datasets[i]) Object.assign(ds, datasets[i]);
+        });
+        // Update tooltip/tick callbacks that capture cur/rate/sym
+        if (opts) chartVar.options = Object.assign(chartVar.options, opts);
+        chartVar.update('none');  // 'none' = no animation, fast
+        return chartVar;
+      }
+      return new Chart(canvas, { type, data: { labels, datasets }, options: opts });
+    }
 
     // Chart 1: Daily Spend
     const dailyCanvas = el('chart-daily');
     if (dailyCanvas && d.daily) {
       const labels = d.daily.map(x => x.date.slice(5));
       const values = d.daily.map(x => x.cost * rate);
-      const PALETTE = ['#00f3ff','#a78bfa','#34d399','#f59e0b','#ef4444','#f472b6','#60a5fa','#10b981'];
       const colors = d.daily.map((x, i) => PALETTE[i % PALETTE.length]);
-      if (costChartDaily) costChartDaily.destroy();
-      costChartDaily = new Chart(dailyCanvas, {
-        type: 'bar',
-        data: {
-          labels,
-          datasets: [{
-            data: values,
-            backgroundColor: colors.map(c => c + '99'),
-            borderColor: colors,
-            borderWidth: 1,
-            borderRadius: 4,
-          }],
-        },
-        options: {
-          responsive: true,
-          maintainAspectRatio: false,
-          plugins: {
-            legend: { display: false },
-            tooltip: {
-              callbacks: {
-                label: ctx => {
-                  const day = d.daily[ctx.dataIndex];
-                  const lines = [sym + (day.cost * rate).toFixed(2)];
-                  for (const [m, c] of Object.entries(day.models || {})) {
-                    lines.push('  ' + m + ': ' + sym + (c * rate).toFixed(3));
-                  }
-                  return lines;
-                }
-              }
+      costChartDaily = upsertChart(costChartDaily, dailyCanvas, 'bar', labels, [{
+        data: values,
+        backgroundColor: colors.map(c => c + '99'),
+        borderColor: colors,
+        borderWidth: 1,
+        borderRadius: 4,
+      }], {
+        responsive: true, maintainAspectRatio: false,
+        animation: false,
+        plugins: { legend: { display: false }, tooltip: { callbacks: {
+          label: ctx => {
+            const day = d.daily[ctx.dataIndex];
+            const lines = [sym + (day.cost * rate).toFixed(2)];
+            for (const [m, c] of Object.entries(day.models || {})) {
+              lines.push('  ' + m + ': ' + sym + (c * rate).toFixed(3));
             }
-          },
-          scales: {
-            y: { beginAtZero: true, ticks: { callback: v => sym + v.toFixed(2) } },
-            x: { grid: { display: false } },
-          },
+            return lines;
+          }
+        }}},
+        scales: {
+          y: { beginAtZero: true, ticks: { callback: v => sym + v.toFixed(2) } },
+          x: { grid: { display: false } },
         },
       });
     }
 
     // Chart 2: Model Cost Comparison
     const modelsCanvas = el('chart-models');
-    if (modelsCanvas && d.by_model) {
+    if (modelsCanvas && d.by_model && d.by_model.length > 0) {
       const labels = d.by_model.map(x => {
         const short = x.model.includes('/') ? x.model.split('/')[1] : x.model;
         return short.length > 20 ? short.slice(0, 18) + '…' : short;
       });
       const values = d.by_model.map(x => x.cost * rate);
-      const PALETTE = ['#00f3ff','#a78bfa','#34d399','#f59e0b','#ef4444','#f472b6','#60a5fa','#10b981'];
-      if (costChartModels) costChartModels.destroy();
-      costChartModels = new Chart(modelsCanvas, {
-        type: 'bar',
-        data: {
-          labels,
-          datasets: [{
-            data: values,
-            backgroundColor: PALETTE.slice(0, values.length).map(c => c + '99'),
-            borderColor: PALETTE.slice(0, values.length),
-            borderWidth: 1,
-            borderRadius: 4,
-          }],
-        },
-        options: {
-          indexAxis: 'y',
-          responsive: true,
-          maintainAspectRatio: false,
-          plugins: {
-            legend: { display: false },
-            tooltip: {
-              callbacks: {
-                label: ctx => {
-                  const m = d.by_model[ctx.dataIndex];
-                  return [
-                    sym + (m.cost * rate).toFixed(2),
-                    m.messages + ' messages',
-                    (m.tokens_in / 1000).toFixed(1) + 'k in / ' + (m.tokens_out / 1000).toFixed(1) + 'k out',
-                  ];
-                }
-              }
-            }
-          },
-          scales: {
-            x: { beginAtZero: true, ticks: { callback: v => sym + v.toFixed(2) } },
-            y: { grid: { display: false } },
-          },
+      costChartModels = upsertChart(costChartModels, modelsCanvas, 'bar', labels, [{
+        data: values,
+        backgroundColor: PALETTE.slice(0, values.length).map(c => c + '99'),
+        borderColor: PALETTE.slice(0, values.length),
+        borderWidth: 1,
+        borderRadius: 4,
+      }], {
+        indexAxis: 'y', responsive: true, maintainAspectRatio: false,
+        animation: false,
+        plugins: { legend: { display: false }, tooltip: { callbacks: {
+          label: ctx => {
+            const m = d.by_model[ctx.dataIndex];
+            return [
+              sym + (m.cost * rate).toFixed(2),
+              m.messages + ' messages',
+              (m.tokens_in / 1000).toFixed(1) + 'k in / ' + (m.tokens_out / 1000).toFixed(1) + 'k out',
+            ];
+          }
+        }}},
+        scales: {
+          x: { beginAtZero: true, ticks: { callback: v => sym + v.toFixed(2) } },
+          y: { grid: { display: false } },
         },
       });
     }
 
     // Chart 3: Cost per Message Trend
     const trendCanvas = el('chart-trend');
-    if (trendCanvas && d.daily) {
+    if (trendCanvas && d.daily && d.daily.length > 0) {
       const labels = d.daily.map(x => x.date.slice(5));
       const values = d.daily.map(x => {
         const msgs = Object.keys(x.models || {}).length || 1;
         return (x.cost / Math.max(msgs, 1)) * rate;
       });
-      if (costChartTrend) costChartTrend.destroy();
-      costChartTrend = new Chart(trendCanvas, {
-        type: 'line',
-        data: {
-          labels,
-          datasets: [{
-            data: values,
-            borderColor: '#00f3ff',
-            backgroundColor: 'rgba(0,243,255,0.1)',
-            fill: true,
-            tension: 0.4,
-            pointRadius: 3,
-            pointBackgroundColor: '#00f3ff',
-          }],
-        },
-        options: {
-          responsive: true,
-          maintainAspectRatio: false,
-          plugins: { legend: { display: false } },
-          scales: {
-            y: { beginAtZero: true, ticks: { callback: v => sym + v.toFixed(3) } },
-            x: { grid: { display: false } },
-          },
+      costChartTrend = upsertChart(costChartTrend, trendCanvas, 'line', labels, [{
+        data: values,
+        borderColor: '#00f3ff',
+        backgroundColor: 'rgba(0,243,255,0.1)',
+        fill: true,
+        tension: 0.4,
+        pointRadius: 3,
+        pointBackgroundColor: '#00f3ff',
+      }], {
+        responsive: true, maintainAspectRatio: false,
+        animation: false,
+        plugins: { legend: { display: false } },
+        scales: {
+          y: { beginAtZero: true, ticks: { callback: v => sym + v.toFixed(3) } },
+          x: { grid: { display: false } },
         },
       });
     }
@@ -2852,6 +2840,7 @@ async function refreshCostDashboard() {
       freeNote.textContent = '';
     }
   } catch(e) { console.error('Cost dashboard error:', e); }
+  finally { _costDashBusy = false; }   // always release guard
 }
 
 // ── Settings Tab ──────────────────────────────────────────────────────
