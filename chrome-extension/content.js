@@ -462,9 +462,30 @@
       el.dispatchEvent(new Event('input', { bubbles: true }));
       el.dispatchEvent(new Event('change', { bubbles: true }));
     } else if (el.contentEditable === 'true') {
-      /* ContentEditable elements */
-      el.textContent = text;
-      el.dispatchEvent(new Event('input', { bubbles: true }));
+      el.focus();
+      // Select and clear existing content if clear is requested
+      if (args?.clear !== false) {
+        document.execCommand('selectAll', false, null);
+        document.execCommand('delete', false, null);
+      }
+      // insertText fires the full keydown/keypress/keyup event chain
+      // that modern SPAs (X.com, Notion, Reddit) require
+      const inserted = document.execCommand('insertText', false, text);
+      if (!inserted) {
+        // execCommand fallback: dispatch keyboard events character by character
+        for (const char of text) {
+          ['keydown', 'keypress', 'keyup'].forEach(evtType => {
+            el.dispatchEvent(new KeyboardEvent(evtType, {
+              key: char, char: char, charCode: char.charCodeAt(0),
+              keyCode: char.charCodeAt(0), which: char.charCodeAt(0),
+              bubbles: true, cancelable: true
+            }));
+          });
+          el.textContent += char;
+          el.dispatchEvent(new Event('input', { bubbles: true }));
+        }
+      }
+      el.dispatchEvent(new Event('change', { bubbles: true }));
     } else {
       /* Fallback: dispatch key events character by character */
       for (const char of text) {
