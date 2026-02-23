@@ -2,7 +2,7 @@
 
 **Sovereign. Universal. Fast.**
 
-A powerful, local-first AI automation platform with 110+ built-in tools, true persistent memory, voice I/O, video generation, Chrome browser extension, browser automation, social media tools, 14 AI providers, multi-platform messaging bridges, and a real-time web Control Deck. **v1.1.1**
+A powerful, local-first AI automation platform with 147 built-in tools, an extensible Skills ecosystem, true persistent memory, voice I/O, video generation, Chrome browser extension, social media tools, 14 AI providers, multi-platform messaging bridges, and a real-time web Control Deck. **v1.1.2**
 
 Run fully local with Ollama (no API keys, no cloud, no tracking), or connect to any of 14 cloud providers. Your data stays yours.
 
@@ -20,8 +20,8 @@ This is fundamentally different from session memory or expensive vector search o
 ### 14 AI Providers, One Interface
 Switch between Google Gemini, Claude, GPT, Grok, Groq, Mistral, DeepSeek, NVIDIA, and more — or run completely offline with Ollama. Change providers mid-conversation. Set automatic fallback so the AI never goes down.
 
-### 100+ Tools, Real Agent Behavior
-The AI doesn't just answer questions — it acts. It browses the web, reads and writes files, runs shell commands, controls a full Chromium browser, generates images and videos, manages schedules, sends messages across platforms, and more. It chains tool calls in a ReAct loop until the task is done.
+### 147 Tools + Extensible Skills
+The AI doesn't just answer questions — it acts. It browses the web, reads and writes files, runs shell commands, controls a full Chromium browser, generates images and videos, manages schedules, sends messages across platforms, and more. It chains tool calls in a ReAct loop until the task is done. Add new capabilities at any time by asking Byte to create a skill — it writes, validates, and loads the skill live without restarting.
 
 ### Voice I/O + Multi-Platform Messaging
 Send a voice message to your Telegram bot — the AI transcribes it with Whisper, thinks, responds with a voice message back. Or message from Discord, WhatsApp, or Gmail. Control everything from wherever you are.
