@@ -165,7 +165,7 @@ class GalacticCore:
             # ('plugins.shell_executor', 'ShellPlugin'),  # Migrated to skills/core/
             ('plugins.browser_executor_pro','BrowserExecutorPro'),
             ('plugins.subagent_manager',    'SubAgentPlugin'),
-            ('plugins.desktop_tool',        'DesktopTool'),
+            # ('plugins.desktop_tool',        'DesktopTool'),  # Migrated to skills/core/
             ('plugins.chrome_bridge',       'ChromeBridge'),
             ('plugins.social_media',        'SocialMediaPlugin'),
         ]
@@ -237,7 +237,7 @@ class GalacticCore:
         # Phase 0: empty (all still running as legacy plugins)
         CORE_SKILLS = [
             ('skills.core.shell_executor', 'ShellSkill'),
-            # ('skills.core.desktop_tool',   'DesktopSkill'), # Phase 2
+            ('skills.core.desktop_tool',   'DesktopSkill'),
             # ('skills.core.chrome_bridge',  'ChromeBridgeSkill'), # Phase 3
             # ('skills.core.social_media',   'SocialMediaSkill'),  # Phase 3
             # ('skills.core.subagent_manager', 'SubAgentSkill'),   # Phase 3
