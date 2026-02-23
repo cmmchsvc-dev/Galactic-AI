@@ -449,6 +449,7 @@ async function ensureDebuggerDOM(tabId) {
   if (attachments.size === 0) {
     await chrome.debugger.attach({ tabId }, '1.3');
   }
+  await chrome.debugger.sendCommand({ tabId }, 'DOM.enable');
   attachments.add('dom');
 }
 
@@ -493,8 +494,37 @@ async function cmdUploadFile(args) {
       files: [filePath]
     });
 
+    /* Clean up the temporary data-galactic-uid attribute (best-effort) */
+    if (selector && selector.startsWith('[data-galactic-uid=')) {
+      const uid = selector.match(/data-galactic-uid="([^"]+)"/)?.[1];
+      if (uid) {
+        chrome.scripting.executeScript({
+          target: { tabId },
+          func: (uid) => {
+            const el = document.querySelector(`[data-galactic-uid="${uid}"]`);
+            if (el) el.removeAttribute('data-galactic-uid');
+          },
+          args: [uid]
+        }).catch(() => {}); // best-effort cleanup
+      }
+    }
+
     return { status: 'success', file_path: filePath };
   } catch (err) {
+    /* Clean up the temporary data-galactic-uid attribute on error too (best-effort) */
+    if (selector && selector.startsWith('[data-galactic-uid=')) {
+      const uid = selector.match(/data-galactic-uid="([^"]+)"/)?.[1];
+      if (uid) {
+        chrome.scripting.executeScript({
+          target: { tabId },
+          func: (uid) => {
+            const el = document.querySelector(`[data-galactic-uid="${uid}"]`);
+            if (el) el.removeAttribute('data-galactic-uid');
+          },
+          args: [uid]
+        }).catch(() => {}); // best-effort cleanup
+      }
+    }
     return { error: `File upload failed: ${err.message || String(err)}` };
   }
 }
