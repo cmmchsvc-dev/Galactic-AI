@@ -187,6 +187,7 @@ async function handleCommand(id, command, args) {
     case 'key_press':     return await cmdKeyPress(args);
     case 'read_console':  return await cmdReadConsole(args);
     case 'read_network':  return await cmdReadNetwork(args);
+    case 'get_network_body': return await cmdGetNetworkBody(args);
     case 'hover':         return await cmdHover(args);
     case 'zoom':          return await cmdZoom(args);
     case 'drag':          return await cmdDrag(args);
@@ -685,7 +686,28 @@ async function cmdReadNetwork(args) {
     networkBuffers.set(tabId, []);
   }
 
+  /* Expose request_id (sourced from _requestId) in each entry */
+  requests = requests.map(r => {
+    const entry = { ...r, request_id: r._requestId || null };
+    delete entry._requestId;
+    return entry;
+  });
+
   return { requests };
+}
+
+async function cmdGetNetworkBody(args) {
+  if (!args?.request_id) return { error: 'request_id is required' };
+  const tabId = await getTargetTabId(args);
+  try {
+    await ensureDebuggerNetwork(tabId);
+    const result = await chrome.debugger.sendCommand(
+      { tabId }, 'Network.getResponseBody', { requestId: args.request_id }
+    );
+    return { status: 'success', body: result.body, base64Encoded: result.base64Encoded };
+  } catch (e) {
+    return { error: `Failed to get response body: ${e.message}` };
+  }
 }
 
 /* ─── Debugger Event Listener (single unified handler) ─────────────────── */
