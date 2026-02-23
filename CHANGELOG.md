@@ -4,6 +4,22 @@ All notable changes to Galactic AI are documented here.
 
 ---
 
+## [v1.1.1] — 2026-02-23
+
+### Added
+- **🌐 Galactic Browser (Chrome Extension)** — Full Chrome extension with popup authentication, side panel chat with streaming responses, and real-time browser interaction via WebSocket bridge. 10 new browser tools: `chrome_navigate`, `chrome_read_page`, `chrome_screenshot`, `chrome_click`, `chrome_find`, `chrome_execute_js`, `chrome_tabs_list`, `chrome_form_input`, `chrome_get_page_text`, `chrome_scroll_to`. Content script provides accessibility tree snapshots, element finding, form interaction, and JavaScript execution in the user's real Chrome browser
+- **📱 Social Media Plugin** — Twitter/X integration via Tweepy (post tweets, reply, search mentions, get timeline) and Reddit integration via PRAW (submit posts, comment, search subreddits, read inbox). 8 new tools: `twitter_post`, `twitter_reply`, `twitter_search`, `twitter_mentions`, `reddit_post`, `reddit_comment`, `reddit_search`, `reddit_inbox`
+- **💰 Actual Cost Tracking** — CostTracker now supports `actual_cost` from OpenRouter's generation API, overriding local estimates for precise spend tracking
+- **📖 TOOLS.md Integration** — Personality system now reads TOOLS.md for tool usage guidance, injected into every system prompt
+
+### Fixed
+- **🔧 System-wide [No response] Fix** — Root cause: cloud models (Gemini via OpenRouter) return tool calls via native `tool_calls` streaming field, but the streaming code only read `delta.content` → empty response. Added native `tool_calls` capture in all 3 LLM call paths (streaming, non-streaming messages, non-streaming legacy). Streaming fix accumulates incremental arguments across multiple chunks
+- **📨 Telegram Reliability Overhaul** — Fixed `send_message` silently swallowing ALL errors (`except: pass`); added Markdown parse failure detection with automatic plain text fallback; added message splitting for Telegram's 4096-character limit; fixed `UnboundLocalError` crash on `CancelledError` (response variable not initialized); added `[No response]` guard in all 4 handler methods (`process_and_respond`, `_handle_document`, `_handle_photo`, `_handle_audio`); added `CancelledError` handling across all handlers
+- **🔑 WebSocket Auth Bypass for Localhost** — `handle_stream()` in web_deck.py now bypasses token validation for localhost connections (`127.0.0.1`, `::1`), matching the auth middleware's localhost bypass. Fixes Chrome extension side panel red status dot
+- **💬 Side Panel HTTP Fallback** — sidepanel.js now reads HTTP response body from `/api/chat` as fallback when WebSocket `/stream` doesn't deliver chunks, ensuring responses always appear
+
+---
+
 ## [v1.1.0] — 2026-02-22
 
 ### Added

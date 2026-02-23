@@ -2,7 +2,7 @@
 
 **Sovereign. Universal. Fast.**
 
-A powerful, local-first AI automation platform with 100+ built-in tools, true persistent memory, voice I/O, video generation, browser automation, 14 AI providers, multi-platform messaging bridges, and a real-time web Control Deck. **v1.1.0**
+A powerful, local-first AI automation platform with 110+ built-in tools, true persistent memory, voice I/O, video generation, Chrome browser extension, browser automation, social media tools, 14 AI providers, multi-platform messaging bridges, and a real-time web Control Deck. **v1.1.1**
 
 Run fully local with Ollama (no API keys, no cloud, no tracking), or connect to any of 14 cloud providers. Your data stays yours.
 
@@ -245,6 +245,45 @@ Set `gmail.email` and `gmail.app_password` in `config.yaml`. Requires a Gmail Ap
 
 ---
 
+## Chrome Extension — Galactic Browser
+
+Control your real Chrome browser through Galactic AI with the included Chrome extension:
+
+1. Open `chrome://extensions` in Chrome
+2. Enable "Developer mode" (top right)
+3. Click "Load unpacked" → select the `chrome-extension/` folder
+4. Click the Galactic AI icon in the toolbar → enter your passphrase → Connect
+
+**Features:**
+| Feature | Description |
+|---|---|
+| **Browser Control** | Navigate, click, type, scroll — the AI controls your actual Chrome tabs |
+| **Page Reading** | Accessibility tree snapshots for understanding any page |
+| **Side Panel Chat** | Chat with Byte in a Chrome side panel with streaming responses |
+| **Tab Management** | List, switch, and interact with all open tabs |
+| **Form Filling** | AI can fill forms, click buttons, and interact with page elements |
+| **JavaScript Execution** | Run arbitrary JavaScript in the page context |
+
+10 browser tools: `chrome_navigate`, `chrome_read_page`, `chrome_screenshot`, `chrome_click`, `chrome_find`, `chrome_execute_js`, `chrome_tabs_list`, `chrome_form_input`, `chrome_get_page_text`, `chrome_scroll_to`.
+
+---
+
+## Social Media (Optional)
+
+Post, search, and manage social media accounts directly through the AI:
+
+### Twitter/X
+Set `social_media.twitter` keys in `config.yaml` (consumer_key, consumer_secret, access_token, access_token_secret).
+
+**Tools:** `twitter_post`, `twitter_reply`, `twitter_search`, `twitter_mentions`
+
+### Reddit
+Set `social_media.reddit` keys in `config.yaml` (client_id, client_secret, username, password).
+
+**Tools:** `reddit_post`, `reddit_comment`, `reddit_search`, `reddit_inbox`
+
+---
+
 ## Image Generation
 
 Generate images directly in chat or from Telegram:
@@ -357,10 +396,17 @@ When enabled, Galactic AI:
 ```
 Galactic-AI/
 ├── galactic_core_v2.py       # Main entry point + orchestrator
-├── gateway_v2.py             # LLM routing + 92-tool ReAct loop
+├── gateway_v2.py             # LLM routing + 110-tool ReAct loop
 ├── web_deck.py               # Web Control Deck (http://127.0.0.1:17789)
 ├── remote_access.py          # JWT auth, TLS, rate limiting, CORS middleware
 ├── telegram_bridge.py        # Telegram bot + voice I/O + image model selector
+├── chrome-extension/            # Galactic Browser Chrome extension
+│   ├── manifest.json            # Extension manifest (MV3)
+│   ├── background.js            # Service worker + WebSocket bridge
+│   ├── content.js               # Page interaction (accessibility, clicks, forms)
+│   ├── popup.html/js            # Auth popup
+│   ├── sidepanel.html/js/css    # Side panel chat interface
+│   └── icons/                   # Extension icons
 ├── discord_bridge.py         # Discord bot bridge
 ├── whatsapp_bridge.py        # WhatsApp Cloud API bridge
 ├── gmail_bridge.py           # Gmail IMAP bridge
@@ -380,6 +426,8 @@ Galactic-AI/
     ├── browser_executor_pro.py   # Playwright browser automation (56 actions)
     ├── shell_executor.py         # Shell command execution
     ├── subagent_manager.py       # Multi-agent orchestration
+    ├── chrome_bridge.py          # Chrome extension WebSocket bridge (10 tools)
+    ├── social_media.py           # Twitter/X + Reddit integration (8 tools)
     ├── desktop_tool.py           # OS-level mouse/keyboard/screenshot automation
     └── ping.py                   # Connectivity monitoring
 ```
@@ -450,6 +498,7 @@ MIT License — see LICENSE file.
 
 | Version | Highlights |
 |---|---|
+| **v1.1.1** | 🌐 Chrome extension (Galactic Browser) with 10 browser tools, side panel chat, real-time page interaction; 📱 Social media plugin (Twitter/X + Reddit, 8 tools); 🔧 System-wide [No response] fix (native tool_calls capture); 📨 Telegram reliability overhaul (Markdown fallback, message splitting, CancelledError fix) |
 | **v1.1.0** | 💰 Token cost dashboard (6 summary cards, 9 currencies, persistent JSONL tracking, real token extraction); OpenRouter expansion (6 → 26 curated models across Frontier/Strong/Fast tiers); Chart.js removal for stability |
 | **v1.0.9** | 🎬 Video generation via Google Veo (text-to-video + image-to-video), inline HTML5 player; NVIDIA provider hardening (streaming fixes, cold-start retry, broken SSE workaround); new models (Nemotron Super 49B, Nano 9B, Phi-3 Medium, DeepSeek V3.2); HuggingFace URL migration; conventional bottom-up chat scroll; bulletproof shutdown |
 | **v1.0.8** | 🔧 Model persistence definitive fix — safe read-modify-write config saves, defensive model-key writeback; Imagen 4 safety filter fix; inline image display diagnostics |
