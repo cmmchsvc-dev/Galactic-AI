@@ -521,11 +521,9 @@ class ChromeBridgeSkill(GalacticSkill):
         if not self.ws_connection:
             return "[ERROR] Chrome extension not connected."
         result = await self.send_command("resize_window", args)
-        if result.get("error") or result.get("message"):
-            return f"[ERROR] chrome_resize: {result.get('error') or result.get('message')}"
-        w = result.get("width")
-        h = result.get("height")
-        return f"[CHROME] Viewport resized to {w}\u00d7{h}"
+        if result.get("status") == "success":
+            return f"[CHROME] Viewport resized to {result['width']}\u00d7{result['height']}"
+        return f"[ERROR] chrome_resize: {result.get('error') or result.get('message') or 'unknown error'}"
 
     # ── Inbound message handler (called by web_deck) ─────────────────────
 
