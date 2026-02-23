@@ -1,6 +1,6 @@
 # Galactic AI — Architecture Reference
 
-**v1.0.6** — System design, component breakdown, and data flows.
+**v1.0.9** — System design, component breakdown, and data flows.
 
 ---
 
@@ -84,10 +84,11 @@ The LLM routing layer and ReAct agent engine.
 8. Return final answer
 
 **Tool execution:**
-- 100+ tools registered in the gateway
+- 100+ tools registered in the gateway (including image and video generation)
 - Each tool wrapped in `asyncio.wait_for(timeout=tool_timeout)`
 - Tool timeouts configurable per tool-type in `config.yaml` under `tool_timeouts`
 - Entire ReAct loop capped by `models.speak_timeout` (default 600s)
+- Video generation tools use async polling (10s intervals) for long-running Veo operations
 
 ---
 
@@ -148,6 +149,7 @@ POST /api/settings/models  — update primary/fallback model
 POST /api/settings/voice   — update TTS voice
 POST /api/settings/system  — update system settings
 GET  /api/traces           — last 500 ReAct trace entries
+GET  /api/video/{filename} — serve generated video files
 GET  /api/memory/files     — list workspace .md files
 GET  /api/memory/file      — read a .md file
 POST /api/memory/file      — write a .md file
@@ -257,6 +259,25 @@ User creates VAULT.md with credentials
   → VAULT.md never committed (gitignored), never overwritten by updater
 ```
 
+### Video Generation (Veo)
+
+```
+User asks "generate a video of a sunset"
+  → GalacticGateway.speak() → ReAct loop
+    → Tool call: generate_video(prompt="a sunset over the ocean")
+      → google-genai SDK → client.models.generate_videos()
+        → Returns async operation
+      → Poll operation every 10s until done
+        → Log "🎬 Video still generating..." every 60s
+      → Download video → save to images/video/veo_{timestamp}.mp4
+      → Set self.last_video_file = path
+    → Final answer returned to web_deck
+  → handle_chat() checks last_video_file
+    → Adds video_url: /api/video/{filename} to response
+  → Browser JS: appendBotVideo(url)
+    → Inline <video> player with controls + download link
+```
+
 ### GitHub Update Checker
 
 ```
@@ -278,7 +299,8 @@ Key sections:
 gateway:          # Active provider + model
 models:           # Fallback chain, timeouts, auto-fallback toggle
 providers:        # API keys per provider
-tool_timeouts:    # Per-tool timeout overrides
+tool_timeouts:    # Per-tool timeout overrides (including video: 300s)
+video:            # Video generation (provider, model, duration, resolution)
 elevenlabs:       # TTS voice selection
 personality:      # Mode + custom fields
 system:           # Version, port, update_check_interval
