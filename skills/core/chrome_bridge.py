@@ -200,6 +200,16 @@ class ChromeBridgeSkill(GalacticSkill):
                 }, "required": ["region"]},
                 "fn": self._tool_chrome_zoom
             },
+            "chrome_drag": {
+                "description": "Drag from one coordinate to another in Chrome for drag-and-drop interactions, sliders, and reordering.",
+                "parameters": {"type": "object", "properties": {
+                    "start_x": {"type": "number", "description": "Starting X coordinate"},
+                    "start_y": {"type": "number", "description": "Starting Y coordinate"},
+                    "end_x": {"type": "number", "description": "Ending X coordinate"},
+                    "end_y": {"type": "number", "description": "Ending Y coordinate"},
+                }, "required": ["start_x", "start_y", "end_x", "end_y"]},
+                "fn": self._tool_chrome_drag
+            },
         }
 
     # ── Tool handlers ────────────────────────────────────────────────────
@@ -419,6 +429,17 @@ class ChromeBridgeSkill(GalacticSkill):
             target = args.get('ref') or args.get('selector') or f"({args.get('x')},{args.get('y')})"
             return f"[CHROME] Hovered: {target}"
         return f"[ERROR] Chrome hover: {result.get('error') or result.get('message') or 'unknown error'}"
+
+    async def _tool_chrome_drag(self, args):
+        if not self.ws_connection: return "[ERROR] Chrome extension not connected."
+        result = await self.send_command("drag", {
+            "start_x": args.get('start_x'), "start_y": args.get('start_y'),
+            "end_x": args.get('end_x'), "end_y": args.get('end_y'),
+        })
+        if result.get('status') == 'success':
+            return (f"[CHROME] Dragged from ({args.get('start_x')},{args.get('start_y')}) "
+                    f"to ({args.get('end_x')},{args.get('end_y')})")
+        return f"[ERROR] Chrome drag: {result.get('error') or result.get('message') or 'unknown'}"
 
     # ── Inbound message handler (called by web_deck) ─────────────────────
 
@@ -666,6 +687,13 @@ class ChromeBridgeSkill(GalacticSkill):
     async def zoom(self, region: list, tab_id=None):
         """Capture a cropped region of the active tab as a JPEG."""
         return await self.send_command("zoom", {"region": region, "tab_id": tab_id})
+
+    async def drag(self, start_x, start_y, end_x, end_y, tab_id=None):
+        """Drag from one coordinate to another."""
+        return await self.send_command("drag", {
+            "start_x": start_x, "start_y": start_y,
+            "end_x": end_x, "end_y": end_y, "tab_id": tab_id
+        })
 
     # ── Internal helpers ─────────────────────────────────────────────────
 
