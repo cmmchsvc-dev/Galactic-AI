@@ -94,6 +94,8 @@ social-media-promo.md
 !galactic-mobile/gradlew.bat
 *.html
 !index.html
+!privacy.html
+!terms.html
 *.jpg
 *.svg
 *.docx
