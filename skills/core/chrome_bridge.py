@@ -479,8 +479,12 @@ class ChromeBridgeSkill(GalacticSkill):
         if result.get("status") == "success":
             body = result.get("body", "")
             if result.get("base64Encoded"):
-                return f"[CHROME] Response body (base64): {body}"
-            return f"[CHROME] Response body:\n{body}"
+                return f"[CHROME] Response body (base64): {body[:8000]}"
+            MAX_BODY = 8000
+            truncated = len(body) > MAX_BODY
+            display = body[:MAX_BODY]
+            note = f"\n... [truncated, {len(body)} total chars]" if truncated else ""
+            return f"[CHROME] Response body:\n{display}{note}"
         return f"[ERROR] chrome_get_network_body: {result.get('error') or result.get('message') or 'unknown error'}"
 
     async def _tool_chrome_hover(self, args):
@@ -783,9 +787,12 @@ class ChromeBridgeSkill(GalacticSkill):
             "clear": clear,
         })
 
-    async def get_network_body(self, request_id: str) -> dict:
+    async def get_network_body(self, request_id: str, tab_id: str = None) -> dict:
         """Fetch the full response body for a captured network request by its CDP request ID."""
-        return await self.send_command("get_network_body", {"request_id": request_id})
+        args = {"request_id": request_id}
+        if tab_id:
+            args["tab_id"] = tab_id
+        return await self.send_command("get_network_body", args)
 
     async def hover(self, selector=None, ref=None, coordinate=None, x=None, y=None, tab_id=None):
         """Move the mouse cursor to an element without clicking."""
