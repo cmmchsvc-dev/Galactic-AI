@@ -558,7 +558,7 @@ async function cmdResizeWindow(args) {
       return { error: `Unknown preset '${args.preset}'. Use mobile, tablet, or desktop` };
     }
     [width, height] = PRESETS[args.preset];
-  } else if (args.width && args.height) {
+  } else if (args.width != null && args.height != null) {
     width = parseInt(args.width, 10);
     height = parseInt(args.height, 10);
   } else {
