@@ -193,6 +193,7 @@ async function handleCommand(id, command, args) {
     case 'right_click':   return await cmdRightClick(args);
     case 'triple_click':  return await cmdTripleClick(args);
     case 'upload_file':   return await cmdUploadFile(args);
+    case 'resize_window': return await cmdResizeWindow(args);
     default:              return { error: `Unknown command: ${command}` };
   }
 }
@@ -526,6 +527,64 @@ async function cmdUploadFile(args) {
       }
     }
     return { error: `File upload failed: ${err.message || String(err)}` };
+  }
+}
+
+/* ─── Debugger-based: Emulation (Viewport Resize) ──────────────────────── */
+
+async function ensureDebuggerEmulation(tabId) {
+  if (!debuggerAttached.has(tabId)) {
+    debuggerAttached.set(tabId, new Set());
+  }
+  const attachments = debuggerAttached.get(tabId);
+  if (attachments.has('emulation')) return;
+
+  if (attachments.size === 0) {
+    await chrome.debugger.attach({ tabId }, '1.3');
+  }
+  /* Emulation.setDeviceMetricsOverride does not require Emulation.enable */
+  attachments.add('emulation');
+}
+
+const PRESETS = { mobile: [375, 812], tablet: [768, 1024], desktop: [1280, 800] };
+
+async function cmdResizeWindow(args) {
+  const tabId = await getTargetTabId(args);
+  if (!tabId) return { error: 'No active tab' };
+
+  let width, height;
+  if (args.preset) {
+    if (!PRESETS[args.preset]) {
+      return { error: `Unknown preset '${args.preset}'. Use mobile, tablet, or desktop` };
+    }
+    [width, height] = PRESETS[args.preset];
+  } else if (args.width && args.height) {
+    width = parseInt(args.width, 10);
+    height = parseInt(args.height, 10);
+  } else {
+    return { error: 'Provide preset (mobile/tablet/desktop) or width+height' };
+  }
+
+  if (isNaN(width) || isNaN(height) || width <= 0 || height <= 0 || width > 8192 || height > 8192) {
+    return { error: `Invalid dimensions: width=${width}, height=${height}. Must be positive integers <= 8192` };
+  }
+
+  try {
+    await ensureDebuggerEmulation(tabId);
+  } catch (err) {
+    return { error: `Debugger attach failed: ${err.message || String(err)}` };
+  }
+
+  try {
+    await chrome.debugger.sendCommand({ tabId }, 'Emulation.setDeviceMetricsOverride', {
+      width,
+      height,
+      deviceScaleFactor: 0,
+      mobile: false
+    });
+    return { status: 'success', width, height };
+  } catch (err) {
+    return { error: `Emulation.setDeviceMetricsOverride failed: ${err.message || String(err)}` };
   }
 }
 
