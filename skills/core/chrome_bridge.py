@@ -210,6 +210,26 @@ class ChromeBridgeSkill(GalacticSkill):
                 }, "required": ["start_x", "start_y", "end_x", "end_y"]},
                 "fn": self._tool_chrome_drag
             },
+            "chrome_right_click": {
+                "description": "Right-click at a ref, selector, or coordinates in Chrome to open context menus.",
+                "parameters": {"type": "object", "properties": {
+                    "ref": {"type": "string", "description": "Element ref ID from chrome_read_page"},
+                    "selector": {"type": "string", "description": "CSS selector"},
+                    "x": {"type": "number", "description": "X coordinate"},
+                    "y": {"type": "number", "description": "Y coordinate"},
+                }},
+                "fn": self._tool_chrome_right_click
+            },
+            "chrome_triple_click": {
+                "description": "Triple-click an element in Chrome to select all its text content. Use before typing to replace existing text.",
+                "parameters": {"type": "object", "properties": {
+                    "ref": {"type": "string", "description": "Element ref ID from chrome_read_page"},
+                    "selector": {"type": "string", "description": "CSS selector"},
+                    "x": {"type": "number", "description": "X coordinate"},
+                    "y": {"type": "number", "description": "Y coordinate"},
+                }},
+                "fn": self._tool_chrome_triple_click
+            },
         }
 
     # ── Tool handlers ────────────────────────────────────────────────────
@@ -440,6 +460,28 @@ class ChromeBridgeSkill(GalacticSkill):
             return (f"[CHROME] Dragged from ({args.get('start_x')},{args.get('start_y')}) "
                     f"to ({args.get('end_x')},{args.get('end_y')})")
         return f"[ERROR] Chrome drag: {result.get('error') or result.get('message') or 'unknown'}"
+
+    async def _tool_chrome_right_click(self, args):
+        if not self.ws_connection: return "[ERROR] Chrome extension not connected."
+        result = await self.send_command("right_click", {
+            "ref": args.get('ref'), "selector": args.get('selector'),
+            "x": args.get('x'), "y": args.get('y'),
+        })
+        if result.get('status') == 'success':
+            target = args.get('ref') or args.get('selector') or f"({args.get('x')},{args.get('y')})"
+            return f"[CHROME] Right-clicked: {target}"
+        return f"[ERROR] Chrome right_click: {result.get('error') or result.get('message') or 'unknown'}"
+
+    async def _tool_chrome_triple_click(self, args):
+        if not self.ws_connection: return "[ERROR] Chrome extension not connected."
+        result = await self.send_command("triple_click", {
+            "ref": args.get('ref'), "selector": args.get('selector'),
+            "x": args.get('x'), "y": args.get('y'),
+        })
+        if result.get('status') == 'success':
+            target = args.get('ref') or args.get('selector') or f"({args.get('x')},{args.get('y')})"
+            return f"[CHROME] Triple-clicked: {target}"
+        return f"[ERROR] Chrome triple_click: {result.get('error') or result.get('message') or 'unknown'}"
 
     # ── Inbound message handler (called by web_deck) ─────────────────────
 
