@@ -101,7 +101,7 @@ class GalacticCore:
                         migrated = True
 
         # Ensure system section has newer keys
-        sys_defaults = {'update_check_interval': 21600, 'version': '1.1.0'}
+        sys_defaults = {'update_check_interval': 21600, 'version': '1.1.1'}
         if 'system' not in config:
             config['system'] = {'name': 'Galactic AI', 'port': 9999}
             config['system'].update(sys_defaults)
