@@ -699,6 +699,7 @@ async function cmdReadNetwork(args) {
 async function cmdGetNetworkBody(args) {
   if (!args?.request_id) return { error: 'request_id is required' };
   const tabId = await getTargetTabId(args);
+  if (!tabId) return { error: 'No active tab' };
   try {
     await ensureDebuggerNetwork(tabId);
     const result = await chrome.debugger.sendCommand(
@@ -781,6 +782,7 @@ chrome.debugger.onEvent.addListener((source, method, params) => {
       } else {
         /* No matching request found; create a standalone entry */
         buffer.push({
+          _requestId: params.requestId,
           method: 'GET',
           url: params.response.url || '',
           status: params.response.status || 0,
