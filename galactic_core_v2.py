@@ -272,6 +272,15 @@ class GalacticCore:
             if skill not in self.plugins:
                 self.plugins.append(skill)
 
+        # Re-check for browser skill now that skills are loaded
+        if not getattr(self, 'browser', None):
+            browser_skill = next(
+                (s for s in self.skills if getattr(s, 'skill_name', '') == 'browser_pro'),
+                None
+            )
+            if browser_skill:
+                self.browser = browser_skill
+
     async def imprint_workspace(self):
         """Initial memory imprint of key personality files."""
         await self.log("Starting Workspace Memory Imprint...", priority=2)
