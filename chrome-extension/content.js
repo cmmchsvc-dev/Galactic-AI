@@ -721,17 +721,25 @@
     if (!el) return { error: 'Element not found' };
 
     el.focus();
+    // Select all text: use execCommand for contenteditable, .select() for inputs
+    if (el.contentEditable === 'true') {
+      document.execCommand('selectAll', false, null);
+    } else if (typeof el.select === 'function') {
+      el.select();
+    }
+    // Dispatch triple-click events
     for (let i = 1; i <= 3; i++) {
       el.dispatchEvent(new MouseEvent('click', { detail: i, bubbles: true, cancelable: true }));
     }
-    // Also select all text in value-based inputs
-    if (typeof el.select === 'function') el.select();
     return { status: 'success' };
   }
 
   /* ─── Drag ──────────────────────────────────────────────────────────── */
 
   function performDrag(startX, startY, endX, endY) {
+    if (startX < 0 || startY < 0 || startX > window.innerWidth || startY > window.innerHeight) {
+      return { success: false, error: `Start coordinates (${startX}, ${startY}) are off-screen. Viewport: ${window.innerWidth}x${window.innerHeight}` };
+    }
     const startEl = document.elementFromPoint(startX, startY);
     if (!startEl) return { success: false, error: 'No element at start coordinates' };
 
