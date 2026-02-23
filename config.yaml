@@ -162,3 +162,18 @@ whatsapp:
   phone_number_id: ''
   verify_token: ''
   webhook_secret: ''
+social_media:
+  twitter:
+    consumer_key: ''
+    consumer_secret: ''
+    access_token: ''
+    access_token_secret: ''
+  reddit:
+    client_id: ''
+    client_secret: ''
+    username: ''
+    password: ''
+    user_agent: GalacticAI/1.1.0
+chrome_bridge:
+  enabled: true
+  timeout: 30

@@ -82,6 +82,11 @@ class GalacticCore:
                          'fallback_cooldowns': {'RATE_LIMIT': 60, 'SERVER_ERROR': 30, 'TIMEOUT': 10, 'AUTH_ERROR': 86400, 'QUOTA_EXHAUSTED': 3600}},
             'tool_timeouts': {'exec_shell': 120, 'execute_python': 60, 'generate_image': 180},
             'aliases':  {},
+            'social_media': {
+                'twitter': {'consumer_key': '', 'consumer_secret': '', 'access_token': '', 'access_token_secret': ''},
+                'reddit':  {'client_id': '', 'client_secret': '', 'username': '', 'password': '', 'user_agent': 'GalacticAI/1.1.0'},
+            },
+            'chrome_bridge': {'enabled': True, 'timeout': 30},
         }
         for section, section_defaults in defaults.items():
             if section not in config:
@@ -160,6 +165,8 @@ class GalacticCore:
             ('plugins.browser_executor_pro','BrowserExecutorPro'),
             ('plugins.subagent_manager',    'SubAgentPlugin'),
             ('plugins.desktop_tool',        'DesktopTool'),
+            ('plugins.chrome_bridge',       'ChromeBridge'),
+            ('plugins.social_media',        'SocialMediaPlugin'),
         ]
         loaded_plugin_names = []
         for module_path, class_name in _BUILTIN_PLUGINS:
