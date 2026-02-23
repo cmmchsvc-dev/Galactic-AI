@@ -684,6 +684,37 @@
     return { status: 'success' };
   }
 
+  /* ─── Drag ──────────────────────────────────────────────────────────── */
+
+  function performDrag(startX, startY, endX, endY) {
+    const startEl = document.elementFromPoint(startX, startY);
+    if (!startEl) return { success: false, error: 'No element at start coordinates' };
+
+    function mouseEvt(type, x, y, target, buttons) {
+      target.dispatchEvent(new MouseEvent(type, {
+        clientX: x, clientY: y, screenX: x, screenY: y,
+        bubbles: true, cancelable: true, view: window,
+        buttons: buttons !== undefined ? buttons : (type === 'mouseup' ? 0 : 1),
+        button: type === 'contextmenu' ? 2 : 0
+      }));
+    }
+
+    mouseEvt('mousedown', startX, startY, startEl, 1);
+
+    const steps = 10;
+    for (let i = 1; i <= steps; i++) {
+      const x = startX + (endX - startX) * i / steps;
+      const y = startY + (endY - startY) * i / steps;
+      const el = document.elementFromPoint(x, y) || startEl;
+      mouseEvt('mousemove', x, y, el, 1);
+    }
+
+    const endEl = document.elementFromPoint(endX, endY) || startEl;
+    mouseEvt('mouseup', endX, endY, endEl, 0);
+
+    return { success: true };
+  }
+
   /* ─── Get Page Text ─────────────────────────────────────────────────── */
 
   function getPageText() {
@@ -703,6 +734,7 @@
       case 'form_input':  return performFormInput(args);
       case 'key_press':   return performKeyPress(args);
       case 'hover':       return performHover(args);
+      case 'drag':        return performDrag(args?.start_x, args?.start_y, args?.end_x, args?.end_y);
       case 'get_text':    return getPageText();
       default:            return { error: `Unknown content command: ${command}` };
     }
