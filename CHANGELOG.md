@@ -4,6 +4,49 @@ All notable changes to Galactic AI are documented here.
 
 ---
 
+## [v1.0.9] — 2026-02-22
+
+### Added
+- **🎬 Video Generation (Google Veo)** — Text-to-video and image-to-video via Google Veo API. Two new tools: `generate_video` (text prompt → MP4) and `generate_video_from_image` (still image → animated MP4). Supports 4s/6s/8s duration, 720p/1080p/4K resolution, 16:9 and 9:16 aspect ratios, negative prompts. Async polling with status updates during generation
+- **🎥 Inline Video Player** — Generated videos appear inline in the Control Deck chat as HTML5 `<video>` elements with controls, autoplay, muted loop, and a download link. New `/api/video/{filename}` serving endpoint
+- **📦 New NVIDIA Models** — Added Nemotron Super 49B (`nvidia/llama-3.3-nemotron-super-49b-v1.5`), Nemotron Nano 9B v2 (`nvidia/nvidia-nemotron-nano-9b-v2`), and Phi-3 Medium (`microsoft/phi-3-medium-4k-instruct`) to the Models page with model cards
+- **🧠 NVIDIA Thinking Model Params** — Added per-model reasoning parameters for DeepSeek V3.2 and Nemotron Nano 9B v2 to the `_NVIDIA_THINKING_MODELS` configuration
+- **🎬 Multi-Provider Video Config** — New `video:` config section with Google Veo day-one support and scaffolding for Runway Gen-4, Kling, and Luma Dream Machine
+
+### Fixed
+- **💬 Chat/Logs/Thinking Scroll** — All three tabs now use conventional bottom-up chat ordering (newest content at bottom, like Facebook Messenger). Root cause: stream-bubble was the first child and `insertBefore(sb.nextSibling)` placed new messages at the top. Fixed by moving stream-bubble to be the last child and inserting before it. Also fixed log trim (now removes oldest, not newest) and filterLogs (removed reverse)
+- **🔧 NVIDIA Streaming Hang** — Some NVIDIA models (Qwen 3.5 397B) accept streaming requests but never send SSE data. Added `_NVIDIA_NO_STREAM` set to force non-streaming, plus automatic streaming-to-non-streaming fallback for all NVIDIA models
+- **⏳ NVIDIA Cold-Start Retry** — Large NVIDIA models return HTTP 504 after ~5 minutes when cold-loading onto GPUs. Added auto-retry (up to 2 attempts) on 502/503/504 with 10s delay and "⏳ NVIDIA model loading" status messages
+- **📡 NVIDIA Granular Timeouts** — Changed from single 300s timeout to 30s connect + 600s read for large NVIDIA models that take several minutes to respond
+- **🔗 HuggingFace URL Migration** — Updated from deprecated `api-inference.huggingface.co/v1` to `router.huggingface.co/v1` across gateway, web deck, and config
+- **📄 Non-Streaming JSON Parsing** — Hardened non-streaming response path with HTTP status check before parsing and safe handling of empty response bodies
+- **⚡ Bulletproof Shutdown** — Added 8-second hard-exit timer that prevents infinite hang on shutdown; proper shutdown_event chain across all subsystems
+
+---
+
+## [v1.0.8] — 2026-02-22
+
+### Fixed
+- **🔧 Model Persistence — Definitive Fix** — Complete architectural overhaul of config save system. Root cause: `_save_config()` was a destructive full-file overwrite. Fix: safe read-modify-write pattern, defensive model-key writeback on every save, unified config paths via `self.core.config_path`, consolidated triple-save for toggle settings, startup diagnostics with `[config]`/`[DEFAULT]` source tags
+- **🎨 Imagen 4 Safety Filter** — Fixed `400 INVALID_ARGUMENT` by changing `safety_filter_level` from `BLOCK_ONLY_HIGH` to `BLOCK_LOW_AND_ABOVE`
+- **🖼️ Inline Image Display** — Added diagnostic logging to image delivery pipeline, fixed `_rawText` accumulation bug between messages
+- **💾 Config Save Path Fixes** — `handle_save_key()`, `handle_setup()`, `handle_login()`, and `model_manager._save_config()` all now use safe read-modify-write pattern with defensive model writeback
+
+---
+
+## [v1.0.7] — 2026-02-21
+
+### Added
+- **🔽 Shutdown/Restart Buttons** — Control Deck now has shutdown and restart buttons for easy server management
+- **🎨 Imagen 4 SDK Migration** — Migrated from legacy Gemini image API to the new `google-genai` SDK for Imagen 4 generation
+
+### Fixed
+- **📜 Scroll Ordering** — Initial scroll ordering implementation (newest-first, later corrected in v1.0.9 to conventional bottom-up)
+- **🎨 SD3.5 NVIDIA Fix** — Stable Diffusion 3.5 image generation restored on NVIDIA NIM
+- **🤖 SubAgent Overhaul** — Reworked SubAgentManager for reliability and proper task tracking
+
+---
+
 ## [v1.0.6] — 2026-02-21
 
 ### Fixed

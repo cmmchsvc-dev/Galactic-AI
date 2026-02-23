@@ -1,6 +1,6 @@
 # Galactic AI — Feature Reference
 
-Complete feature reference for Galactic AI Automation Suite **v1.0.3**.
+Complete feature reference for Galactic AI Automation Suite **v1.0.9**.
 
 ---
 
@@ -20,6 +20,8 @@ Every tool execution is wrapped in a configurable `asyncio.wait_for` timeout (de
 - Signal handlers for SIGINT and SIGTERM on all platforms
 - All background tasks cancelled and awaited with a 5-second timeout
 - Browser closes with a 3-second timeout
+- Bulletproof 8-second hard-exit timer prevents infinite hang on shutdown
+- Proper shutdown event chain across all subsystems
 - `os._exit(0)` force-exit fallback for edge cases that refuse to terminate
 - Relay message queue uses a 2-second poll timeout so it wakes up to check the shutdown flag
 
@@ -87,6 +89,13 @@ If the primary provider fails, the system falls back to a secondary provider aut
 
 ### Streaming Responses
 Token-by-token streaming from all providers, broadcast to the web UI via WebSocket in real-time.
+
+### NVIDIA Provider Hardening
+- **Broken SSE workaround** — models with non-functional streaming endpoints (e.g., Qwen 3.5 397B) are automatically routed to non-streaming mode
+- **Cold-start retry** — large models that return HTTP 502/503/504 during cold-start are automatically retried up to 2 times with status logging
+- **Streaming fallback** — if NVIDIA streaming returns empty data, the system automatically retries with non-streaming
+- **Granular timeouts** — 30s connect, 600s read for large NVIDIA models
+- **Thinking model params** — per-model extra body parameters for reasoning models (DeepSeek V3.2, Nemotron Nano 9B v2, Qwen 3.5, GLM5, Kimi K2.5)
 
 ---
 
@@ -198,6 +207,12 @@ system:
 | `generate_image_sd35` | Generate with Stable Diffusion 3.5 Large via NVIDIA NIM |
 | `generate_image_gemini` | Generate with Google Imagen 4 via Gemini API |
 | `generate_image_gemini_ultra` | Generate with Google Imagen 4 Ultra via Gemini API |
+
+### Video Generation (2 tools)
+| Tool | Description |
+|---|---|
+| `generate_video` | Generate a video clip from a text prompt using Google Veo (4s/6s/8s, up to 4K) |
+| `generate_video_from_image` | Animate a still image into a video clip using Google Veo |
 
 ### Memory (2 tools)
 | Tool | Description |
@@ -381,6 +396,45 @@ Galactic AI supports six image generation backends. The active image model is se
 
 ---
 
+## Video Generation
+
+Generate AI video clips directly from the chat interface using Google Veo.
+
+### Text-to-Video
+Describe a scene and Veo generates a short video clip. Configurable duration (4s, 6s, 8s), resolution (720p, 1080p, 4K), aspect ratio (16:9, 9:16), and negative prompts.
+
+### Image-to-Video
+Animate any still image (from Imagen, FLUX, SD3.5, or any file) into motion video. The AI generates the image first, then animates it — a complete creative pipeline.
+
+### Inline Playback
+Videos appear inline in the Control Deck chat as HTML5 `<video>` elements with controls, autoplay, muted loop, and a download link for saving the MP4 locally.
+
+### Multi-Provider Architecture
+Google Veo is the day-one provider. The `video:` config section supports Runway Gen-4, Kling, and Luma Dream Machine as future backends.
+
+### Models
+| Model | API ID | Features |
+|---|---|---|
+| Veo 3.1 (default) | `veo-3.1-generate-preview` | Latest, highest quality |
+| Veo 3 | `veo-3.0-generate-preview` | High quality |
+| Veo 2 | `veo-2-generate-preview` | Stable, fast |
+
+### Configuration
+```yaml
+video:
+  provider: google
+  google:
+    model: veo-3.1
+    default_duration: 8
+    default_resolution: 1080p
+    default_aspect_ratio: '16:9'
+tool_timeouts:
+  generate_video: 300
+  generate_video_from_image: 300
+```
+
+---
+
 ## Voice I/O (Telegram)
 
 ### Speech-to-Text (Whisper)
@@ -409,7 +463,7 @@ When a user sends a voice message via Telegram, the AI automatically:
 ## Web Control Deck
 
 ### Tabs
-- **Chat** — Full conversational interface with tool output; 🎤 voice input mic button (click to record, transcribed via Whisper, inserted into chat); timestamps on every message; chat history persists across page refreshes (`logs/chat_history.jsonl`)
+- **Chat** — Full conversational interface with tool output; inline image and video players; 🎤 voice input mic button (click to record, transcribed via Whisper, inserted into chat); timestamps on every message; conventional bottom-up scroll (newest at bottom); chat history persists across page refreshes (`logs/chat_history.jsonl`)
 - **Thinking** — Real-time agent trace viewer; watch the ReAct loop think and act step by step; persists across page refreshes via `/api/traces` backend buffer (last 500 entries)
 - **Status** — Live telemetry: provider, model, token usage, uptime, fallback chain status, plugin states, version badge; 30+ data fields across 6 sections
 - **Models** — Browse and switch all available models, ordered best-to-worst with tier emoji indicators; per-model override dropdowns
@@ -418,7 +472,7 @@ When a user sends a voice message via Telegram, the AI automatically:
 - **Memory** — Read and edit MEMORY.md, IDENTITY.md, SOUL.md, USER.md, TOOLS.md, VAULT.md in-browser; auto-creates missing files with starter templates
 - **⚙️ Settings** — Primary/fallback model dropdowns, auto-fallback/smart-routing/streaming toggles, TTS voice selector, update check interval, speak timeout, max ReAct turns — all saved to config.yaml
 - **Ollama** — Health status, discovered models, context window sizes
-- **Logs** — Real-time system log stream with tool call highlighting (cyan), tool result lines (indented/italic), 500-line restore
+- **Logs** — Real-time system log stream with tool call highlighting (cyan), tool result lines (indented/italic), chronological order (newest at bottom), 500-line restore
 
 ### Real-Time Updates
 Persistent WebSocket connection for live status, chat, Ollama health, logs, and streaming responses. No manual refresh needed.
@@ -618,6 +672,12 @@ Set `web.remote_access: true` in `config.yaml`. On next startup, Galactic AI:
 | `tool_timeouts.exec_shell` | Shell command timeout in seconds (default: 120) |
 | `tool_timeouts.execute_python` | Python execution timeout in seconds (default: 60) |
 | `tool_timeouts.generate_image` | Image generation timeout in seconds (default: 180) |
+| `tool_timeouts.generate_video` | Video generation timeout in seconds (default: 300) |
+| `video.provider` | Video generation provider (default: google) |
+| `video.google.model` | Google Veo model (veo-2, veo-3, veo-3.1) |
+| `video.google.default_duration` | Default video duration in seconds (4, 6, or 8) |
+| `video.google.default_resolution` | Default resolution (720p, 1080p, 4k) |
+| `video.google.default_aspect_ratio` | Default aspect ratio (16:9 or 9:16) |
 | `models.fallback_cooldowns.*` | Per-error-type cooldown durations for provider fallback |
 
 ---
@@ -634,4 +694,4 @@ Set `web.remote_access: true` in `config.yaml`. On next startup, Galactic AI:
 
 ---
 
-**v1.0.3** — Galactic AI Automation Suite
+**v1.0.9** — Galactic AI Automation Suite

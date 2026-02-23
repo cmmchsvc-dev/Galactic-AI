@@ -2,7 +2,7 @@
 
 **Sovereign. Universal. Fast.**
 
-A powerful, local-first AI automation platform with 100+ built-in tools, true persistent memory, voice I/O, browser automation, 14 AI providers, multi-platform messaging bridges, and a real-time web Control Deck. **v1.0.6**
+A powerful, local-first AI automation platform with 100+ built-in tools, true persistent memory, voice I/O, video generation, browser automation, 14 AI providers, multi-platform messaging bridges, and a real-time web Control Deck. **v1.0.9**
 
 Run fully local with Ollama (no API keys, no cloud, no tracking), or connect to any of 14 cloud providers. Your data stays yours.
 
@@ -21,7 +21,7 @@ This is fundamentally different from session memory or expensive vector search o
 Switch between Google Gemini, Claude, GPT, Grok, Groq, Mistral, DeepSeek, NVIDIA, and more — or run completely offline with Ollama. Change providers mid-conversation. Set automatic fallback so the AI never goes down.
 
 ### 100+ Tools, Real Agent Behavior
-The AI doesn't just answer questions — it acts. It browses the web, reads and writes files, runs shell commands, controls a full Chromium browser, generates images, manages schedules, sends messages across platforms, and more. It chains tool calls in a ReAct loop until the task is done.
+The AI doesn't just answer questions — it acts. It browses the web, reads and writes files, runs shell commands, controls a full Chromium browser, generates images and videos, manages schedules, sends messages across platforms, and more. It chains tool calls in a ReAct loop until the task is done.
 
 ### Voice I/O + Multi-Platform Messaging
 Send a voice message to your Telegram bot — the AI transcribes it with Whisper, thinks, responds with a voice message back. Or message from Discord, WhatsApp, or Gmail. Control everything from wherever you are.
@@ -121,7 +121,7 @@ The Control Deck at **http://127.0.0.1:17789** gives you full control:
 
 | Tab | What's There |
 |---|---|
-| **Chat** | Talk to your AI with full tool support; 🎤 voice input mic button; timestamps on every message; chat history survives page refreshes |
+| **Chat** | Talk to your AI with full tool support; inline image and video players; 🎤 voice input mic button; timestamps on every message; chat history survives page refreshes |
 | **Thinking** | Real-time agent trace — watch the ReAct loop think and act step by step; persists across page refreshes |
 | **Status** | Live provider, model, token usage, uptime, fallback chain, and plugin telemetry |
 | **Models** | Browse and switch all 100+ models, ordered best-to-worst with tier indicators |
@@ -259,6 +259,21 @@ Generate images directly in chat or from Telegram:
 | Stable Diffusion 3.5 Large | NVIDIA / Stability AI | Versatile |
 
 In Telegram: `/model` → Image Models to select your preferred generation backend.
+
+---
+
+## Video Generation
+
+Generate AI video clips directly in chat using Google Veo:
+
+| Mode | Description |
+|---|---|
+| **Text-to-Video** | Describe a scene and Veo generates a video clip (4s, 6s, or 8s) |
+| **Image-to-Video** | Animate a still image (from Imagen, FLUX, or SD3.5) into motion video |
+
+Videos play inline in the Control Deck chat with an HTML5 player (controls, autoplay, loop) and a download link. Configurable resolution (720p, 1080p, 4K), aspect ratio (16:9, 9:16), and negative prompts.
+
+Multi-provider architecture — Google Veo is the day-one provider, with Runway Gen-4, Kling, and Luma Dream Machine planned.
 
 ---
 
@@ -435,6 +450,9 @@ MIT License — see LICENSE file.
 
 | Version | Highlights |
 |---|---|
+| **v1.0.9** | 🎬 Video generation via Google Veo (text-to-video + image-to-video), inline HTML5 player; NVIDIA provider hardening (streaming fixes, cold-start retry, broken SSE workaround); new models (Nemotron Super 49B, Nano 9B, Phi-3 Medium, DeepSeek V3.2); HuggingFace URL migration; conventional bottom-up chat scroll; bulletproof shutdown |
+| **v1.0.8** | 🔧 Model persistence definitive fix — safe read-modify-write config saves, defensive model-key writeback; Imagen 4 safety filter fix; inline image display diagnostics |
+| **v1.0.7** | 🔄 Newest-first scroll, shutdown/restart buttons, Imagen 4 SDK migration to google-genai, SD3.5 NVIDIA fix, SubAgent overhaul |
 | **v1.0.6** | 🧠 VAULT/personality fix — workspace path now resolves correctly after install migration; smart routing no longer misclassifies file uploads as coding tasks; Telegram timeout respects global speak_timeout ceiling |
 | **v1.0.5** | 🔌 Agent loop resilience — circuit breaker (3 consecutive failures stops tool spam), progressive backpressure (50%/80% turn-budget nudges), tool repetition guard, model lock during active tasks, smart routing auto-restore |
 | **v1.0.4** | 🔧 Model persistence fix — selected primary model now survives restarts (both the Models tab quick-switch and the Settings tab now persist to config.yaml) |
