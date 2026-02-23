@@ -176,12 +176,23 @@ class ChromeBridgeSkill(GalacticSkill):
                 "fn": self._tool_chrome_read_console
             },
             "chrome_read_network": {
-                "description": "Read network requests made by the current page in the user's Chrome browser.",
+                "description": "Read network requests made by the current page in the user's Chrome browser. Each entry includes a request_id field that can be passed to chrome_get_network_body to retrieve the full response body.",
                 "parameters": {"type": "object", "properties": {
                     "url_pattern": {"type": "string", "description": "Filter by URL substring"},
                     "clear": {"type": "boolean", "description": "Clear requests after reading"},
                 }},
                 "fn": self._tool_chrome_read_network
+            },
+            "chrome_get_network_body": {
+                "description": "Get the full response body for a captured network request. Use request_id from chrome_read_network output.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "request_id": {"type": "string", "description": "Request ID from chrome_read_network output (e.g. '12345.678')"}
+                    },
+                    "required": ["request_id"]
+                },
+                "fn": self._tool_chrome_get_network_body
             },
             "chrome_hover": {
                 "description": "Hover over an element in the user's Chrome browser to trigger hover states, tooltips, or menus.",
@@ -453,9 +464,24 @@ class ChromeBridgeSkill(GalacticSkill):
                 return "[CHROME] No network requests captured."
             lines = [f"[CHROME] {len(requests_list)} network request(s):"]
             for r in requests_list[:50]:
-                lines.append(f"  {r.get('method', '?')} {r.get('status', '?')} {r.get('url', '')[:120]}")
+                rid = r.get('request_id') or 'n/a'
+                lines.append(f"  [{rid}] {r.get('method', '?')} {r.get('status', '?')} {r.get('url', '')[:120]}")
             return "\n".join(lines)
         return f"[ERROR] Chrome read_network: {result.get('error') or result.get('message') or 'unknown error'}"
+
+    async def _tool_chrome_get_network_body(self, args: dict) -> str:
+        if not self.ws_connection:
+            return "[ERROR] Chrome extension not connected."
+        request_id = args.get("request_id", "")
+        if not request_id:
+            return "[ERROR] chrome_get_network_body: request_id is required"
+        result = await self.send_command("get_network_body", {"request_id": request_id})
+        if result.get("status") == "success":
+            body = result.get("body", "")
+            if result.get("base64Encoded"):
+                return f"[CHROME] Response body (base64): {body}"
+            return f"[CHROME] Response body:\n{body}"
+        return f"[ERROR] chrome_get_network_body: {result.get('error') or result.get('message') or 'unknown error'}"
 
     async def _tool_chrome_hover(self, args):
         if not self.ws_connection: return "[ERROR] Chrome extension not connected."
@@ -756,6 +782,10 @@ class ChromeBridgeSkill(GalacticSkill):
             "url_pattern": url_pattern,
             "clear": clear,
         })
+
+    async def get_network_body(self, request_id: str) -> dict:
+        """Fetch the full response body for a captured network request by its CDP request ID."""
+        return await self.send_command("get_network_body", {"request_id": request_id})
 
     async def hover(self, selector=None, ref=None, coordinate=None, x=None, y=None, tab_id=None):
         """Move the mouse cursor to an element without clicking."""
