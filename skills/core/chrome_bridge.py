@@ -211,7 +211,7 @@ class ChromeBridgeSkill(GalacticSkill):
                 "fn": self._tool_chrome_drag
             },
             "chrome_right_click": {
-                "description": "Right-click at a ref, selector, or coordinates in Chrome to open context menus.",
+                "description": "Right-click at a ref, selector, or coordinates in Chrome. Triggers JavaScript-based context menus (custom dropdowns, right-click menus on apps like Reddit, Notion). Note: cannot open the native browser context menu due to browser security restrictions.",
                 "parameters": {"type": "object", "properties": {
                     "ref": {"type": "string", "description": "Element ref ID from chrome_read_page"},
                     "selector": {"type": "string", "description": "CSS selector"},

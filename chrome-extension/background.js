@@ -381,8 +381,8 @@ async function cmdTripleClick(args) {
 
 async function cmdZoom(args) {
   const region = args?.region;
-  if (!region || region.length !== 4) {
-    return { status: 'error', error: 'region must be [x0, y0, x1, y1]' };
+  if (!region || region.length !== 4 || !region.every(v => typeof v === 'number' && isFinite(v))) {
+    return { status: 'error', error: 'region must be [x0, y0, x1, y1] with finite numeric values' };
   }
 
   const tabId = await getTargetTabId(args);
@@ -405,6 +405,10 @@ async function cmdZoom(args) {
           const [x0, y0, x1, y1] = region;
           const width = x1 - x0;
           const height = y1 - y0;
+          if (width <= 0 || height <= 0) {
+            resolve({ status: 'error', error: `Invalid region dimensions: width=${width}, height=${height}. Ensure x1 > x0 and y1 > y0.` });
+            return;
+          }
           const resp = await fetch(fullDataUrl);
           const blob = await resp.blob();
           const bitmap = await createImageBitmap(blob);
@@ -413,9 +417,15 @@ async function cmdZoom(args) {
           ctx.drawImage(bitmap, x0, y0, width, height, 0, 0, width, height);
           const croppedBlob = await canvas.convertToBlob({ type: 'image/jpeg', quality: 0.85 });
           const reader = new FileReader();
+          reader.onerror = () => resolve({ status: 'error', error: 'FileReader error: ' + (reader.error?.name || 'unknown') });
+          reader.onabort = () => resolve({ status: 'error', error: 'FileReader aborted' });
           reader.onloadend = () => {
-            const b64 = reader.result.split(',')[1];
-            resolve({ status: 'success', image_b64: b64, region, width, height });
+            if (reader.result && reader.result.includes(',')) {
+              const b64 = reader.result.split(',')[1];
+              resolve({ status: 'success', image_b64: b64, region, width, height });
+            } else {
+              resolve({ status: 'error', error: 'FileReader produced invalid result' });
+            }
           };
           reader.readAsDataURL(croppedBlob);
         } catch (err) {
