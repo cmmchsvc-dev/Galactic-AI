@@ -22,7 +22,6 @@ OpenRouter is already fully integrated as an OpenAI-compatible provider:
 ### 1. Config — Add API Key
 Add `providers.openrouter.apiKey` to the running installation config at `F:\Galactic AI\config.yaml`.
 
-
 Also add a placeholder to the template config at `F:\Galactic AI Public Release\config.yaml`.
 
 ### 2. web_deck.py — Expand Model Cards (6 → 26)

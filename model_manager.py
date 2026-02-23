@@ -35,7 +35,7 @@ PROVIDER_TIERS = {
     'mistral':     (2, 'mistral-large-latest'),
     'deepseek':    (2, 'deepseek-chat'),
     'cerebras':    (3, 'llama3.1-70b'),
-    'openrouter':  (3, 'anthropic/claude-sonnet-4'),
+    'openrouter':  (3, 'anthropic/claude-sonnet-4.6'),
     'huggingface': (3, 'Qwen/Qwen3-235B-A22B'),
     'kimi':        (3, 'moonshotai/kimi-k2.5'),
     'zai':         (3, 'z-ai/glm5'),
