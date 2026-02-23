@@ -86,6 +86,17 @@ class SocialMediaSkill(GalacticSkill):
                 }, "required": ["thing_id", "body"]},
                 "fn": self._tool_reply_reddit
             },
+            "post_reddit_browser": {
+                "description": "Post to a subreddit using browser automation (no API key needed). Requires the Playwright browser to be started and logged into Reddit. Use absolute paths for media_path.",
+                "parameters": {"type": "object", "properties": {
+                    "subreddit": {"type": "string", "description": "Subreddit name without r/ prefix (e.g. 'LocalLLaMA')"},
+                    "title": {"type": "string", "description": "Post title"},
+                    "body": {"type": "string", "description": "Post body text (for text posts). Use Markdown."},
+                    "url": {"type": "string", "description": "Link URL (for link posts — mutually exclusive with body)"},
+                    "media_path": {"type": "string", "description": "Absolute path to image or video to attach (optional, for image posts)"},
+                }, "required": ["subreddit", "title"]},
+                "fn": self._tool_post_reddit_browser
+            },
             "post_tweet_browser": {
                 "description": "Post a single tweet on X.com using browser automation (no API key needed). Requires the Playwright browser to be started first.",
                 "parameters": {"type": "object", "properties": {
@@ -172,6 +183,18 @@ class SocialMediaSkill(GalacticSkill):
         if result.get('status') == 'success':
             return f"[REDDIT] Reply posted! ID: {result.get('comment_id', '?')}"
         return f"[ERROR] reply_reddit: {result.get('message', 'unknown error')}"
+
+    async def _tool_post_reddit_browser(self, args):
+        result = await self.post_reddit_browser(
+            subreddit=args.get('subreddit', ''),
+            title=args.get('title', ''),
+            body=args.get('body'),
+            url=args.get('url'),
+            media_path=args.get('media_path'),
+        )
+        if result.get('status') == 'success':
+            return f"[REDDIT] Post submitted via browser! URL: {result.get('url', '?')}"
+        return f"[ERROR] post_reddit_browser: {result.get('message', 'unknown error')}"
 
     async def _tool_post_tweet_browser(self, args):
         result = await self.post_tweet_browser(
@@ -317,6 +340,121 @@ class SocialMediaSkill(GalacticSkill):
             return {"status": "error", "message": str(e)}
 
     # ── Browser-based posting (no API key needed) ─────────────────────────
+
+    async def post_reddit_browser(self, subreddit, title, body=None, url=None, media_path=None):
+        """Submit a Reddit post via Playwright browser automation.
+
+        Does not require Reddit API credentials — uses the logged-in browser
+        session. Requires BrowserProSkill to be started (browser must be open
+        and already logged into Reddit).
+
+        Args:
+            subreddit:  Subreddit name without r/ prefix.
+            title:      Post title.
+            body:       Self-text body (Markdown). Mutually exclusive with url/media_path.
+            url:        Link URL for link posts. Mutually exclusive with body.
+            media_path: Absolute local path to an image/video for image posts.
+
+        Returns:
+            {"status": "success", "url": str}
+            {"status": "error", "message": str}
+        """
+        browser = getattr(self.core, 'browser', None)
+        if not browser or not getattr(browser, 'started', False):
+            return {"status": "error", "message": "Browser not started. Use start_browser first."}
+
+        try:
+            # Determine post type and submission URL
+            submit_url = f"https://www.reddit.com/r/{subreddit}/submit"
+            nav = await browser.navigate(submit_url)
+            if nav.get('status') == 'error':
+                return nav
+
+            page = browser._get_page()
+            await asyncio.sleep(2)  # Let the page settle
+
+            # Check if we're on a login wall
+            current_url = page.url
+            if 'login' in current_url or 'register' in current_url:
+                return {"status": "error", "message": "Browser is not logged into Reddit. Please log in first."}
+
+            # Select the post type tab
+            if media_path:
+                # Image / video post
+                try:
+                    img_tab = await page.query_selector('[data-tab-value="image"]')
+                    if img_tab:
+                        await img_tab.click()
+                        await asyncio.sleep(0.5)
+                except Exception:
+                    pass
+            elif url:
+                # Link post
+                try:
+                    link_tab = await page.query_selector('[data-tab-value="link"]')
+                    if link_tab:
+                        await link_tab.click()
+                        await asyncio.sleep(0.5)
+                except Exception:
+                    pass
+            # else: text post (default tab)
+
+            # Fill the title
+            TITLE_SEL = '[placeholder="Title"]'
+            await page.wait_for_selector(TITLE_SEL, timeout=15000)
+            await browser.type_text(TITLE_SEL, title)
+
+            if url:
+                # Link post: fill URL field
+                URL_SEL = '[placeholder*="url" i], [data-placeholder*="url" i], input[name="url"]'
+                try:
+                    await page.wait_for_selector(URL_SEL, timeout=5000)
+                    await browser.type_text(URL_SEL, url)
+                except Exception:
+                    await self.core.log("Could not find URL field — trying text body fallback", priority=2)
+                    text_sel = '[placeholder*="text" i], .DraftEditor-root, [contenteditable="true"]'
+                    await page.wait_for_selector(text_sel, timeout=5000)
+                    await browser.type_text(text_sel, url)
+
+            elif media_path:
+                # Image / video post: upload file
+                if not os.path.isfile(media_path):
+                    return {"status": "error", "message": f"Media file not found: {media_path}"}
+                file_input = await page.query_selector('input[type="file"]')
+                if file_input:
+                    await file_input.set_input_files(media_path)
+                    await asyncio.sleep(3)  # Wait for upload
+
+            else:
+                # Text post: fill body
+                BODY_SEL = '.DraftEditor-root, [contenteditable="true"], [placeholder*="text" i]'
+                try:
+                    await page.wait_for_selector(BODY_SEL, timeout=5000)
+                    await browser.type_text(BODY_SEL, body or "")
+                except Exception:
+                    pass  # Body is optional for text posts
+
+            # Submit
+            SUBMIT_BTN = 'button[type="submit"]:not([disabled]), button:has-text("Post")'
+            try:
+                await page.wait_for_selector(SUBMIT_BTN, timeout=10000)
+                await page.click(SUBMIT_BTN)
+                await asyncio.sleep(3)
+            except Exception:
+                # Fallback: look for any enabled submit-like button
+                await page.evaluate("document.querySelector('button[type=\"submit\"]')?.click()")
+                await asyncio.sleep(3)
+
+            post_url = page.url
+            await self.core.log(
+                f"Reddit post submitted via browser: r/{subreddit} — {title[:50]}",
+                priority=2, component="SocialMedia",
+            )
+            return {"status": "success", "url": post_url}
+
+        except Exception as e:
+            await self.core.log(f"Browser Reddit post failed: {e}", priority=1, component="SocialMedia")
+            return {"status": "error", "message": str(e)}
 
     async def post_tweet_browser(self, text, media_path=None):
         """Post a single tweet via Playwright browser automation.
