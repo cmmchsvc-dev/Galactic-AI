@@ -20,7 +20,14 @@ class TelegramBridge:
         self.thinking_level = "LOW"
         self.verbose = False
         self.pending_api_key = {}  # {chat_id: {"provider": str, "model": str}}
+        self._active_tasks = []    # Track spawned asyncio tasks for /stop
         self._component = "Telegram"
+
+    def _track_task(self, task):
+        """Track an asyncio task so /stop can cancel it."""
+        self._active_tasks.append(task)
+        task.add_done_callback(lambda t: self._active_tasks.remove(t) if t in self._active_tasks else None)
+        return task
 
     async def _log(self, message, priority=3):
         """Route logs to the Telegram component log file."""
@@ -28,6 +35,7 @@ class TelegramBridge:
 
     async def set_commands(self):
         commands = [
+            {"command": "stop", "description": "🛑 Kill All Running Tasks"},
             {"command": "status", "description": "🛰️ System Telemetry"},
             {"command": "model", "description": "🧠 Shift Brain"},
             {"command": "models", "description": "⚙️ Model Config (Primary/Fallback)"},
@@ -525,7 +533,28 @@ class TelegramBridge:
     async def process_command(self, chat_id, cmd_text):
         parts = cmd_text.split()
         cmd = parts[0].lower().split('@')[0]
-        
+
+        if cmd == '/stop':
+            cancelled = 0
+            for task in list(self._active_tasks):
+                if not task.done():
+                    task.cancel()
+                    cancelled += 1
+            self._active_tasks.clear()
+            # Also cancel any active speak() in the gateway
+            if hasattr(self.core, 'gateway') and hasattr(self.core.gateway, '_cancel_active'):
+                try:
+                    self.core.gateway._cancel_active()
+                except Exception:
+                    pass
+            await self.send_message(
+                chat_id,
+                f"🛑 **All Stop.** Killed {cancelled} running task(s).\n"
+                f"Standing by in neutral."
+            )
+            await self._log(f"[Telegram] /stop: cancelled {cancelled} tasks", priority=1)
+            return
+
         if cmd == '/status':
             from datetime import datetime
             uptime = int(time.time() - self.start_time)
@@ -637,17 +666,17 @@ class TelegramBridge:
                         # Handle document/file attachments
                         if "document" in msg and hasattr(self.core, 'gateway'):
                             await self.send_typing(chat_id)
-                            asyncio.create_task(self._handle_document(chat_id, msg))
+                            self._track_task(asyncio.create_task(self._handle_document(chat_id, msg)))
                             continue
                         # Handle photo attachments
                         if "photo" in msg and hasattr(self.core, 'gateway'):
                             await self.send_typing(chat_id)
-                            asyncio.create_task(self._handle_photo(chat_id, msg))
+                            self._track_task(asyncio.create_task(self._handle_photo(chat_id, msg)))
                             continue
                         # Handle audio/voice attachments
                         if ("voice" in msg or "audio" in msg) and hasattr(self.core, 'gateway'):
                             await self.send_typing(chat_id)
-                            asyncio.create_task(self._handle_audio(chat_id, msg))
+                            self._track_task(asyncio.create_task(self._handle_audio(chat_id, msg)))
                             continue
                         # Intercept API key text if we're waiting for one
                         if chat_id in self.pending_api_key and text and not text.startswith('/'):
@@ -666,9 +695,13 @@ class TelegramBridge:
                         if text.startswith('/'):
                             await self.process_command(chat_id, text)
                             continue
+                        # Treat plain "stop" as an emergency stop (same as /stop)
+                        if text.strip().lower() == 'stop':
+                            await self.process_command(chat_id, '/stop')
+                            continue
                         await self.send_typing(chat_id)
                         if hasattr(self.core, 'gateway'):
-                            asyncio.create_task(self.process_and_respond(chat_id, text))
+                            self._track_task(asyncio.create_task(self.process_and_respond(chat_id, text)))
             except Exception as e:
                 await self._log(f"Bridge Loop Error: {e}", priority=1)
             await asyncio.sleep(0.5)
