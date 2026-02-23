@@ -230,6 +230,15 @@ class ChromeBridgeSkill(GalacticSkill):
                 }},
                 "fn": self._tool_chrome_triple_click
             },
+            "chrome_upload": {
+                "description": "Upload a local file to a <input type='file'> element. Requires the absolute file path. Use ref or selector to target the input.",
+                "parameters": {"type": "object", "properties": {
+                    "file_path": {"type": "string", "description": "Absolute path to the file to upload"},
+                    "ref": {"type": "string", "description": "Element reference ID (e.g. ref_123)"},
+                    "selector": {"type": "string", "description": "CSS selector for the file input"},
+                }, "required": ["file_path"]},
+                "fn": self._tool_chrome_upload
+            },
         }
 
     # ── Tool handlers ────────────────────────────────────────────────────
@@ -482,6 +491,20 @@ class ChromeBridgeSkill(GalacticSkill):
             target = args.get('ref') or args.get('selector') or f"({args.get('x')},{args.get('y')})"
             return f"[CHROME] Triple-clicked: {target}"
         return f"[ERROR] Chrome triple_click: {result.get('error') or result.get('message') or 'unknown'}"
+
+    async def _tool_chrome_upload(self, args):
+        if not self.ws_connection: return "[ERROR] Chrome extension not connected."
+        file_path = args.get('file_path', '')
+        if not file_path:
+            return "[ERROR] chrome_upload: file_path is required"
+        result = await self.upload_file(
+            file_path=file_path,
+            ref=args.get('ref'),
+            selector=args.get('selector'),
+        )
+        if result.get('status') == 'success':
+            return f"[CHROME] File uploaded: {result.get('file_path', file_path)}"
+        return f"[ERROR] Chrome upload: {result.get('error') or result.get('message') or 'unknown'}"
 
     # ── Inbound message handler (called by web_deck) ─────────────────────
 
@@ -736,6 +759,15 @@ class ChromeBridgeSkill(GalacticSkill):
             "start_x": start_x, "start_y": start_y,
             "end_x": end_x, "end_y": end_y, "tab_id": tab_id
         })
+
+    async def upload_file(self, file_path: str, ref: str = None, selector: str = None) -> dict:
+        """Upload a local file to a file input element via Chrome Debugger DOM.setFileInputFiles."""
+        args = {"file_path": file_path}
+        if ref:
+            args["ref"] = ref
+        if selector:
+            args["selector"] = selector
+        return await self.send_command("upload_file", args)
 
     # ── Internal helpers ─────────────────────────────────────────────────
 
