@@ -710,7 +710,7 @@ body.glow-max .status-dot{box-shadow:0 0 14px var(--green),0 0 28px rgba(0,255,1
 <div id="topbar">
   <div class="logo">⬡ GALACTIC AI</div>
   <div style="font-size:0.7em;color:var(--cyan);letter-spacing:2px;opacity:0.7;font-weight:600">CONTROL DECK</div>
-  <div id="version-badge" style="font-size:0.65em;color:var(--dim);letter-spacing:1px;padding:2px 7px;border:1px solid var(--border);border-radius:10px;cursor:default" title="Galactic AI version">v1.1.1</div>
+  <div id="version-badge" style="font-size:0.65em;color:var(--dim);letter-spacing:1px;padding:2px 7px;border:1px solid var(--border);border-radius:10px;cursor:default" title="Galactic AI version">v1.1.2</div>
   <div id='ollama-pill' onclick='switchTab("models")'>
     <div class="status-dot" id="ollama-dot"></div>
     <span id="ollama-label">Ollama</span>
@@ -4487,7 +4487,7 @@ try {
         await self.core.log("[Chrome Bridge] Extension connected", priority=2)
 
         # Send hello acknowledgement
-        await ws.send_str(json.dumps({'type': 'hello', 'status': 'connected', 'version': '1.1.1'}))
+        await ws.send_str(json.dumps({'type': 'hello', 'status': 'connected', 'version': '1.1.2'}))
 
         try:
             async for msg in ws:
