@@ -2346,7 +2346,7 @@ class GalacticGateway:
 
         # 1. Build system prompt (Ollama gets full schemas + few-shot examples)
         system_prompt = self._build_system_prompt(context=context, is_ollama=is_ollama)
-        messages = [{"role": "system", "content": system_prompt}] + self.history[-5:]
+        messages = [{"role": "system", "content": system_prompt}] + self.history
 
         # 2. ReAct Loop (with wall-clock timeout)
         max_turns = int(self.config.get('models', {}).get('max_turns', 50))
@@ -3573,16 +3573,15 @@ class GalacticGateway:
                         f"chunks_processed={len(full_response)})",
                         priority=1
                     )
-                if not result.strip() and provider == "nvidia":
-                    # Streaming returned no content — model may not support streaming.
-                    # Fall through to non-streaming path as a last resort.
+                if not result.strip():
+                    # Streaming returned no content — fall through to non-streaming for all providers.
                     await self.core.log(
                         f"⚠️ {provider}/{self.llm.model} streaming returned empty — "
                         f"retrying non-streaming",
                         priority=2
                     )
                 else:
-                    return result if result.strip() else '[No response]'
+                    return result
             except Exception as e:
                 if provider == "nvidia":
                     # Streaming failed — fall through to non-streaming as fallback
