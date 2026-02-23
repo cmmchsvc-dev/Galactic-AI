@@ -788,7 +788,7 @@ body.glow-max .status-dot{box-shadow:0 0 14px var(--green),0 0 28px rgba(0,255,1
     <div class="sidebar-section">Navigation</div>
     <div class="sidebar-item active" onclick="switchTab('chat')"><span class="icon">💬</span> Chat</div>
     <div class="sidebar-item" onclick="switchTab('tools')"><span class="icon">🔧</span> Tools<span class="badge" id="tool-count-badge">72</span></div>
-    <div class="sidebar-item" onclick="switchTab('plugins')"><span class="icon">🔌</span> Plugins</div>
+    <div class="sidebar-item" onclick="switchTab('plugins')"><span class="icon">⚡</span> Skills</div>
     <div class="sidebar-item" onclick="switchTab('models')"><span class="icon">🧠</span> Models</div>
     <div class="sidebar-item" onclick="switchTab('browser')"><span class="icon">🌐</span> Browser</div>
     <div class="sidebar-item" onclick="switchTab('memory')"><span class="icon">💾</span> Memory</div>
@@ -803,7 +803,7 @@ body.glow-max .status-dot{box-shadow:0 0 14px var(--green),0 0 28px rgba(0,255,1
     <div id="tabbar">
       <button class="tab-btn active" onclick="switchTab('chat')">💬 Chat</button>
       <button class="tab-btn" onclick="switchTab('tools')">🔧 Tools</button>
-      <button class="tab-btn" onclick="switchTab('plugins')">🔌 Plugins</button>
+      <button class="tab-btn" onclick="switchTab('plugins')">⚡ Skills</button>
       <button class="tab-btn" onclick="switchTab('models')">🧠 Models</button>
       <button class="tab-btn" onclick="switchTab('browser')">🌐 Browser</button>
       <button class="tab-btn" onclick="switchTab('memory')">💾 Memory</button>
@@ -874,7 +874,7 @@ body.glow-max .status-dot{box-shadow:0 0 14px var(--green),0 0 28px rgba(0,255,1
     <!-- PLUGINS -->
     <div class="tab-pane" id="tab-plugins">
       <div id="plugins-pane">
-        <h3>🔌 PLUGINS &amp; SYSTEMS</h3>
+        <h3>⚡ SKILLS</h3>
         <div id="plugins-list">Loading...</div>
       </div>
     </div>
@@ -2088,24 +2088,31 @@ async function runTool() {
 async function loadPlugins() {
   const r = await authFetch('/api/plugins');
   const d = await r.json();
-  const icons = {SniperPlugin:'🎯', WatchdogPlugin:'👁', ShellPlugin:'💻', BrowserExecutorPro:'🌐', SubAgentPlugin:'🤖'};
-  const descs = {SniperPlugin:'Lead prospecting & Reddit hunting', WatchdogPlugin:'Email monitoring & alerting', ShellPlugin:'PowerShell command execution', BrowserExecutorPro:'Full Playwright browser automation (54 tools)', SubAgentPlugin:'Multi-agent task orchestration'};
   const list = document.getElementById('plugins-list');
   list.innerHTML = '';
-  (d.plugins || []).forEach(p => {
+  const skills = d.plugins || [];
+  if (!skills.length) {
+    list.innerHTML = '<p style="color:#888">No skills loaded.</p>';
+    return;
+  }
+  skills.forEach(s => {
     const card = document.createElement('div');
     card.className = 'plugin-card';
-    const icon = icons[p.class] || '⚙️';
-    const desc = descs[p.class] || p.class;
+    const coreTag = s.is_core ? '<span style="font-size:0.7em;color:#00ff88;margin-left:4px">CORE</span>' : '<span style="font-size:0.7em;color:#ff00c8;margin-left:4px">COMMUNITY</span>';
+    const toolsHtml = s.tools && s.tools.length
+      ? `<div class="plugin-desc" style="font-size:0.75em;color:#666;margin-top:2px">${s.tool_count} tools: ${s.tools.slice(0,4).join(', ')}${s.tools.length > 4 ? ' …' : ''}</div>`
+      : '';
     card.innerHTML = `
-      <div class="plugin-icon">${icon}</div>
+      <div class="plugin-icon">${s.icon || '⚙️'}</div>
       <div class="plugin-info">
-        <div class="plugin-name">${p.name}</div>
-        <div class="plugin-desc">${desc}</div>
-        <div class="plugin-class">${p.class}</div>
+        <div class="plugin-name">${s.display_name}${coreTag} <span style="color:#555;font-size:0.8em">v${s.version}</span></div>
+        <div class="plugin-desc">${s.description}</div>
+        ${toolsHtml}
+        <div class="plugin-class" style="color:#444">${s.category} · ${s.author}</div>
       </div>
       <label class="toggle-switch">
-        <input type="checkbox" ${p.enabled ? 'checked' : ''} onchange="togglePlugin('${p.name}', this.checked)">
+        <input type="checkbox" ${s.enabled ? 'checked' : ''}
+               onchange="togglePlugin('${s.name}', this.checked)">
         <span class="toggle-slider"></span>
       </label>`;
     list.appendChild(card);
@@ -3793,7 +3800,8 @@ try {
             name = data.get('name', '')
             enabled = data.get('enabled', True)
             for p in self.core.plugins:
-                if p.name == name:
+                pname = getattr(p, 'name', None) or getattr(p, 'skill_name', p.__class__.__name__)
+                if pname == name:
                     p.enabled = bool(enabled)
                     await self.core.log(f"Plugin {name}: {'ENABLED' if enabled else 'DISABLED'}", priority=2)
                     return web.json_response({'ok': True, 'name': name, 'enabled': enabled})
@@ -3827,14 +3835,23 @@ try {
         return web.json_response({'tools': tools, 'count': len(tools)})
 
     async def handle_list_plugins(self, request):
-        """GET /api/plugins — list all loaded plugins with status."""
+        """GET /api/plugins — list all loaded skills with rich metadata."""
         plugins = []
         for p in self.core.plugins:
-            pname = getattr(p, 'name', None) or getattr(p, 'skill_name', p.__class__.__name__)
+            tool_names = list(p.get_tools().keys()) if hasattr(p, 'get_tools') else []
             plugins.append({
-                'name': pname,
-                'enabled': getattr(p, 'enabled', True),
-                'class': p.__class__.__name__,
+                'name':         getattr(p, 'skill_name', None) or getattr(p, 'name', p.__class__.__name__),
+                'display_name': (getattr(p, 'skill_name', None) or getattr(p, 'name', p.__class__.__name__)).replace('_', ' ').title(),
+                'enabled':      getattr(p, 'enabled', True),
+                'class':        p.__class__.__name__,
+                'version':      getattr(p, 'version', '—'),
+                'author':       getattr(p, 'author', '—'),
+                'description':  getattr(p, 'description', p.__class__.__name__),
+                'category':     getattr(p, 'category', 'general'),
+                'icon':         getattr(p, 'icon', '⚙️'),
+                'is_core':      getattr(p, 'is_core', False),
+                'tools':        tool_names,
+                'tool_count':   len(tool_names),
             })
         return web.json_response({'plugins': plugins})
 
