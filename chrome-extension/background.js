@@ -189,6 +189,7 @@ async function handleCommand(id, command, args) {
     case 'read_network':  return await cmdReadNetwork(args);
     case 'hover':         return await cmdHover(args);
     case 'zoom':          return await cmdZoom(args);
+    case 'drag':          return await cmdDrag(args);
     default:              return { error: `Unknown command: ${command}` };
   }
 }
@@ -356,6 +357,12 @@ async function cmdHover(args) {
   const tabId = await getTargetTabId(args);
   if (!tabId) return { error: 'No active tab' };
   return await sendToContent(tabId, 'hover', args);
+}
+
+async function cmdDrag(args) {
+  const tabId = await getTargetTabId(args);
+  if (!tabId) return { error: 'No active tab' };
+  return await sendToContent(tabId, 'drag', args);
 }
 
 async function cmdZoom(args) {
