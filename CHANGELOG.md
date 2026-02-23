@@ -4,6 +4,26 @@ All notable changes to Galactic AI are documented here.
 
 ---
 
+## v1.1.3 — Chrome Extension Parity (2026-02-23)
+
+### Bug Fixes
+- **contenteditable typing**: `performType()` in content.js now uses `document.execCommand('insertText')` for proper SPA support (X.com, Notion, Reddit compose work correctly)
+- **screenshot visibility**: `chrome_screenshot` now saves JPEG to disk and returns an actual image to the LLM (not a text description)
+
+### New Tools (11 added, 16 → 27 total)
+- `chrome_zoom` — region screenshot for close inspection of UI elements
+- `chrome_drag` — click-drag interactions (sliders, reordering)
+- `chrome_right_click` — JS context menu trigger
+- `chrome_triple_click` — triple-click to select all text
+- `chrome_upload` — file upload via Chrome Debugger `DOM.setFileInputFiles`
+- `chrome_resize` — viewport resize with mobile/tablet/desktop presets
+- `chrome_get_network_body` — fetch full response body for a network request by ID
+- `chrome_wait` — wait N seconds between browser actions
+- `chrome_gif_start` / `chrome_gif_stop` / `chrome_gif_export` — GIF recorder with Pillow assembly
+- `chrome_read_network` now includes `request_id` in each entry
+
+---
+
 ## [v1.1.2] — 2026-02-23
 
 ### Added

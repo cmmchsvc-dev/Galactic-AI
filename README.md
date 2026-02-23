@@ -2,7 +2,7 @@
 
 **Sovereign. Universal. Fast.**
 
-A powerful, local-first AI automation platform with 147 built-in tools, an extensible Skills ecosystem, true persistent memory, voice I/O, video generation, Chrome browser extension, social media tools, 14 AI providers, multi-platform messaging bridges, and a real-time web Control Deck. **v1.1.2**
+A powerful, local-first AI automation platform with 147 built-in tools, an extensible Skills ecosystem, true persistent memory, voice I/O, video generation, Chrome browser extension, social media tools, 14 AI providers, multi-platform messaging bridges, and a real-time web Control Deck. **v1.1.3**
 
 Run fully local with Ollama (no API keys, no cloud, no tracking), or connect to any of 14 cloud providers. Your data stays yours.
 
@@ -264,7 +264,7 @@ Control your real Chrome browser through Galactic AI with the included Chrome ex
 | **Form Filling** | AI can fill forms, click buttons, and interact with page elements |
 | **JavaScript Execution** | Run arbitrary JavaScript in the page context |
 
-10 browser tools: `chrome_navigate`, `chrome_read_page`, `chrome_screenshot`, `chrome_click`, `chrome_find`, `chrome_execute_js`, `chrome_tabs_list`, `chrome_form_input`, `chrome_get_page_text`, `chrome_scroll_to`.
+27 browser tools: `chrome_navigate`, `chrome_read_page`, `chrome_screenshot`, `chrome_zoom`, `chrome_click`, `chrome_find`, `chrome_execute_js`, `chrome_tabs_list`, `chrome_form_input`, `chrome_get_page_text`, `chrome_scroll_to`, `chrome_drag`, `chrome_right_click`, `chrome_triple_click`, `chrome_upload`, `chrome_resize`, `chrome_read_network`, `chrome_get_network_body`, `chrome_wait`, `chrome_gif_start`, `chrome_gif_stop`, `chrome_gif_export`.
 
 ---
 
@@ -426,7 +426,7 @@ Galactic-AI/
     ├── browser_executor_pro.py   # Playwright browser automation (56 actions)
     ├── shell_executor.py         # Shell command execution
     ├── subagent_manager.py       # Multi-agent orchestration
-    ├── chrome_bridge.py          # Chrome extension WebSocket bridge (10 tools)
+    ├── chrome_bridge.py          # Chrome extension WebSocket bridge (27 tools)
     ├── social_media.py           # Twitter/X + Reddit integration (8 tools)
     ├── desktop_tool.py           # OS-level mouse/keyboard/screenshot automation
     └── ping.py                   # Connectivity monitoring
@@ -498,6 +498,7 @@ MIT License — see LICENSE file.
 
 | Version | Highlights |
 |---|---|
+| **v1.1.3** | 🔧 Chrome extension parity — 11 new tools (16 → 27 total): `chrome_zoom`, `chrome_drag`, `chrome_right_click`, `chrome_triple_click`, `chrome_upload`, `chrome_resize`, `chrome_get_network_body`, `chrome_wait`, `chrome_gif_start/stop/export`; contenteditable fix (X.com, Notion, Reddit); screenshot now returns real image to LLM |
 | **v1.1.1** | 🌐 Chrome extension (Galactic Browser) with 10 browser tools, side panel chat, real-time page interaction; 📱 Social media plugin (Twitter/X + Reddit, 8 tools); 🔧 System-wide [No response] fix (native tool_calls capture); 📨 Telegram reliability overhaul (Markdown fallback, message splitting, CancelledError fix) |
 | **v1.1.0** | 💰 Token cost dashboard (6 summary cards, 9 currencies, persistent JSONL tracking, real token extraction); OpenRouter expansion (6 → 26 curated models across Frontier/Strong/Fast tiers); Chart.js removal for stability |
 | **v1.0.9** | 🎬 Video generation via Google Veo (text-to-video + image-to-video), inline HTML5 player; NVIDIA provider hardening (streaming fixes, cold-start retry, broken SSE workaround); new models (Nemotron Super 49B, Nano 9B, Phi-3 Medium, DeepSeek V3.2); HuggingFace URL migration; conventional bottom-up chat scroll; bulletproof shutdown |

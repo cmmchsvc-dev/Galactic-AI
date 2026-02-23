@@ -1,6 +1,6 @@
 # Galactic AI — Feature Reference
 
-Complete feature reference for Galactic AI Automation Suite **v1.1.2**.
+Complete feature reference for Galactic AI Automation Suite **v1.1.3**.
 
 ---
 
@@ -45,7 +45,7 @@ Six built-in skills ship with Galactic AI:
 |-------|-------|-------------|
 | ShellSkill | 1 | PowerShell/bash command execution |
 | DesktopSkill | 8 | Mouse, keyboard, screenshot via pyautogui |
-| ChromeBridgeSkill | 16 | Real Chrome browser control via WebSocket extension |
+| ChromeBridgeSkill | 27 | Real Chrome browser control via WebSocket extension |
 | SocialMediaSkill | 6 | Twitter/X and Reddit integration |
 | SubAgentSkill | 2 | Spawn and monitor parallel AI subagents |
 | BrowserProSkill | 55 | Full Playwright browser automation |
@@ -418,7 +418,7 @@ Powered by Playwright. Supports **Chromium**, **Firefox**, and **WebKit** engine
 
 ---
 
-### Chrome Browser Tools (10 tools — via Galactic Browser extension)
+### Chrome Browser Tools (27 tools — via Galactic Browser extension)
 
 Control the user's real Chrome browser through the Galactic Browser extension. Requires the Chrome extension to be loaded and connected.
 
@@ -427,6 +427,7 @@ Control the user's real Chrome browser through the Galactic Browser extension. R
 | `chrome_navigate` | Navigate the user's Chrome browser to a URL, or use 'back'/'forward' for history |
 | `chrome_read_page` | Get accessibility tree snapshot of the current page (roles, names, ref IDs) |
 | `chrome_screenshot` | Take a JPEG screenshot of the active tab |
+| `chrome_zoom` | Region screenshot for close inspection of UI elements |
 | `chrome_click` | Click an element by CSS selector or accessibility ref ID |
 | `chrome_find` | Find elements using natural language queries (e.g., "login button", "search bar") |
 | `chrome_execute_js` | Execute JavaScript in the page context |
@@ -434,6 +435,17 @@ Control the user's real Chrome browser through the Galactic Browser extension. R
 | `chrome_form_input` | Fill form elements (inputs, selects, checkboxes) by ref ID |
 | `chrome_get_page_text` | Extract raw text content from the page, prioritizing article content |
 | `chrome_scroll_to` | Scroll an element into view by ref ID |
+| `chrome_drag` | Click-drag interactions (sliders, reordering) |
+| `chrome_right_click` | JS context menu trigger |
+| `chrome_triple_click` | Triple-click to select all text in an element |
+| `chrome_upload` | File upload via Chrome Debugger `DOM.setFileInputFiles` |
+| `chrome_resize` | Viewport resize with mobile/tablet/desktop presets |
+| `chrome_read_network` | List network requests with URL, method, status, and request_id per entry |
+| `chrome_get_network_body` | Fetch full response body for a network request by request_id |
+| `chrome_wait` | Wait N seconds between browser actions |
+| `chrome_gif_start` | Start recording browser actions as an animated GIF |
+| `chrome_gif_stop` | Stop GIF recording |
+| `chrome_gif_export` | Export and assemble the recorded GIF using Pillow |
 
 ### Social Media (8 tools — via SocialMediaPlugin)
 
@@ -802,4 +814,4 @@ Set `web.remote_access: true` in `config.yaml`. On next startup, Galactic AI:
 
 ---
 
-**v1.1.2** — Galactic AI Automation Suite
+**v1.1.3** — Galactic AI Automation Suite
