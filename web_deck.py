@@ -387,7 +387,7 @@ body.glow-max .status-dot{box-shadow:0 0 14px var(--green),0 0 28px rgba(0,255,1
   <div class="login-box">
     <div style="font-size:2em;margin-bottom:8px">⬡</div>
     <h2>GALACTIC AI</h2>
-    <p>AUTOMATION SUITE v0.9.1</p>
+    <p>AUTOMATION SUITE v1.1.0</p>
     <input id="pw-input" type="password" placeholder="Enter passphrase" autocomplete="off">
     <button id="login-btn" onclick="doLogin()">ACCESS</button>
     <div id="login-err" style="display:none;color:var(--red);font-size:0.8em;margin-top:8px">Invalid passphrase</div>
@@ -708,7 +708,7 @@ body.glow-max .status-dot{box-shadow:0 0 14px var(--green),0 0 28px rgba(0,255,1
 <div id="topbar">
   <div class="logo">⬡ GALACTIC AI</div>
   <div style="font-size:0.7em;color:var(--cyan);letter-spacing:2px;opacity:0.7;font-weight:600">CONTROL DECK</div>
-  <div id="version-badge" style="font-size:0.65em;color:var(--dim);letter-spacing:1px;padding:2px 7px;border:1px solid var(--border);border-radius:10px;cursor:default" title="Galactic AI version">v0.9.1</div>
+  <div id="version-badge" style="font-size:0.65em;color:var(--dim);letter-spacing:1px;padding:2px 7px;border:1px solid var(--border);border-radius:10px;cursor:default" title="Galactic AI version">v1.1.0</div>
   <div id='ollama-pill' onclick='switchTab("models")'>
     <div class="status-dot" id="ollama-dot"></div>
     <span id="ollama-label">Ollama</span>
@@ -1037,20 +1037,6 @@ body.glow-max .status-dot{box-shadow:0 0 14px var(--green),0 0 28px rgba(0,255,1
           <div class="stat-card"><div class="val" id="cost-last">--</div><div class="lbl">Last Request</div></div>
           <div class="stat-card"><div class="val" id="cost-avg">--</div><div class="lbl">Avg / Message</div></div>
         </div>
-        <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:12px">
-          <div class="stat-card" style="padding:16px">
-            <div class="lbl" style="margin-bottom:10px;text-align:left">Daily Spend (14 days)</div>
-            <div style="position:relative;height:180px"><canvas id="chart-daily"></canvas></div>
-          </div>
-          <div class="stat-card" style="padding:16px">
-            <div class="lbl" style="margin-bottom:10px;text-align:left">Cost by Model (30 days)</div>
-            <div style="position:relative;height:180px"><canvas id="chart-models"></canvas></div>
-          </div>
-        </div>
-        <div class="stat-card" style="padding:16px;margin-bottom:12px">
-          <div class="lbl" style="margin-bottom:10px;text-align:left">Cost per Message Trend (14 days)</div>
-          <div style="position:relative;height:120px"><canvas id="chart-trend"></canvas></div>
-        </div>
         <div id="cost-free-note" style="font-size:0.72rem;color:var(--dim);margin-bottom:18px"></div>
 
         <!-- Section 2: Model & AI -->
@@ -1302,7 +1288,6 @@ body.glow-max .status-dot{box-shadow:0 0 14px var(--green),0 0 28px rgba(0,255,1
   </div>
 </div>
 
-<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.7/dist/chart.umd.min.js"></script>
 <script>
 // State
 let token = localStorage.getItem('gal_token') || '';
@@ -2644,8 +2629,7 @@ const EXCHANGE_RATES = {
 const CURRENCY_SYMBOLS = {
   USD:'$', EUR:'€', GBP:'£', CAD:'CA$', AUD:'AU$', JPY:'¥', INR:'₹', BRL:'R$', KRW:'₩'
 };
-let costChartDaily = null, costChartModels = null, costChartTrend = null;
-let _costDashBusy = false; // concurrency guard
+let _costDashBusy = false;
 
 function getCurrency() {
   try { return localStorage.getItem('gal_currency') || 'USD'; } catch(e) { return 'USD'; }
@@ -2675,22 +2659,10 @@ function costColor(usd) {
   return 'var(--red)';
 }
 
-function applyChartDefaults() {
-  if (typeof Chart === 'undefined') return;
-  Chart.defaults.color = 'rgba(180,190,200,0.7)';
-  Chart.defaults.borderColor = 'rgba(255,255,255,0.06)';
-  Chart.defaults.font.family = "'JetBrains Mono', monospace";
-  Chart.defaults.font.size = 10;
-}
-
 async function refreshCostDashboard() {
-  if (_costDashBusy) return;           // skip if already running
+  if (_costDashBusy) return;
   _costDashBusy = true;
   try {
-    // Only render charts when the status tab is actually visible
-    const statusPane = document.getElementById('tab-status');
-    const tabVisible = statusPane && statusPane.classList.contains('active');
-
     const r = await authFetch('/api/cost-stats');
     if (!r.ok) return;
     const d = await r.json();
@@ -2699,9 +2671,8 @@ async function refreshCostDashboard() {
     const sel = document.getElementById('cost-currency');
     if (sel) sel.value = getCurrency();
 
-    const el = id => document.getElementById(id);
     const setCard = (id, usd) => {
-      const e = el(id);
+      const e = document.getElementById(id);
       if (!e) return;
       e.textContent = fmtCost(usd);
       e.style.color = costColor(usd);
@@ -2713,134 +2684,16 @@ async function refreshCostDashboard() {
     setCard('cost-last', d.last_request_cost);
     setCard('cost-avg', d.avg_per_message);
 
-    // Skip chart rendering if status tab isn't visible or Chart.js not loaded
-    if (!tabVisible) return;
-    applyChartDefaults();
-    if (typeof Chart === 'undefined') return;
-
-    const cur = getCurrency();
-    const rate = EXCHANGE_RATES[cur] || 1;
-    const sym = CURRENCY_SYMBOLS[cur] || cur;
-    const PALETTE = ['#00f3ff','#a78bfa','#34d399','#f59e0b','#ef4444','#f472b6','#60a5fa','#10b981'];
-
-    // Helper: update chart data in-place or create new chart
-    function upsertChart(chartVar, canvas, type, labels, datasets, opts) {
-      if (chartVar) {
-        chartVar.data.labels = labels;
-        chartVar.data.datasets.forEach((ds, i) => {
-          if (datasets[i]) Object.assign(ds, datasets[i]);
-        });
-        // Update tooltip/tick callbacks that capture cur/rate/sym
-        if (opts) chartVar.options = Object.assign(chartVar.options, opts);
-        chartVar.update('none');  // 'none' = no animation, fast
-        return chartVar;
-      }
-      return new Chart(canvas, { type, data: { labels, datasets }, options: opts });
-    }
-
-    // Chart 1: Daily Spend
-    const dailyCanvas = el('chart-daily');
-    if (dailyCanvas && d.daily) {
-      const labels = d.daily.map(x => x.date.slice(5));
-      const values = d.daily.map(x => x.cost * rate);
-      const colors = d.daily.map((x, i) => PALETTE[i % PALETTE.length]);
-      costChartDaily = upsertChart(costChartDaily, dailyCanvas, 'bar', labels, [{
-        data: values,
-        backgroundColor: colors.map(c => c + '99'),
-        borderColor: colors,
-        borderWidth: 1,
-        borderRadius: 4,
-      }], {
-        responsive: true, maintainAspectRatio: false,
-        animation: false,
-        plugins: { legend: { display: false }, tooltip: { callbacks: {
-          label: ctx => {
-            const day = d.daily[ctx.dataIndex];
-            const lines = [sym + (day.cost * rate).toFixed(2)];
-            for (const [m, c] of Object.entries(day.models || {})) {
-              lines.push('  ' + m + ': ' + sym + (c * rate).toFixed(3));
-            }
-            return lines;
-          }
-        }}},
-        scales: {
-          y: { beginAtZero: true, ticks: { callback: v => sym + v.toFixed(2) } },
-          x: { grid: { display: false } },
-        },
-      });
-    }
-
-    // Chart 2: Model Cost Comparison
-    const modelsCanvas = el('chart-models');
-    if (modelsCanvas && d.by_model && d.by_model.length > 0) {
-      const labels = d.by_model.map(x => {
-        const short = x.model.includes('/') ? x.model.split('/')[1] : x.model;
-        return short.length > 20 ? short.slice(0, 18) + '…' : short;
-      });
-      const values = d.by_model.map(x => x.cost * rate);
-      costChartModels = upsertChart(costChartModels, modelsCanvas, 'bar', labels, [{
-        data: values,
-        backgroundColor: PALETTE.slice(0, values.length).map(c => c + '99'),
-        borderColor: PALETTE.slice(0, values.length),
-        borderWidth: 1,
-        borderRadius: 4,
-      }], {
-        indexAxis: 'y', responsive: true, maintainAspectRatio: false,
-        animation: false,
-        plugins: { legend: { display: false }, tooltip: { callbacks: {
-          label: ctx => {
-            const m = d.by_model[ctx.dataIndex];
-            return [
-              sym + (m.cost * rate).toFixed(2),
-              m.messages + ' messages',
-              (m.tokens_in / 1000).toFixed(1) + 'k in / ' + (m.tokens_out / 1000).toFixed(1) + 'k out',
-            ];
-          }
-        }}},
-        scales: {
-          x: { beginAtZero: true, ticks: { callback: v => sym + v.toFixed(2) } },
-          y: { grid: { display: false } },
-        },
-      });
-    }
-
-    // Chart 3: Cost per Message Trend
-    const trendCanvas = el('chart-trend');
-    if (trendCanvas && d.daily && d.daily.length > 0) {
-      const labels = d.daily.map(x => x.date.slice(5));
-      const values = d.daily.map(x => {
-        const msgs = Object.keys(x.models || {}).length || 1;
-        return (x.cost / Math.max(msgs, 1)) * rate;
-      });
-      costChartTrend = upsertChart(costChartTrend, trendCanvas, 'line', labels, [{
-        data: values,
-        borderColor: '#00f3ff',
-        backgroundColor: 'rgba(0,243,255,0.1)',
-        fill: true,
-        tension: 0.4,
-        pointRadius: 3,
-        pointBackgroundColor: '#00f3ff',
-      }], {
-        responsive: true, maintainAspectRatio: false,
-        animation: false,
-        plugins: { legend: { display: false } },
-        scales: {
-          y: { beginAtZero: true, ticks: { callback: v => sym + v.toFixed(3) } },
-          x: { grid: { display: false } },
-        },
-      });
-    }
-
     // Free models note
-    const freeNote = el('cost-free-note');
+    const freeNote = document.getElementById('cost-free-note');
     if (freeNote && d.free_models_used && d.free_models_used.length > 0) {
       const names = d.free_models_used.map(m => m.split('/').pop()).join(', ');
-      freeNote.textContent = '🆓 Also used (free): ' + names;
+      freeNote.textContent = 'Also used (free): ' + names;
     } else if (freeNote) {
       freeNote.textContent = '';
     }
   } catch(e) { console.error('Cost dashboard error:', e); }
-  finally { _costDashBusy = false; }   // always release guard
+  finally { _costDashBusy = false; }
 }
 
 // ── Settings Tab ──────────────────────────────────────────────────────

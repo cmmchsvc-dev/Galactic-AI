@@ -1,6 +1,6 @@
 # Galactic AI — Feature Reference
 
-Complete feature reference for Galactic AI Automation Suite **v1.0.9**.
+Complete feature reference for Galactic AI Automation Suite **v1.1.0**.
 
 ---
 
@@ -78,6 +78,9 @@ Switch between providers at any time from the web UI or Telegram.
 | **Perplexity** | API key | No |
 | **Ollama (Local)** | None | Free forever |
 
+### OpenRouter Curated Models (26)
+26 hand-picked models across 3 performance tiers available via OpenRouter: **Frontier** (7) — Gemini 3.1 Pro, Claude Opus 4.6, GPT-5.2, GPT-5.2 Codex, Grok 4.1 Fast, DeepSeek V3.2, Qwen 3.5 Plus. **Strong** (12) — Gemini 3 Pro/Flash, Claude Sonnet 4.6, Claude Opus 4.5, GPT-5.2 Pro, GPT-5.1, GPT-5.1 Codex, Qwen 3.5 397B, Qwen 3 Coder Next, Kimi K2.5, DeepSeek V3.2 Speciale, GLM-5. **Fast** (7) — Mistral Large, Devstral, MiniMax M2.5, Sonar Pro Search, Nemotron Nano 30B, Step 3.5 Flash, GPT-5.2 Chat.
+
 ### Multi-Key NVIDIA Routing
 NVIDIA hosts models from many vendors. Galactic AI routes to the correct API key based on the model selected. Configure separate keys for DeepSeek, Qwen, GLM, Kimi, StepFun, and FLUX models.
 
@@ -89,6 +92,9 @@ If the primary provider fails, the system falls back to a secondary provider aut
 
 ### Streaming Responses
 Token-by-token streaming from all providers, broadcast to the web UI via WebSocket in real-time.
+
+### Token Cost Tracking
+Real-time cost monitoring with persistent logging. Every API call records model, provider, input/output token counts, and calculated USD cost to `logs/cost_log.jsonl`. The CostTracker provides session, daily, weekly, and monthly aggregation with per-model breakdowns. 33 models have exact pricing; unknown models use a conservative fallback rate. Free providers (NVIDIA, Cerebras, Groq, HuggingFace, Ollama) are tracked for usage but excluded from spend totals. Costs auto-prune after 90 days.
 
 ### NVIDIA Provider Hardening
 - **Broken SSE workaround** — models with non-functional streaming endpoints (e.g., Qwen 3.5 397B) are automatically routed to non-streaming mode
@@ -465,7 +471,7 @@ When a user sends a voice message via Telegram, the AI automatically:
 ### Tabs
 - **Chat** — Full conversational interface with tool output; inline image and video players; 🎤 voice input mic button (click to record, transcribed via Whisper, inserted into chat); timestamps on every message; conventional bottom-up scroll (newest at bottom); chat history persists across page refreshes (`logs/chat_history.jsonl`)
 - **Thinking** — Real-time agent trace viewer; watch the ReAct loop think and act step by step; persists across page refreshes via `/api/traces` backend buffer (last 500 entries)
-- **Status** — Live telemetry: provider, model, token usage, uptime, fallback chain status, plugin states, version badge; 30+ data fields across 6 sections
+- **Status** — Live telemetry: provider, model, token usage, uptime, fallback chain status, plugin states, version badge; 30+ data fields across 6 sections; **Cost Dashboard** with 6 summary cards (Session Cost, Today, This Week, This Month, Last Request, Avg/Message), multi-currency selector (9 currencies), free model detection, persistent cost logging
 - **Models** — Browse and switch all available models, ordered best-to-worst with tier emoji indicators; per-model override dropdowns
 - **Tools** — Browse all 100+ tools with descriptions and parameter info
 - **Plugins** — Enable/disable plugins with toggle switches
@@ -694,4 +700,4 @@ Set `web.remote_access: true` in `config.yaml`. On next startup, Galactic AI:
 
 ---
 
-**v1.0.9** — Galactic AI Automation Suite
+**v1.1.0** — Galactic AI Automation Suite
