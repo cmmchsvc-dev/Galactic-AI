@@ -11,9 +11,12 @@ Architecture:
 """
 
 import asyncio
+import base64
 import json
 import logging
 import uuid
+from datetime import datetime
+from pathlib import Path
 
 from skills.base import GalacticSkill
 
@@ -205,9 +208,6 @@ class ChromeBridgeSkill(GalacticSkill):
 
             # Save to images/browser/ directory (consistent with Playwright screenshot tool)
             try:
-                import base64
-                from pathlib import Path
-                from datetime import datetime
                 images_dir = self.core.config.get('paths', {}).get('images', './images')
                 img_subdir = Path(images_dir) / 'browser'
                 img_subdir.mkdir(parents=True, exist_ok=True)
