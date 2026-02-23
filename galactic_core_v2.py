@@ -51,6 +51,7 @@ class GalacticCore:
         self.config_path = os.path.abspath(config_path)
         self.config = self.load_config()
         self.plugins = []
+        self.skills = []
         self.clients = []
         self.relay = GalacticRelay(self)
         self.running = True
@@ -187,6 +188,79 @@ class GalacticCore:
             self.browser = browser_plugin
 
         await self.log(f"Systems initialized. Plugins loaded: {', '.join(loaded_plugin_names) or 'none'}", priority=2)
+
+        # Load Skills (runs alongside plugins during migration)
+        await self.load_skills()
+
+    def _load_skill(self, module_path, class_name, is_core=False):
+        """Import and instantiate a single skill. Appends to self.skills on success."""
+        try:
+            import importlib
+            mod = importlib.import_module(module_path)
+            cls = getattr(mod, class_name)
+            skill = cls(self)
+            skill.is_core = is_core
+            self.skills.append(skill)
+            return skill
+        except ModuleNotFoundError:
+            print(f"[Skill] {class_name} not found — skipping")
+            return None
+        except Exception as e:
+            print(f"[Skill] {class_name} failed to load: {e}")
+            return None
+
+    def _read_registry(self):
+        """Read skills/registry.json. Returns dict with 'installed' list."""
+        import json as _json
+        registry_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'skills', 'registry.json')
+        try:
+            with open(registry_path, 'r') as f:
+                return _json.load(f)
+        except (FileNotFoundError, ValueError):
+            return {"installed": []}
+
+    def _write_registry(self, data):
+        """Write skills/registry.json."""
+        import json as _json
+        registry_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'skills', 'registry.json')
+        with open(registry_path, 'w') as f:
+            _json.dump(data, f, indent=2)
+
+    async def load_skills(self):
+        """Discover and load all skills (core + community).
+        Called from setup_systems() after plugins are loaded.
+        As plugins are migrated, they move from _BUILTIN_PLUGINS to CORE_SKILLS here.
+        """
+        self.skills = []
+
+        # Core skills — add entries here as plugins are migrated
+        # Phase 0: empty (all still running as legacy plugins)
+        CORE_SKILLS = [
+            # ('skills.core.shell_executor', 'ShellSkill'),  # Phase 1
+            # ('skills.core.desktop_tool',   'DesktopSkill'), # Phase 2
+            # ('skills.core.chrome_bridge',  'ChromeBridgeSkill'), # Phase 3
+            # ('skills.core.social_media',   'SocialMediaSkill'),  # Phase 3
+            # ('skills.core.subagent_manager', 'SubAgentSkill'),   # Phase 3
+            # ('skills.core.browser_pro',    'BrowserProSkill'),   # Phase 4
+        ]
+        loaded_skill_names = []
+        for module_path, class_name in CORE_SKILLS:
+            skill = self._load_skill(module_path, class_name, is_core=True)
+            if skill:
+                loaded_skill_names.append(skill.skill_name)
+
+        # Community skills from registry.json
+        registry = self._read_registry()
+        for entry in registry.get('installed', []):
+            module = f"skills.community.{entry['module']}"
+            skill = self._load_skill(module, entry['class'], is_core=False)
+            if skill:
+                loaded_skill_names.append(skill.skill_name)
+
+        # Register all skill-provided tools into gateway
+        if self.skills:
+            self.gateway.register_skill_tools(self.skills)
+            await self.log(f"Skills loaded: {', '.join(loaded_skill_names)}", priority=2)
 
     async def imprint_workspace(self):
         """Initial memory imprint of key personality files."""
@@ -505,6 +579,10 @@ class GalacticCore:
         # Start Plugins
         for plugin in self.plugins:
             asyncio.create_task(plugin.run())
+
+        # Start Skills
+        for skill in self.skills:
+            asyncio.create_task(skill.run())
 
         await self.log(f"All systems online. Control Deck → http://{self.config.get('web', {}).get('host', '127.0.0.1')}:{self.config.get('web', {}).get('port', 17789)}", priority=1)
         await self.log("Press Ctrl+C to shut down.", priority=3)
