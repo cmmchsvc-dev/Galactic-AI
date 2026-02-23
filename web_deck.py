@@ -55,6 +55,7 @@ class GalacticWebDeck:
         # Control APIs
         self.app.router.add_post('/api/chat', self.handle_chat)
         self.app.router.add_get('/api/status', self.handle_status)
+        self.app.router.add_get('/api/cost-stats', self.handle_cost_stats)
         self.app.router.add_post('/api/plugin_toggle', self.handle_plugin_toggle)
         self.app.router.add_post('/api/tool_invoke', self.handle_tool_invoke)
         self.app.router.add_get('/api/tools', self.handle_list_tools)
@@ -1013,6 +1014,45 @@ body.glow-max .status-dot{box-shadow:0 0 14px var(--green),0 0 28px rgba(0,255,1
           <div class="stat-card"><div class="val" id="st-tools">--</div><div class="lbl">Tools</div></div>
         </div>
 
+        <!-- Cost Dashboard -->
+        <div style="display:flex;align-items:center;justify-content:space-between;margin:18px 0 8px">
+          <div style="font-size:0.72rem;letter-spacing:2px;color:var(--dim);text-transform:uppercase">💰 Cost Dashboard</div>
+          <select id="cost-currency" onchange="saveCurrency();refreshCostDashboard()" style="background:var(--bg3);color:var(--text);border:1px solid var(--border);border-radius:6px;padding:4px 8px;font-size:0.78rem;font-family:var(--mono);cursor:pointer">
+            <option value="USD">💲 USD</option>
+            <option value="EUR">€ EUR</option>
+            <option value="GBP">£ GBP</option>
+            <option value="CAD">🇨🇦 CAD</option>
+            <option value="AUD">🇦🇺 AUD</option>
+            <option value="JPY">¥ JPY</option>
+            <option value="INR">₹ INR</option>
+            <option value="BRL">🇧🇷 BRL</option>
+            <option value="KRW">₩ KRW</option>
+          </select>
+        </div>
+        <div class="stat-grid" id="cost-cards">
+          <div class="stat-card"><div class="val" id="cost-session">--</div><div class="lbl">Session Cost</div></div>
+          <div class="stat-card"><div class="val" id="cost-today">--</div><div class="lbl">Today</div></div>
+          <div class="stat-card"><div class="val" id="cost-week">--</div><div class="lbl">This Week</div></div>
+          <div class="stat-card"><div class="val" id="cost-month">--</div><div class="lbl">This Month</div></div>
+          <div class="stat-card"><div class="val" id="cost-last">--</div><div class="lbl">Last Request</div></div>
+          <div class="stat-card"><div class="val" id="cost-avg">--</div><div class="lbl">Avg / Message</div></div>
+        </div>
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:12px">
+          <div class="stat-card" style="padding:16px">
+            <div class="lbl" style="margin-bottom:10px;text-align:left">Daily Spend (14 days)</div>
+            <canvas id="chart-daily" height="180"></canvas>
+          </div>
+          <div class="stat-card" style="padding:16px">
+            <div class="lbl" style="margin-bottom:10px;text-align:left">Cost by Model (30 days)</div>
+            <canvas id="chart-models" height="180"></canvas>
+          </div>
+        </div>
+        <div class="stat-card" style="padding:16px;margin-bottom:12px">
+          <div class="lbl" style="margin-bottom:10px;text-align:left">Cost per Message Trend (14 days)</div>
+          <canvas id="chart-trend" height="120"></canvas>
+        </div>
+        <div id="cost-free-note" style="font-size:0.72rem;color:var(--dim);margin-bottom:18px"></div>
+
         <!-- Section 2: Model & AI -->
         <div style="font-size:0.72rem;letter-spacing:2px;color:var(--dim);margin:18px 0 8px;text-transform:uppercase">Model & AI</div>
         <div class="stat-grid">
@@ -1262,6 +1302,7 @@ body.glow-max .status-dot{box-shadow:0 0 14px var(--green),0 0 28px rgba(0,255,1
   </div>
 </div>
 
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.7/dist/chart.umd.min.js"></script>
 <script>
 // State
 let token = localStorage.getItem('gal_token') || '';
@@ -2590,7 +2631,227 @@ async function refreshStatus() {
     el('st-ollama-status').style.color = (d.ollama?.online !== false) ? 'var(--green)' : 'var(--red)';
     el('st-ollama-models').textContent = d.ollama?.model_count ?? '--';
 
+    // Refresh cost dashboard
+    refreshCostDashboard();
   } catch(e) { console.error('Status refresh error:', e); }
+}
+
+// ── Cost Dashboard ───────────────────────────────────────────────────
+const EXCHANGE_RATES = {
+  USD:1, EUR:0.92, GBP:0.79, CAD:1.44,
+  AUD:1.57, JPY:149.5, INR:83.1, BRL:5.05, KRW:1345
+};
+const CURRENCY_SYMBOLS = {
+  USD:'$', EUR:'€', GBP:'£', CAD:'CA$', AUD:'AU$', JPY:'¥', INR:'₹', BRL:'R$', KRW:'₩'
+};
+let costChartDaily = null, costChartModels = null, costChartTrend = null;
+
+function getCurrency() {
+  try { return localStorage.getItem('gal_currency') || 'USD'; } catch(e) { return 'USD'; }
+}
+function saveCurrency() {
+  const c = document.getElementById('cost-currency').value;
+  try { localStorage.setItem('gal_currency', c); } catch(e) {}
+}
+function fmtCost(usd, decimals) {
+  const cur = getCurrency();
+  const rate = EXCHANGE_RATES[cur] || 1;
+  const val = usd * rate;
+  const sym = CURRENCY_SYMBOLS[cur] || cur;
+  if (decimals === undefined) {
+    if (val === 0) return 'FREE';
+    if (val < 0.01) return sym + val.toFixed(4);
+    if (val < 1) return sym + val.toFixed(3);
+    if (val < 100) return sym + val.toFixed(2);
+    return sym + val.toLocaleString(undefined, {maximumFractionDigits:0});
+  }
+  return sym + val.toFixed(decimals);
+}
+function costColor(usd) {
+  if (usd === 0) return 'var(--green)';
+  if (usd < 0.01) return 'var(--green)';
+  if (usd < 0.10) return 'var(--yellow)';
+  return 'var(--red)';
+}
+
+function applyChartDefaults() {
+  if (typeof Chart === 'undefined') return;
+  Chart.defaults.color = 'rgba(180,190,200,0.7)';
+  Chart.defaults.borderColor = 'rgba(255,255,255,0.06)';
+  Chart.defaults.font.family = "'JetBrains Mono', monospace";
+  Chart.defaults.font.size = 10;
+}
+
+async function refreshCostDashboard() {
+  try {
+    const r = await authFetch('/api/cost-stats');
+    if (!r.ok) return;
+    const d = await r.json();
+    if (d.error) return;
+
+    const sel = document.getElementById('cost-currency');
+    if (sel) sel.value = getCurrency();
+
+    const el = id => document.getElementById(id);
+    const setCard = (id, usd) => {
+      const e = el(id);
+      if (!e) return;
+      e.textContent = fmtCost(usd);
+      e.style.color = costColor(usd);
+    };
+    setCard('cost-session', d.session_cost);
+    setCard('cost-today', d.today_cost);
+    setCard('cost-week', d.week_cost);
+    setCard('cost-month', d.month_cost);
+    setCard('cost-last', d.last_request_cost);
+    setCard('cost-avg', d.avg_per_message);
+
+    applyChartDefaults();
+    if (typeof Chart === 'undefined') return;
+
+    const cur = getCurrency();
+    const rate = EXCHANGE_RATES[cur] || 1;
+    const sym = CURRENCY_SYMBOLS[cur] || cur;
+
+    // Chart 1: Daily Spend
+    const dailyCanvas = el('chart-daily');
+    if (dailyCanvas && d.daily) {
+      const labels = d.daily.map(x => x.date.slice(5));
+      const values = d.daily.map(x => x.cost * rate);
+      const PALETTE = ['#00f3ff','#a78bfa','#34d399','#f59e0b','#ef4444','#f472b6','#60a5fa','#10b981'];
+      const colors = d.daily.map((x, i) => PALETTE[i % PALETTE.length]);
+      if (costChartDaily) costChartDaily.destroy();
+      costChartDaily = new Chart(dailyCanvas, {
+        type: 'bar',
+        data: {
+          labels,
+          datasets: [{
+            data: values,
+            backgroundColor: colors.map(c => c + '99'),
+            borderColor: colors,
+            borderWidth: 1,
+            borderRadius: 4,
+          }],
+        },
+        options: {
+          responsive: true,
+          maintainAspectRatio: false,
+          plugins: {
+            legend: { display: false },
+            tooltip: {
+              callbacks: {
+                label: ctx => {
+                  const day = d.daily[ctx.dataIndex];
+                  const lines = [sym + (day.cost * rate).toFixed(2)];
+                  for (const [m, c] of Object.entries(day.models || {})) {
+                    lines.push('  ' + m + ': ' + sym + (c * rate).toFixed(3));
+                  }
+                  return lines;
+                }
+              }
+            }
+          },
+          scales: {
+            y: { beginAtZero: true, ticks: { callback: v => sym + v.toFixed(2) } },
+            x: { grid: { display: false } },
+          },
+        },
+      });
+    }
+
+    // Chart 2: Model Cost Comparison
+    const modelsCanvas = el('chart-models');
+    if (modelsCanvas && d.by_model) {
+      const labels = d.by_model.map(x => {
+        const short = x.model.includes('/') ? x.model.split('/')[1] : x.model;
+        return short.length > 20 ? short.slice(0, 18) + '…' : short;
+      });
+      const values = d.by_model.map(x => x.cost * rate);
+      const PALETTE = ['#00f3ff','#a78bfa','#34d399','#f59e0b','#ef4444','#f472b6','#60a5fa','#10b981'];
+      if (costChartModels) costChartModels.destroy();
+      costChartModels = new Chart(modelsCanvas, {
+        type: 'bar',
+        data: {
+          labels,
+          datasets: [{
+            data: values,
+            backgroundColor: PALETTE.slice(0, values.length).map(c => c + '99'),
+            borderColor: PALETTE.slice(0, values.length),
+            borderWidth: 1,
+            borderRadius: 4,
+          }],
+        },
+        options: {
+          indexAxis: 'y',
+          responsive: true,
+          maintainAspectRatio: false,
+          plugins: {
+            legend: { display: false },
+            tooltip: {
+              callbacks: {
+                label: ctx => {
+                  const m = d.by_model[ctx.dataIndex];
+                  return [
+                    sym + (m.cost * rate).toFixed(2),
+                    m.messages + ' messages',
+                    (m.tokens_in / 1000).toFixed(1) + 'k in / ' + (m.tokens_out / 1000).toFixed(1) + 'k out',
+                  ];
+                }
+              }
+            }
+          },
+          scales: {
+            x: { beginAtZero: true, ticks: { callback: v => sym + v.toFixed(2) } },
+            y: { grid: { display: false } },
+          },
+        },
+      });
+    }
+
+    // Chart 3: Cost per Message Trend
+    const trendCanvas = el('chart-trend');
+    if (trendCanvas && d.daily) {
+      const labels = d.daily.map(x => x.date.slice(5));
+      const values = d.daily.map(x => {
+        const msgs = Object.keys(x.models || {}).length || 1;
+        return (x.cost / Math.max(msgs, 1)) * rate;
+      });
+      if (costChartTrend) costChartTrend.destroy();
+      costChartTrend = new Chart(trendCanvas, {
+        type: 'line',
+        data: {
+          labels,
+          datasets: [{
+            data: values,
+            borderColor: '#00f3ff',
+            backgroundColor: 'rgba(0,243,255,0.1)',
+            fill: true,
+            tension: 0.4,
+            pointRadius: 3,
+            pointBackgroundColor: '#00f3ff',
+          }],
+        },
+        options: {
+          responsive: true,
+          maintainAspectRatio: false,
+          plugins: { legend: { display: false } },
+          scales: {
+            y: { beginAtZero: true, ticks: { callback: v => sym + v.toFixed(3) } },
+            x: { grid: { display: false } },
+          },
+        },
+      });
+    }
+
+    // Free models note
+    const freeNote = el('cost-free-note');
+    if (freeNote && d.free_models_used && d.free_models_used.length > 0) {
+      const names = d.free_models_used.map(m => m.split('/').pop()).join(', ');
+      freeNote.textContent = '🆓 Also used (free): ' + names;
+    } else if (freeNote) {
+      freeNote.textContent = '';
+    }
+  } catch(e) { console.error('Cost dashboard error:', e); }
 }
 
 // ── Settings Tab ──────────────────────────────────────────────────────
@@ -3340,6 +3601,12 @@ document.addEventListener('visibilitychange', () => {
 setInterval(() => {
   if (!document.hidden) refreshCurrentTab();
 }, 15000);
+
+// Restore saved currency on load
+try {
+  const saved = localStorage.getItem('gal_currency');
+  if (saved) { const sel = document.getElementById('cost-currency'); if (sel) sel.value = saved; }
+} catch(e) {}
 </script>
 </body>
 </html>"""
@@ -3551,6 +3818,13 @@ setInterval(() => {
             return web.json_response(resp_data)
         except Exception as e:
             return web.json_response({'error': str(e)}, status=500)
+
+    async def handle_cost_stats(self, request):
+        """GET /api/cost-stats — cost dashboard data."""
+        ct = getattr(self.core, 'cost_tracker', None)
+        if not ct:
+            return web.json_response({"error": "Cost tracking not initialized"}, status=503)
+        return web.json_response(ct.get_stats())
 
     async def handle_status(self, request):
         """GET /api/status — full system status JSON."""

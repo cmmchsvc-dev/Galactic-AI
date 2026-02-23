@@ -127,6 +127,10 @@ class GalacticCore:
         
         self.memory = GalacticMemory(self)
         self.gateway = GalacticGateway(self)
+        # Cost tracking (persistent JSONL)
+        from gateway_v2 import CostTracker
+        logs_dir = self.config.get('paths', {}).get('logs', './logs')
+        self.cost_tracker = CostTracker(logs_dir)
         self.model_manager = ModelManager(self)
 
         # Ollama Manager — robust local model support (health, discovery, context windows)

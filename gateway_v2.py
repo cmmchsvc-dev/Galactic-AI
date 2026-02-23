@@ -8,6 +8,7 @@ import traceback
 import uuid
 import httpx
 from datetime import datetime
+from collections import defaultdict
 from personality import GalacticPersonality
 from model_manager import (TRANSIENT_ERRORS, PERMANENT_ERRORS,
                            ERROR_RATE_LIMIT, ERROR_TIMEOUT, ERROR_AUTH)
@@ -44,6 +45,216 @@ _NVIDIA_THINKING_MODELS = {
     },
 }
 
+# ── Token pricing (USD per 1M tokens) ────────────────────────────────
+MODEL_PRICING = {
+    # OpenRouter — Frontier
+    "google/gemini-3.1-pro-preview":   {"input": 1.25,  "output": 10.00},
+    "anthropic/claude-opus-4.6":       {"input": 15.00, "output": 75.00},
+    "openai/gpt-5.2":                  {"input": 2.50,  "output": 10.00},
+    "openai/gpt-5.2-codex":            {"input": 2.50,  "output": 10.00},
+    "x-ai/grok-4.1-fast":              {"input": 3.00,  "output": 15.00},
+    "deepseek/deepseek-v3.2":          {"input": 0.27,  "output": 1.10},
+    "qwen/qwen3.5-plus-02-15":         {"input": 0.30,  "output": 1.20},
+    # OpenRouter — Strong
+    "google/gemini-3-pro-preview":     {"input": 1.25,  "output": 5.00},
+    "google/gemini-3-flash-preview":   {"input": 0.10,  "output": 0.40},
+    "anthropic/claude-sonnet-4.6":     {"input": 3.00,  "output": 15.00},
+    "anthropic/claude-opus-4.5":       {"input": 15.00, "output": 75.00},
+    "openai/gpt-5.2-pro":             {"input": 2.50,  "output": 10.00},
+    "openai/gpt-5.1":                  {"input": 2.00,  "output": 8.00},
+    "openai/gpt-5.1-codex":            {"input": 2.00,  "output": 8.00},
+    "qwen/qwen3.5-397b-a17b":          {"input": 0.40,  "output": 1.60},
+    "qwen/qwen3-coder-next":           {"input": 0.30,  "output": 1.20},
+    "moonshotai/kimi-k2.5":            {"input": 0.60,  "output": 2.40},
+    "deepseek/deepseek-v3.2-speciale": {"input": 0.27,  "output": 1.10},
+    "z-ai/glm-5":                      {"input": 0.50,  "output": 2.00},
+    # OpenRouter — Fast
+    "mistralai/mistral-large-2512":    {"input": 2.00,  "output": 6.00},
+    "mistralai/devstral-2512":         {"input": 0.10,  "output": 0.30},
+    "minimax/minimax-m2.5":            {"input": 0.15,  "output": 0.60},
+    "perplexity/sonar-pro-search":     {"input": 3.00,  "output": 15.00},
+    "nvidia/nemotron-3-nano-30b-a3b":  {"input": 0,     "output": 0},
+    "stepfun/step-3.5-flash":          {"input": 0.02,  "output": 0.16},
+    "openai/gpt-5.2-chat":             {"input": 2.50,  "output": 10.00},
+    # Direct providers
+    "claude-sonnet-4-20250514":        {"input": 3.00,  "output": 15.00},
+    "gemini-2.5-flash":                {"input": 0.15,  "output": 0.60},
+    "gpt-4o":                          {"input": 2.50,  "output": 10.00},
+    "grok-3":                          {"input": 3.00,  "output": 15.00},
+    "mistral-large-latest":            {"input": 2.00,  "output": 6.00},
+    "deepseek-chat":                   {"input": 0.27,  "output": 1.10},
+}
+_PRICING_FALLBACK = {"input": 1.00, "output": 3.00}
+FREE_PROVIDERS = {"nvidia", "cerebras", "groq", "huggingface", "ollama"}
+
+
+class CostTracker:
+    """Tracks per-request token costs, persists to JSONL, computes dashboard stats."""
+
+    def __init__(self, logs_dir='./logs'):
+        self.logs_dir = logs_dir
+        self.log_file = os.path.join(logs_dir, 'cost_log.jsonl')
+        os.makedirs(logs_dir, exist_ok=True)
+        self.session_start = datetime.now().isoformat()
+        self.session_cost = 0.0
+        self.last_request_cost = 0.0
+        self.entries = []  # in-memory cache of recent entries
+        self._load_existing()
+        self._prune_old()
+
+    def _load_existing(self):
+        """Load existing JSONL entries into memory."""
+        if not os.path.exists(self.log_file):
+            return
+        try:
+            with open(self.log_file, 'r', encoding='utf-8') as f:
+                for line in f:
+                    line = line.strip()
+                    if line:
+                        try:
+                            self.entries.append(json.loads(line))
+                        except json.JSONDecodeError:
+                            continue
+        except Exception:
+            pass
+
+    def _prune_old(self):
+        """Remove entries older than 90 days and rewrite the file."""
+        from datetime import timedelta
+        cutoff = (datetime.now() - timedelta(days=90)).isoformat()
+        before = len(self.entries)
+        self.entries = [e for e in self.entries if e.get('ts', '') >= cutoff]
+        if len(self.entries) < before:
+            self._rewrite_file()
+
+    def _rewrite_file(self):
+        """Rewrite the JSONL file from memory (after prune)."""
+        try:
+            with open(self.log_file, 'w', encoding='utf-8') as f:
+                for entry in self.entries:
+                    f.write(json.dumps(entry) + '\n')
+        except Exception:
+            pass
+
+    def log_usage(self, model, provider, tokens_in, tokens_out):
+        """Calculate cost, append to JSONL, update running totals."""
+        is_free = provider in FREE_PROVIDERS
+        pricing = MODEL_PRICING.get(model, _PRICING_FALLBACK)
+        if is_free:
+            pricing = {"input": 0, "output": 0}
+
+        cost_in = (tokens_in / 1_000_000) * pricing["input"]
+        cost_out = (tokens_out / 1_000_000) * pricing["output"]
+        total_cost = cost_in + cost_out
+
+        entry = {
+            "ts": datetime.now().isoformat(),
+            "model": model,
+            "provider": provider,
+            "tin": tokens_in,
+            "tout": tokens_out,
+            "cost_in": round(cost_in, 6),
+            "cost_out": round(cost_out, 6),
+            "cost": round(total_cost, 6),
+            "free": is_free,
+        }
+
+        self.entries.append(entry)
+        self.session_cost += total_cost
+        self.last_request_cost = total_cost
+
+        # Append to file
+        try:
+            with open(self.log_file, 'a', encoding='utf-8') as f:
+                f.write(json.dumps(entry) + '\n')
+        except Exception:
+            pass
+
+    def get_stats(self):
+        """Compute dashboard statistics from in-memory entries."""
+        from datetime import timedelta
+        now = datetime.now()
+        today_start = now.replace(hour=0, minute=0, second=0, microsecond=0).isoformat()
+        week_start = (now - timedelta(days=7)).isoformat()
+        month_start = (now - timedelta(days=30)).isoformat()
+        fourteen_days_ago = (now - timedelta(days=14)).isoformat()
+
+        today_cost = 0.0
+        week_cost = 0.0
+        month_cost = 0.0
+        month_messages = 0
+        daily_map = defaultdict(lambda: {"cost": 0.0, "models": defaultdict(float)})
+        model_map = defaultdict(lambda: {"cost": 0.0, "messages": 0, "tokens_in": 0, "tokens_out": 0})
+        free_models = set()
+
+        for e in self.entries:
+            ts = e.get('ts', '')
+            cost = e.get('cost', 0.0)
+            model = e.get('model', 'unknown')
+            is_free = e.get('free', False)
+
+            if is_free:
+                free_models.add(model)
+
+            if ts >= today_start:
+                today_cost += cost
+            if ts >= week_start:
+                week_cost += cost
+            if ts >= month_start:
+                month_cost += cost
+                month_messages += 1
+
+            # Daily series (last 14 days)
+            if ts >= fourteen_days_ago:
+                day = ts[:10]  # YYYY-MM-DD
+                daily_map[day]["cost"] += cost
+                short_model = model.split('/')[-1] if '/' in model else model
+                daily_map[day]["models"][short_model] += cost
+
+            # By-model aggregation (last 30 days)
+            if ts >= month_start and not is_free:
+                model_map[model]["cost"] += cost
+                model_map[model]["messages"] += 1
+                model_map[model]["tokens_in"] += e.get('tin', 0)
+                model_map[model]["tokens_out"] += e.get('tout', 0)
+
+        # Build daily series (sorted, last 14 days)
+        daily_series = []
+        for day in sorted(daily_map.keys()):
+            d = daily_map[day]
+            daily_series.append({
+                "date": day,
+                "cost": round(d["cost"], 4),
+                "models": {k: round(v, 4) for k, v in d["models"].items()},
+            })
+
+        # Build by-model list (sorted by cost descending, top 8)
+        by_model = []
+        for model, stats in sorted(model_map.items(), key=lambda x: x[1]["cost"], reverse=True)[:8]:
+            by_model.append({
+                "model": model,
+                "cost": round(stats["cost"], 4),
+                "messages": stats["messages"],
+                "tokens_in": stats["tokens_in"],
+                "tokens_out": stats["tokens_out"],
+            })
+
+        avg_per_message = (month_cost / month_messages) if month_messages > 0 else 0.0
+
+        return {
+            "session_cost": round(self.session_cost, 4),
+            "today_cost": round(today_cost, 4),
+            "week_cost": round(week_cost, 4),
+            "month_cost": round(month_cost, 4),
+            "last_request_cost": round(self.last_request_cost, 6),
+            "avg_per_message": round(avg_per_message, 4),
+            "message_count_month": month_messages,
+            "daily": daily_series,
+            "by_model": by_model,
+            "free_models_used": sorted(list(free_models)),
+        }
+
+
 class GalacticGateway:
     def __init__(self, core):
         self.core = core
@@ -71,6 +282,7 @@ class GalacticGateway:
         # Token tracking (for /status compatibility)
         self.total_tokens_in = 0
         self.total_tokens_out = 0
+        self._last_usage = None  # Populated by provider methods with real API token counts
 
         # TTS voice file tracking — set by speak() when text_to_speech tool is invoked
         self.last_voice_file = None
@@ -3334,7 +3546,8 @@ class GalacticGateway:
           - Full messages array passed directly (not collapsed to a string)
         """
         # Track input tokens (rough estimate: 1 token ~= 4 chars)
-        self.total_tokens_in += len(user_input) // 4
+        self._estimated_input_tokens = len(user_input) // 4
+        self.total_tokens_in += self._estimated_input_tokens
 
         # Reset per-turn state
         self.last_voice_file = None
@@ -3603,6 +3816,24 @@ class GalacticGateway:
                     await self.core.relay.emit(2, "thought", display_text)
 
                 self.total_tokens_out += len(display_text) // 4
+                # Log cost with real token counts if available, otherwise estimates
+                if hasattr(self.core, 'cost_tracker'):
+                    real = self._last_usage
+                    if real and (real.get('prompt_tokens') or real.get('completion_tokens')):
+                        tin = real['prompt_tokens']
+                        tout = real['completion_tokens']
+                        # Update running totals with real counts (overwrite estimates)
+                        self.total_tokens_in += tin - self._estimated_input_tokens
+                        self.total_tokens_out += tout - (len(display_text) // 4)
+                    else:
+                        tin = self._estimated_input_tokens
+                        tout = len(display_text) // 4
+                    self.core.cost_tracker.log_usage(
+                        model=self.llm.model,
+                        provider=self.llm.provider,
+                        tokens_in=tin,
+                        tokens_out=tout,
+                    )
 
                 # Persist to JSONL
                 source = "telegram" if chat_id else "web"
@@ -3992,6 +4223,7 @@ class GalacticGateway:
         url = f"https://generativelanguage.googleapis.com/v1beta/models/{self.llm.model}:generateContent?key={self.llm.api_key}"
         payload = {"contents": [{"parts": [{"text": f"SYSTEM CONTEXT: {context}\n\nUser: {prompt}"}]}]}
         try:
+            self._last_usage = None
             async with httpx.AsyncClient(timeout=60.0, verify=False) as client:
                 response = await client.post(url, json=payload)
                 data = response.json()
@@ -4003,6 +4235,12 @@ class GalacticGateway:
                 if 'content' not in candidate:
                     reason = candidate.get('finishReason', 'UNKNOWN')
                     return f"[ERROR] Google returned no content (finishReason: {reason}). Try rephrasing."
+                # Extract real token counts from Google response
+                um = data.get('usageMetadata', {})
+                self._last_usage = {
+                    "prompt_tokens": um.get('promptTokenCount', 0),
+                    "completion_tokens": um.get('candidatesTokenCount', 0),
+                }
                 return candidate['content']['parts'][0]['text']
         except Exception as e:
             return f"[ERROR] Google: {str(e)}"
@@ -4116,9 +4354,16 @@ class GalacticGateway:
         }
 
         try:
+            self._last_usage = None
             async with httpx.AsyncClient(timeout=120.0) as client:
                 response = await client.post(url, headers=headers, json=payload)
                 data = response.json()
+                # Extract real token counts from Anthropic response
+                usage = data.get('usage', {})
+                self._last_usage = {
+                    "prompt_tokens": usage.get('input_tokens', 0),
+                    "completion_tokens": usage.get('output_tokens', 0),
+                }
                 if "content" in data and data["content"]:
                     text_blocks = [b["text"] for b in data["content"] if b.get("type") == "text"]
                     return "\n".join(text_blocks) if text_blocks else "[ERROR] Anthropic: Empty response"
@@ -4351,6 +4596,7 @@ class GalacticGateway:
           • Injects max_tokens if configured
         """
         provider = self.llm.provider
+        self._last_usage = None
 
         # FLUX models are image-generation only — auto-invoke generate_image
         if provider == "nvidia" and "flux" in self.llm.model.lower():
@@ -4386,6 +4632,7 @@ class GalacticGateway:
                 "model": self.llm.model,
                 "messages": messages,
                 "stream": True,
+                "stream_options": {"include_usage": True},
             }
             # Ollama benefits from explicit temperature in options
             if provider == "ollama":
@@ -4443,6 +4690,13 @@ class GalacticGateway:
                                         await self.core.relay.emit(3, "stream_chunk", "".join(token_buf))
                                         token_buf = []
                                         await asyncio.sleep(0)  # yield to other tasks (typing, etc.)
+                                # Capture usage from final streaming chunk (OpenAI/OpenRouter)
+                                if 'usage' in chunk:
+                                    usage = chunk['usage']
+                                    self._last_usage = {
+                                        "prompt_tokens": usage.get('prompt_tokens', 0),
+                                        "completion_tokens": usage.get('completion_tokens', 0),
+                                    }
                             except json.JSONDecodeError:
                                 continue
                         # Flush remaining buffer
@@ -4527,6 +4781,13 @@ class GalacticGateway:
                         data = json.loads(body_text)
                     except json.JSONDecodeError as je:
                         return f"[ERROR] {provider}: invalid JSON — {je} — body: {body_text[:200]}"
+                    # Extract real token counts from OpenAI-compatible response
+                    usage = data.get('usage', {})
+                    if usage:
+                        self._last_usage = {
+                            "prompt_tokens": usage.get('prompt_tokens', 0),
+                            "completion_tokens": usage.get('completion_tokens', 0),
+                        }
                     if 'choices' not in data:
                         return f"[ERROR] {provider}: {json.dumps(data)[:500]}"
                     msg = data['choices'][0]['message']
