@@ -108,7 +108,7 @@ class BrowserExecutorPro(GalacticPlugin):
             
             # Context with realistic viewport
             self.context = await self.browser.new_context(
-                viewport={'width': 1920, 'height': 1080},
+                no_viewport=True,
                 user_agent='Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
             )
             
@@ -1037,7 +1037,7 @@ class BrowserExecutorPro(GalacticPlugin):
 
             self.context = await self.browser.new_context(
                 timezone_id=timezone_id,
-                viewport={'width': 1920, 'height': 1080},
+                no_viewport=True,
                 user_agent='Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
             )
             page = await self.context.new_page()
@@ -1082,7 +1082,7 @@ class BrowserExecutorPro(GalacticPlugin):
                     pass
             self.context = await self.browser.new_context(
                 locale=locale,
-                viewport={'width': 1920, 'height': 1080},
+                no_viewport=True,
                 user_agent='Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
             )
             page = await self.context.new_page()
@@ -1269,7 +1269,7 @@ class BrowserExecutorPro(GalacticPlugin):
 
             self.context = await self.browser.new_context(
                 storage_state=str(session_path),
-                viewport={'width': 1920, 'height': 1080},
+                no_viewport=True,
                 user_agent='Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
             )
             page = await self.context.new_page()
@@ -1308,7 +1308,7 @@ class BrowserExecutorPro(GalacticPlugin):
                 args=['--disable-blink-features=AutomationControlled', '--no-sandbox']
             )
             self.context = await self.browser.new_context(
-                viewport={'width': 1920, 'height': 1080},
+                no_viewport=True,
                 user_agent='Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
             )
             page = await self.context.new_page()
