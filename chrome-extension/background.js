@@ -188,6 +188,7 @@ async function handleCommand(id, command, args) {
     case 'read_console':  return await cmdReadConsole(args);
     case 'read_network':  return await cmdReadNetwork(args);
     case 'hover':         return await cmdHover(args);
+    case 'zoom':          return await cmdZoom(args);
     default:              return { error: `Unknown command: ${command}` };
   }
 }
@@ -355,6 +356,53 @@ async function cmdHover(args) {
   const tabId = await getTargetTabId(args);
   if (!tabId) return { error: 'No active tab' };
   return await sendToContent(tabId, 'hover', args);
+}
+
+async function cmdZoom(args) {
+  const region = args?.region;
+  if (!region || region.length !== 4) {
+    return { status: 'error', error: 'region must be [x0, y0, x1, y1]' };
+  }
+
+  const tabId = await getTargetTabId(args);
+  if (!tabId) return { error: 'No active tab' };
+
+  /* Ensure the tab is in focus for captureVisibleTab */
+  const tab = await chrome.tabs.get(tabId);
+  await chrome.windows.update(tab.windowId, { focused: true });
+  await chrome.tabs.update(tabId, { active: true });
+  await new Promise(r => setTimeout(r, 150));
+
+  return await new Promise((resolve) => {
+    chrome.tabs.captureVisibleTab(tab.windowId, { format: 'jpeg', quality: 85 }, (fullDataUrl) => {
+      if (chrome.runtime.lastError) {
+        resolve({ status: 'error', error: chrome.runtime.lastError.message });
+        return;
+      }
+      (async () => {
+        try {
+          const [x0, y0, x1, y1] = region;
+          const width = x1 - x0;
+          const height = y1 - y0;
+          const resp = await fetch(fullDataUrl);
+          const blob = await resp.blob();
+          const bitmap = await createImageBitmap(blob);
+          const canvas = new OffscreenCanvas(width, height);
+          const ctx = canvas.getContext('2d');
+          ctx.drawImage(bitmap, x0, y0, width, height, 0, 0, width, height);
+          const croppedBlob = await canvas.convertToBlob({ type: 'image/jpeg', quality: 0.85 });
+          const reader = new FileReader();
+          reader.onloadend = () => {
+            const b64 = reader.result.split(',')[1];
+            resolve({ status: 'success', image_b64: b64, region, width, height });
+          };
+          reader.readAsDataURL(croppedBlob);
+        } catch (err) {
+          resolve({ status: 'error', error: err.message });
+        }
+      })();
+    });
+  });
 }
 
 /* ─── Debugger-based: Console ───────────────────────────────────────────── */

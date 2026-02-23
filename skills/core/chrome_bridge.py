@@ -193,6 +193,13 @@ class ChromeBridgeSkill(GalacticSkill):
                 }},
                 "fn": self._tool_chrome_hover
             },
+            "chrome_zoom": {
+                "description": "Capture a cropped region of the Chrome browser for close inspection of small elements (icons, buttons, form fields). region=[x0,y0,x1,y1] in pixels from top-left of viewport. Returns a JPEG of just that region.",
+                "parameters": {"type": "object", "properties": {
+                    "region": {"type": "array", "description": "Bounding box [x0, y0, x1, y1] in pixels from viewport top-left. E.g. [0, 0, 200, 200] for top-left 200x200px"},
+                }, "required": ["region"]},
+                "fn": self._tool_chrome_zoom
+            },
         }
 
     # ── Tool handlers ────────────────────────────────────────────────────
@@ -222,6 +229,30 @@ class ChromeBridgeSkill(GalacticSkill):
             except Exception as e:
                 return f"[CHROME] Screenshot captured ({len(img_data)} chars base64) — save failed: {e}"
         return f"[ERROR] Chrome screenshot: {result.get('error') or result.get('message') or 'unknown error'}"
+
+    async def _tool_chrome_zoom(self, args):
+        if not self.ws_connection: return "[ERROR] Chrome extension not connected."
+        region = args.get('region')
+        if not region or len(region) != 4:
+            return "[ERROR] chrome_zoom: region must be [x0, y0, x1, y1]"
+        result = await self.zoom(region=region)
+        if result.get('status') == 'success':
+            img_data = result.get('image_b64', '')
+            if not img_data:
+                return "[ERROR] Chrome zoom: no image data returned"
+            try:
+                images_dir = self.core.config.get('paths', {}).get('images', './images')
+                img_subdir = Path(images_dir) / 'browser'
+                img_subdir.mkdir(parents=True, exist_ok=True)
+                ts = datetime.now().strftime('%Y%m%d_%H%M%S')
+                path = str(img_subdir / f'chrome_zoom_{ts}.jpg')
+                with open(path, 'wb') as f:
+                    f.write(base64.b64decode(img_data))
+                return {"__image_b64__": img_data, "path": path, "media_type": "image/jpeg",
+                        "text": f"[CHROME] Zoomed region {region} saved: {path}"}
+            except Exception as e:
+                return f"[CHROME] Zoom captured — save failed: {e}"
+        return f"[ERROR] Chrome zoom: {result.get('error') or result.get('message') or 'unknown'}"
 
     async def _tool_chrome_navigate(self, args):
         if not self.ws_connection: return "[ERROR] Chrome extension not connected."
@@ -631,6 +662,10 @@ class ChromeBridgeSkill(GalacticSkill):
             "y": y,
             "tab_id": tab_id,
         })
+
+    async def zoom(self, region: list, tab_id=None):
+        """Capture a cropped region of the active tab as a JPEG."""
+        return await self.send_command("zoom", {"region": region, "tab_id": tab_id})
 
     # ── Internal helpers ─────────────────────────────────────────────────
 
