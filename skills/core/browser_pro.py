@@ -1318,7 +1318,7 @@ class BrowserProSkill(GalacticSkill):
             return {"status": "error", "message": str(e)}
 
     async def type_text(self, selector, text, page_id=None, clear=True, press_enter=False):
-        """Type text into input field."""
+        """Type text into input field. Handles both standard inputs and contenteditable divs (e.g. X.com compose box)."""
         try:
             page = self._get_page(page_id)
             if not page:
@@ -1326,10 +1326,26 @@ class BrowserProSkill(GalacticSkill):
 
             await page.wait_for_selector(selector, timeout=self.default_timeout)
 
-            if clear:
-                await page.fill(selector, "")  # Clear first
+            # Detect contenteditable (X.com compose, Notion, Gmail compose, etc.)
+            # Standard .fill() silently does nothing on contenteditable elements.
+            is_ce = await page.evaluate(
+                f"""(sel => {{
+                    const el = document.querySelector(sel);
+                    return el ? el.isContentEditable : false;
+                }})('{selector}')"""
+            )
 
-            await page.fill(selector, text)
+            if is_ce:
+                # Click to focus, then use real keyboard events
+                await page.click(selector)
+                if clear:
+                    await page.keyboard.press("Control+A")
+                    await page.keyboard.press("Delete")
+                await page.keyboard.type(text, delay=10)
+            else:
+                if clear:
+                    await page.fill(selector, "")  # Clear first
+                await page.fill(selector, text)
 
             if press_enter:
                 await page.press(selector, "Enter")
