@@ -100,6 +100,9 @@ providers:
       stepfun: ''
   ollama:
     baseUrl: http://127.0.0.1:11434/v1
+  openrouter:
+    apiKey: ''
+    baseUrl: https://openrouter.ai/api/v1
   openai:
     apiKey: ''
     baseUrl: https://api.openai.com/v1
