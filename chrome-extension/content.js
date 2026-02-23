@@ -684,6 +684,51 @@
     return { status: 'success' };
   }
 
+  /* ─── Right Click ───────────────────────────────────────────────────── */
+
+  function performRightClick(args) {
+    let el = null;
+    if (args?.ref) {
+      el = getElementByRef(args.ref);
+    } else if (args?.selector) {
+      el = document.querySelector(args.selector);
+    } else if (args?.x !== undefined && args?.y !== undefined) {
+      el = document.elementFromPoint(args.x, args.y);
+    }
+    if (!el) return { error: 'Element not found' };
+
+    const rect = el.getBoundingClientRect();
+    const cx = args?.x !== undefined ? args.x : rect.left + rect.width / 2;
+    const cy = args?.y !== undefined ? args.y : rect.top + rect.height / 2;
+
+    el.dispatchEvent(new MouseEvent('mousedown', { clientX: cx, clientY: cy, button: 2, buttons: 2, bubbles: true, cancelable: true }));
+    el.dispatchEvent(new MouseEvent('mouseup',   { clientX: cx, clientY: cy, button: 2, buttons: 0, bubbles: true, cancelable: true }));
+    el.dispatchEvent(new MouseEvent('contextmenu', { clientX: cx, clientY: cy, button: 2, bubbles: true, cancelable: true }));
+    return { status: 'success' };
+  }
+
+  /* ─── Triple Click ───────────────────────────────────────────────────── */
+
+  function performTripleClick(args) {
+    let el = null;
+    if (args?.ref) {
+      el = getElementByRef(args.ref);
+    } else if (args?.selector) {
+      el = document.querySelector(args.selector);
+    } else if (args?.x !== undefined && args?.y !== undefined) {
+      el = document.elementFromPoint(args.x, args.y);
+    }
+    if (!el) return { error: 'Element not found' };
+
+    el.focus();
+    for (let i = 1; i <= 3; i++) {
+      el.dispatchEvent(new MouseEvent('click', { detail: i, bubbles: true, cancelable: true }));
+    }
+    // Also select all text in value-based inputs
+    if (typeof el.select === 'function') el.select();
+    return { status: 'success' };
+  }
+
   /* ─── Drag ──────────────────────────────────────────────────────────── */
 
   function performDrag(startX, startY, endX, endY) {
@@ -733,9 +778,11 @@
       case 'scroll':      return performScroll(args);
       case 'form_input':  return performFormInput(args);
       case 'key_press':   return performKeyPress(args);
-      case 'hover':       return performHover(args);
-      case 'drag':        return performDrag(args?.start_x, args?.start_y, args?.end_x, args?.end_y);
-      case 'get_text':    return getPageText();
+      case 'hover':        return performHover(args);
+      case 'drag':         return performDrag(args?.start_x, args?.start_y, args?.end_x, args?.end_y);
+      case 'right_click':  return performRightClick(args);
+      case 'triple_click': return performTripleClick(args);
+      case 'get_text':     return getPageText();
       default:            return { error: `Unknown content command: ${command}` };
     }
   }

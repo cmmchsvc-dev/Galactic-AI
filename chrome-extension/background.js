@@ -190,6 +190,8 @@ async function handleCommand(id, command, args) {
     case 'hover':         return await cmdHover(args);
     case 'zoom':          return await cmdZoom(args);
     case 'drag':          return await cmdDrag(args);
+    case 'right_click':   return await cmdRightClick(args);
+    case 'triple_click':  return await cmdTripleClick(args);
     default:              return { error: `Unknown command: ${command}` };
   }
 }
@@ -363,6 +365,18 @@ async function cmdDrag(args) {
   const tabId = await getTargetTabId(args);
   if (!tabId) return { error: 'No active tab' };
   return await sendToContent(tabId, 'drag', args);
+}
+
+async function cmdRightClick(args) {
+  const tabId = await getTargetTabId(args);
+  if (!tabId) return { error: 'No active tab' };
+  return await sendToContent(tabId, 'right_click', args);
+}
+
+async function cmdTripleClick(args) {
+  const tabId = await getTargetTabId(args);
+  if (!tabId) return { error: 'No active tab' };
+  return await sendToContent(tabId, 'triple_click', args);
 }
 
 async function cmdZoom(args) {
