@@ -1159,7 +1159,12 @@ class GalacticGateway:
         """Open a URL in Playwright browser."""
         url = args.get('url')
         try:
-            browser_plugin = next((p for p in self.core.plugins if "BrowserExecutorPro" in p.__class__.__name__), None)
+            browser_plugin = next(
+                (p for p in self.core.plugins
+                 if "BrowserExecutorPro" in p.__class__.__name__
+                 or getattr(p, 'skill_name', '') == 'browser_pro'),
+                None
+            )
             if not browser_plugin:
                 return "[ERROR] BrowserExecutorPro plugin not loaded."
             
