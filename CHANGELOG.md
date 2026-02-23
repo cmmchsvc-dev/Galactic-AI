@@ -4,6 +4,17 @@ All notable changes to Galactic AI are documented here.
 
 ---
 
+## [v1.1.2] — 2026-02-23
+
+### Added
+- **⚡ Skills Ecosystem** — Complete architectural evolution of the plugin system. New `GalacticSkill` base class with structured metadata (`skill_name`, `version`, `author`, `description`, `category`, `icon`, `is_core`) and `get_tools()` dynamic tool registration. All capabilities now live in self-contained skill classes instead of the gateway monolith
+- **⚡ 6 Core Skills Migrated** — ShellSkill (1 tool), DesktopSkill (8 tools), ChromeBridgeSkill (16 tools), SocialMediaSkill (6 tools), SubAgentSkill (2 tools), BrowserProSkill (55 tools). 88 tool definitions extracted from `gateway_v2.py` into `skills/core/`
+- **⚡ AI Self-Authoring** — Byte can write, validate, and load new community skills at runtime. Three new meta-tools: `create_skill` (AST-validated, instantly live), `list_skills` (rich metadata), `remove_skill` (safe unload + file delete). Skills saved to `skills/community/` and tracked in `registry.json`
+- **⚡ Community Skill Discovery** — `skills/community/` directory auto-loaded from disk on startup. `registry.json` manifest tracks AI-authored and user-installed community skills
+- **⚡ Skills Tab in Control Deck** — Replaces Plugins tab with rich skill cards: icon, display name, CORE/COMMUNITY badge, version, author, description, and tool count preview
+
+---
+
 ## [v1.1.1] — 2026-02-23
 
 ### Added
