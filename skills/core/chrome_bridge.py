@@ -239,6 +239,15 @@ class ChromeBridgeSkill(GalacticSkill):
                 }, "required": ["file_path"]},
                 "fn": self._tool_chrome_upload
             },
+            "chrome_resize": {
+                "description": "Resize the Chrome viewport. Presets: mobile (375\u00d7812), tablet (768\u00d71024), desktop (1280\u00d7800). Or provide custom width and height in pixels.",
+                "parameters": {"type": "object", "properties": {
+                    "preset": {"type": "string", "description": "Device preset: mobile, tablet, or desktop"},
+                    "width": {"type": "number", "description": "Custom viewport width in pixels"},
+                    "height": {"type": "number", "description": "Custom viewport height in pixels"},
+                }, "required": []},
+                "fn": self._tool_chrome_resize
+            },
         }
 
     # ── Tool handlers ────────────────────────────────────────────────────
@@ -508,6 +517,16 @@ class ChromeBridgeSkill(GalacticSkill):
             return f"[CHROME] File uploaded: {result.get('file_path', file_path)}"
         return f"[ERROR] Chrome upload: {result.get('error') or result.get('message') or 'unknown'}"
 
+    async def _tool_chrome_resize(self, args: dict) -> str:
+        if not self.ws_connection:
+            return "[ERROR] Chrome extension not connected."
+        result = await self.send_command("resize_window", args)
+        if result.get("error") or result.get("message"):
+            return f"[ERROR] chrome_resize: {result.get('error') or result.get('message')}"
+        w = result.get("width")
+        h = result.get("height")
+        return f"[CHROME] Viewport resized to {w}\u00d7{h}"
+
     # ── Inbound message handler (called by web_deck) ─────────────────────
 
     async def handle_ws_message(self, msg_data: str) -> None:
@@ -772,6 +791,17 @@ class ChromeBridgeSkill(GalacticSkill):
         if tab_id:
             args["tab_id"] = tab_id
         return await self.send_command("upload_file", args)
+
+    async def resize_window(self, preset: str = None, width: int = None, height: int = None) -> dict:
+        """Resize the Chrome viewport using a preset or custom dimensions."""
+        args = {}
+        if preset:
+            args["preset"] = preset
+        if width is not None:
+            args["width"] = width
+        if height is not None:
+            args["height"] = height
+        return await self.send_command("resize_window", args)
 
     # ── Internal helpers ─────────────────────────────────────────────────
 
