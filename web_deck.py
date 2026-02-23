@@ -815,8 +815,8 @@ body.glow-max .status-dot{box-shadow:0 0 14px var(--green),0 0 28px rgba(0,255,1
       <div id="chat-wrap">
         <div style="display:flex;flex-direction:column;flex:1;overflow:hidden">
           <div id="chat-log">
-            <div id="stream-bubble"></div>
             <div class="msg bot"><div class="bubble">⬡ Galactic AI online. How can I help?</div></div>
+            <div id="stream-bubble"></div>
           </div>
           <div id="chat-attach-bar" style="display:none;padding:4px 16px 0;border-top:1px solid var(--border);background:var(--bg2)"></div>
           <div id="chat-input-row" style="display:flex;gap:8px;padding:12px 16px;border-top:1px solid var(--border);flex-shrink:0;background:var(--bg2)">
@@ -1730,7 +1730,7 @@ function appendBotMsg(text, ts) {
   const div = document.createElement('div');
   div.className = 'msg bot';
   div.innerHTML = `<div class="bubble">${formatMsg(text)}</div><div class="meta">Byte \u2022 ${fmtTime(ts)}</div>`;
-  log.insertBefore(div, sb.nextSibling);
+  log.insertBefore(div, sb);
   if (autoScroll) log.scrollTop = log.scrollHeight;
 }
 
@@ -1744,7 +1744,7 @@ function appendBotImage(url) {
          onclick="window.open('${url}','_blank')" title="Click to open full size" />
     <div style="font-size:0.75em;color:var(--dim);margin-top:4px">🎨 Click image to open full size</div>
   </div><div class="meta">Byte \u2022 ${fmtTime()}</div>`;
-  log.insertBefore(div, sb.nextSibling);
+  log.insertBefore(div, sb);
   if (autoScroll) log.scrollTop = log.scrollHeight;
 }
 
@@ -1761,7 +1761,7 @@ function appendBotVideo(url) {
       <a href="${url}" download style="font-size:0.75em;color:var(--cyan);text-decoration:none">⬇ Download MP4</a>
     </div>
   </div><div class="meta">Byte \u2022 ${fmtTime()}</div>`;
-  log.insertBefore(div, sb.nextSibling);
+  log.insertBefore(div, sb);
   if (autoScroll) log.scrollTop = log.scrollHeight;
 }
 
@@ -1773,7 +1773,7 @@ async function loadChatHistory() {
     if (msgs.length > 0) {
       // Clear the default welcome message before restoring history
       document.getElementById('chat-log').innerHTML = '<div id="stream-bubble" style="display:none"></div>';
-      // Render oldest→newest; each insertBefore(sb.nextSibling) puts newest at top
+      // Render oldest→newest; each insertBefore(sb) puts newest at bottom
       msgs.forEach(m => {
         if (m.role === 'user') appendUserMsg(m.content, m.ts);
         else if (m.role === 'assistant') appendBotMsg(m.content, m.ts);
@@ -1796,7 +1796,7 @@ function appendUserMsg(text, ts) {
   const div = document.createElement('div');
   div.className = 'msg user';
   div.innerHTML = `<div class="bubble">${escHtml(text)}</div><div class="meta">You \u2022 ${fmtTime(ts)}</div>`;
-  log.insertBefore(div, sb.nextSibling);
+  log.insertBefore(div, sb);
   if (autoScroll) log.scrollTop = log.scrollHeight;
 }
 
@@ -1942,7 +1942,7 @@ function autoResize(el) {
 }
 function clearChat() {
   const log = document.getElementById('chat-log');
-  log.innerHTML = '<div id="stream-bubble" style="display:none"></div><div class="msg bot"><div class="bubble">⬡ Galactic AI online. Context cleared.</div></div>';
+  log.innerHTML = '<div class="msg bot"><div class="bubble">⬡ Galactic AI online. Context cleared.</div></div><div id="stream-bubble" style="display:none"></div>';
   pendingFiles = [];
   renderAttachBar();
 }
@@ -2927,8 +2927,8 @@ function addLog(msg) {
     div.textContent = msg;
     el.append(div);
     if (autoScroll) el.scrollTop = el.scrollHeight;
-    // Trim DOM for performance — keep max 500 visible entries
-    while (el.children.length > 500) el.removeChild(el.lastChild);
+    // Trim DOM for performance — keep max 500 visible entries (remove oldest)
+    while (el.children.length > 500) el.removeChild(el.firstChild);
   }
 }
 
@@ -2936,8 +2936,8 @@ function filterLogs(q2) {
   const el = document.getElementById('logs-scroll');
   el.innerHTML = '';
   const filtered = allLogs.filter(l => !q2 || l.toLowerCase().includes(q2.toLowerCase()));
-  // Render newest first (reverse), limit to 500
-  filtered.slice(-500).reverse().forEach(l => {
+  // Render oldest→newest (chronological), limit to 500
+  filtered.slice(-500).forEach(l => {
     const div = document.createElement('div');
     div.className = 'log-line';
     div.textContent = l;
