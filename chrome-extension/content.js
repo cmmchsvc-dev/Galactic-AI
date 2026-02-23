@@ -791,6 +791,15 @@
       case 'right_click':  return performRightClick(args);
       case 'triple_click': return performTripleClick(args);
       case 'get_text':     return getPageText();
+      case 'resolve_ref': {
+        if (!args?.ref) return { error: 'No ref provided' };
+        const el = getElementByRef(args.ref);
+        if (!el) return { error: `Ref not found: ${args.ref}` };
+        /* Generate a unique attribute-based selector by temporarily tagging the element */
+        const uid = `gal_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`;
+        el.setAttribute('data-galactic-uid', uid);
+        return { status: 'success', selector: `[data-galactic-uid="${uid}"]` };
+      }
       default:            return { error: `Unknown content command: ${command}` };
     }
   }

@@ -192,6 +192,7 @@ async function handleCommand(id, command, args) {
     case 'drag':          return await cmdDrag(args);
     case 'right_click':   return await cmdRightClick(args);
     case 'triple_click':  return await cmdTripleClick(args);
+    case 'upload_file':   return await cmdUploadFile(args);
     default:              return { error: `Unknown command: ${command}` };
   }
 }
@@ -434,6 +435,68 @@ async function cmdZoom(args) {
       })();
     });
   });
+}
+
+/* ─── Debugger-based: File Upload ──────────────────────────────────────── */
+
+async function ensureDebuggerDOM(tabId) {
+  if (!debuggerAttached.has(tabId)) {
+    debuggerAttached.set(tabId, new Set());
+  }
+  const attachments = debuggerAttached.get(tabId);
+  if (attachments.has('dom')) return;
+
+  if (attachments.size === 0) {
+    await chrome.debugger.attach({ tabId }, '1.3');
+  }
+  attachments.add('dom');
+}
+
+async function cmdUploadFile(args) {
+  const filePath = args?.file_path;
+  if (!filePath) return { error: 'file_path is required' };
+
+  const tabId = await getTargetTabId(args);
+  if (!tabId) return { error: 'No active tab' };
+
+  /* Resolve ref to a CSS selector via content script if needed */
+  let selector = args?.selector || null;
+  if (!selector && args?.ref) {
+    const refResult = await sendToContent(tabId, 'resolve_ref', { ref: args.ref });
+    if (refResult?.error) return { error: `Ref resolution failed: ${refResult.error}` };
+    selector = refResult?.selector || null;
+  }
+  if (!selector) return { error: 'A selector or ref is required to identify the file input' };
+
+  /* Attach debugger if not already attached */
+  try {
+    await ensureDebuggerDOM(tabId);
+  } catch (err) {
+    return { error: `Debugger attach failed: ${err.message || String(err)}` };
+  }
+
+  try {
+    /* Get the root document node */
+    const { root } = await chrome.debugger.sendCommand({ tabId }, 'DOM.getDocument', { depth: 0 });
+    if (!root || !root.nodeId) return { error: 'DOM.getDocument returned no root node' };
+
+    /* Find the target element by CSS selector */
+    const { nodeId } = await chrome.debugger.sendCommand({ tabId }, 'DOM.querySelector', {
+      nodeId: root.nodeId,
+      selector
+    });
+    if (!nodeId) return { error: `No element found for selector: ${selector}` };
+
+    /* Set the file on the input element */
+    await chrome.debugger.sendCommand({ tabId }, 'DOM.setFileInputFiles', {
+      nodeId,
+      files: [filePath]
+    });
+
+    return { status: 'success', file_path: filePath };
+  } catch (err) {
+    return { error: `File upload failed: ${err.message || String(err)}` };
+  }
 }
 
 /* ─── Debugger-based: Console ───────────────────────────────────────────── */
