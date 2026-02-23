@@ -58,6 +58,11 @@ class ChromeBridgeSkill(GalacticSkill):
         # Cache of known tabs: {tab_id: {"title": ..., "url": ...}}
         self._tabs: dict[int, dict] = {}
 
+        # GIF recorder state
+        self._gif_recording = False
+        self._gif_frames: list[bytes] = []
+        self._gif_task = None  # asyncio task for polling loop
+
     # ── Metadata property (web_deck compat) ─────────────────────────────
 
     @property
@@ -266,6 +271,29 @@ class ChromeBridgeSkill(GalacticSkill):
                 },
                 "required": ["seconds"],
                 "fn": self._tool_chrome_wait
+            },
+            "chrome_gif_start": {
+                "description": "Start recording the browser as an animated GIF. Captures screenshots at the specified frame rate. Call chrome_gif_stop when done, then chrome_gif_export to save.",
+                "parameters": {
+                    "fps": {"type": "number", "description": "Frames per second (default: 2, max: 5)"}
+                },
+                "required": [],
+                "fn": self._tool_chrome_gif_start
+            },
+            "chrome_gif_stop": {
+                "description": "Stop the GIF recording. Frames are kept in memory. Call chrome_gif_export to save the GIF.",
+                "parameters": {},
+                "required": [],
+                "fn": self._tool_chrome_gif_stop
+            },
+            "chrome_gif_export": {
+                "description": "Export the recorded frames as an animated GIF. Saves to logs/recordings/ and returns the file path.",
+                "parameters": {
+                    "filename": {"type": "string", "description": "Output filename (without .gif extension). Defaults to timestamp."},
+                    "quality": {"type": "number", "description": "GIF quality 1-30 (lower=better, default: 10)"}
+                },
+                "required": [],
+                "fn": self._tool_chrome_gif_export
             },
         }
 
@@ -574,6 +602,105 @@ class ChromeBridgeSkill(GalacticSkill):
             seconds = 30  # cap at 30 seconds
         await asyncio.sleep(seconds)
         return f"[CHROME] Waited {seconds} seconds"
+
+    async def _tool_chrome_gif_start(self, args: dict) -> str:
+        if self._gif_recording:
+            return "[CHROME] GIF recording already in progress"
+        fps = float(args.get("fps", 2))
+        if fps <= 0 or fps > 5:
+            fps = 2
+        self._gif_recording = True
+        self._gif_frames = []
+        interval = 1.0 / fps
+
+        async def _poll():
+            while self._gif_recording:
+                try:
+                    result = await self.send_command("screenshot", {})
+                    if isinstance(result, dict) and result.get("__image_b64__"):
+                        frame_b64 = result["__image_b64__"]
+                        frame_bytes = base64.b64decode(frame_b64)
+                        self._gif_frames.append(frame_bytes)
+                    elif isinstance(result, dict) and result.get("image_b64"):
+                        frame_b64 = result["image_b64"]
+                        frame_bytes = base64.b64decode(frame_b64)
+                        self._gif_frames.append(frame_bytes)
+                    elif isinstance(result, str) and result.startswith("data:image"):
+                        # strip data URI prefix if present
+                        b64 = result.split(",", 1)[1]
+                        self._gif_frames.append(base64.b64decode(b64))
+                except Exception:
+                    pass
+                await asyncio.sleep(interval)
+
+        self._gif_task = asyncio.create_task(_poll())
+        return f"[CHROME] GIF recording started at {fps} fps"
+
+    async def _tool_chrome_gif_stop(self, args: dict) -> str:
+        if not self._gif_recording:
+            return "[CHROME] No GIF recording in progress"
+        self._gif_recording = False
+        if self._gif_task:
+            self._gif_task.cancel()
+            try:
+                await self._gif_task
+            except asyncio.CancelledError:
+                pass
+            self._gif_task = None
+        return f"[CHROME] GIF recording stopped. {len(self._gif_frames)} frames captured."
+
+    async def _tool_chrome_gif_export(self, args: dict) -> str:
+        if not self._gif_frames:
+            return "[ERROR] chrome_gif_export: No frames to export. Use chrome_gif_start first."
+        try:
+            from PIL import Image
+            import io
+        except ImportError:
+            return "[ERROR] chrome_gif_export: Pillow not installed. Run: pip install Pillow"
+
+        quality = int(args.get("quality", 10))
+        if quality < 1 or quality > 30:
+            quality = 10
+
+        filename = args.get("filename", "")
+        if not filename:
+            filename = datetime.now().strftime("%Y%m%d_%H%M%S")
+        # Sanitize filename
+        filename = "".join(c for c in filename if c.isalnum() or c in "_-")[:64] or "recording"
+
+        out_dir = Path("logs/recordings")
+        out_dir.mkdir(parents=True, exist_ok=True)
+        out_path = out_dir / f"{filename}.gif"
+
+        # Convert JPEG bytes to PIL Images
+        pil_frames = []
+        for frame_bytes in self._gif_frames:
+            try:
+                img = Image.open(io.BytesIO(frame_bytes)).convert("RGB")
+                # Quantize for GIF (256 colors)
+                img = img.quantize(colors=256, method=Image.Quantize.MEDIANCUT)
+                pil_frames.append(img)
+            except Exception:
+                continue
+
+        if not pil_frames:
+            return "[ERROR] chrome_gif_export: Could not decode any frames"
+
+        # Frame duration in ms (quality param maps: 1=best quality=longest process time; use as-is for duration calc)
+        frame_duration = max(100, quality * 10)  # ~100ms minimum per frame
+
+        pil_frames[0].save(
+            str(out_path),
+            format="GIF",
+            save_all=True,
+            append_images=pil_frames[1:],
+            loop=0,
+            duration=frame_duration,
+            optimize=False
+        )
+
+        self._gif_frames = []  # clear frames after export
+        return f"[CHROME] GIF saved: {out_path} ({len(pil_frames)} frames)"
 
     # ── Inbound message handler (called by web_deck) ─────────────────────
 
