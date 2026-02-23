@@ -86,6 +86,22 @@ class SocialMediaSkill(GalacticSkill):
                 }, "required": ["thing_id", "body"]},
                 "fn": self._tool_reply_reddit
             },
+            "post_tweet_browser": {
+                "description": "Post a single tweet on X.com using browser automation (no API key needed). Requires the Playwright browser to be started first.",
+                "parameters": {"type": "object", "properties": {
+                    "text": {"type": "string", "description": "Tweet text"},
+                    "media_path": {"type": "string", "description": "Local path to image or video to attach (optional)"},
+                }, "required": ["text"]},
+                "fn": self._tool_post_tweet_browser
+            },
+            "post_thread_browser": {
+                "description": "Post a multi-tweet thread on X.com using browser automation (no API key needed). Requires the Playwright browser to be started first.",
+                "parameters": {"type": "object", "properties": {
+                    "tweets": {"type": "array", "items": {"type": "string"}, "description": "List of tweet texts in order (first item = Tweet 1, etc.)"},
+                    "media_path": {"type": "string", "description": "Local path to image or video to attach to Tweet 1 (optional)"},
+                }, "required": ["tweets"]},
+                "fn": self._tool_post_thread_browser
+            },
         }
 
     # ── Tool handlers ────────────────────────────────────────────────────
@@ -156,6 +172,27 @@ class SocialMediaSkill(GalacticSkill):
         if result.get('status') == 'success':
             return f"[REDDIT] Reply posted! ID: {result.get('comment_id', '?')}"
         return f"[ERROR] reply_reddit: {result.get('message', 'unknown error')}"
+
+    async def _tool_post_tweet_browser(self, args):
+        result = await self.post_tweet_browser(
+            text=args.get('text', ''),
+            media_path=args.get('media_path')
+        )
+        if result.get('status') == 'success':
+            return f"[TWITTER] Tweet posted via browser! URL: {result.get('url', '?')}"
+        return f"[ERROR] post_tweet_browser: {result.get('message', 'unknown error')}"
+
+    async def _tool_post_thread_browser(self, args):
+        tweets = args.get('tweets', [])
+        if not tweets:
+            return "[ERROR] post_thread_browser: no tweets provided"
+        result = await self.post_thread_browser(
+            tweets=tweets,
+            media_path=args.get('media_path')
+        )
+        if result.get('status') == 'success':
+            return f"[TWITTER] Thread posted via browser! {result.get('tweet_count', 0)} tweets. URL: {result.get('url', '?')}"
+        return f"[ERROR] post_thread_browser: {result.get('message', 'unknown error')}"
 
     # ══════════════════════════════════════════════════════════════════════
     #  TWITTER / X  (copied verbatim from plugins/social_media.py)
@@ -277,6 +314,143 @@ class SocialMediaSkill(GalacticSkill):
 
         except Exception as e:
             await self.core.log(f"Tweet failed: {e}", priority=1, component="SocialMedia")
+            return {"status": "error", "message": str(e)}
+
+    # ── Browser-based posting (no API key needed) ─────────────────────────
+
+    async def post_tweet_browser(self, text, media_path=None):
+        """Post a single tweet via Playwright browser automation.
+
+        Does not require Twitter API credentials — uses the logged-in browser
+        session. Requires BrowserProSkill to be started (browser must be open).
+
+        Args:
+            text:       Tweet body text.
+            media_path: Local path to image/video to attach (optional).
+
+        Returns:
+            {"status": "success", "url": str}
+            {"status": "error", "message": str}
+        """
+        browser = getattr(self.core, 'browser', None)
+        if not browser or not getattr(browser, 'started', False):
+            return {"status": "error", "message": "Browser not started. Use start_browser first."}
+
+        try:
+            # Navigate to compose
+            nav = await browser.navigate("https://x.com/compose/post")
+            if nav.get('status') == 'error':
+                return nav
+
+            # Wait for compose box (contenteditable div)
+            COMPOSE = '[data-testid="tweetTextarea_0"]'
+            await browser._get_page().wait_for_selector(COMPOSE, timeout=15000)
+
+            # Type tweet text (type_text now handles contenteditable correctly)
+            typed = await browser.type_text(COMPOSE, text)
+            if typed.get('status') == 'error':
+                return typed
+
+            # Attach media if provided
+            if media_path:
+                if not os.path.isfile(media_path):
+                    return {"status": "error", "message": f"Media file not found: {media_path}"}
+                page = browser._get_page()
+                file_input = await page.query_selector('input[data-testid="fileInput"]')
+                if file_input:
+                    await file_input.set_input_files(media_path)
+                    await asyncio.sleep(3)  # Wait for upload
+
+            # Click Post button
+            POST_BTN = '[data-testid="tweetButtonInline"]'
+            page = browser._get_page()
+            await page.wait_for_selector(POST_BTN, timeout=10000)
+            await page.click(POST_BTN)
+
+            # Wait for compose dialog to close (indicates success)
+            await asyncio.sleep(2)
+            current_url = page.url
+
+            await self.core.log("Tweet posted via browser", priority=2, component="SocialMedia")
+            return {"status": "success", "url": current_url}
+
+        except Exception as e:
+            await self.core.log(f"Browser tweet failed: {e}", priority=1, component="SocialMedia")
+            return {"status": "error", "message": str(e)}
+
+    async def post_thread_browser(self, tweets, media_path=None):
+        """Post a multi-tweet thread via Playwright browser automation.
+
+        Does not require Twitter API credentials — uses the logged-in browser
+        session. Requires BrowserProSkill to be started (browser must be open).
+
+        Args:
+            tweets:     List of tweet text strings in order.
+            media_path: Local path to image/video to attach to Tweet 1 (optional).
+
+        Returns:
+            {"status": "success", "tweet_count": int, "url": str}
+            {"status": "error", "message": str}
+        """
+        if not tweets:
+            return {"status": "error", "message": "No tweets provided"}
+
+        browser = getattr(self.core, 'browser', None)
+        if not browser or not getattr(browser, 'started', False):
+            return {"status": "error", "message": "Browser not started. Use start_browser first."}
+
+        try:
+            # Navigate to compose
+            nav = await browser.navigate("https://x.com/compose/post")
+            if nav.get('status') == 'error':
+                return nav
+
+            COMPOSE_0 = '[data-testid="tweetTextarea_0"]'
+            ADD_BTN   = '[data-testid="addButton"]'
+            POST_ALL  = '[data-testid="tweetButton"]'
+
+            page = browser._get_page()
+            await page.wait_for_selector(COMPOSE_0, timeout=15000)
+
+            # Type Tweet 1
+            await browser.type_text(COMPOSE_0, tweets[0])
+
+            # Attach media to Tweet 1 if provided
+            if media_path:
+                if not os.path.isfile(media_path):
+                    return {"status": "error", "message": f"Media file not found: {media_path}"}
+                file_input = await page.query_selector('input[data-testid="fileInput"]')
+                if file_input:
+                    await file_input.set_input_files(media_path)
+                    await asyncio.sleep(3)  # Wait for upload
+
+            # Add remaining tweets
+            for i, tweet_text in enumerate(tweets[1:], start=2):
+                # Click "Add another post" (the + button)
+                await page.wait_for_selector(ADD_BTN, timeout=10000)
+                await page.click(ADD_BTN)
+                await asyncio.sleep(0.5)
+
+                # Find the new compose box (nth textarea)
+                compose_n = f'[data-testid="tweetTextarea_{i - 1}"]'
+                try:
+                    await page.wait_for_selector(compose_n, timeout=5000)
+                    await browser.type_text(compose_n, tweet_text)
+                except Exception:
+                    # Fallback: use last focused contenteditable
+                    await page.keyboard.type(tweet_text, delay=10)
+
+            # Click "Post all"
+            await page.wait_for_selector(POST_ALL, timeout=10000)
+            await page.click(POST_ALL)
+            await asyncio.sleep(2)
+
+            current_url = page.url
+            await self.core.log(f"Thread of {len(tweets)} tweets posted via browser", priority=2, component="SocialMedia")
+            return {"status": "success", "tweet_count": len(tweets), "url": current_url}
+
+        except Exception as e:
+            await self.core.log(f"Browser thread failed: {e}", priority=1, component="SocialMedia")
             return {"status": "error", "message": str(e)}
 
     # ── Mentions ──────────────────────────────────────────────────────────
