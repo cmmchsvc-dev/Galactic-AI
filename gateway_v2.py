@@ -367,17 +367,6 @@ class GalacticGateway:
                 },
                 "fn": self.tool_write_file
             },
-            "exec_shell": {
-                "description": "Execute a shell command (PowerShell).",
-                "parameters": {
-                    "type": "object",
-                    "properties": {
-                        "command": {"type": "string", "description": "Command to execute."}
-                    },
-                    "required": ["command"]
-                },
-                "fn": self.tool_exec_shell
-            },
             "schedule_task": {
                 "description": "Schedule a reminder or task execution.",
                 "parameters": {
@@ -2002,19 +1991,6 @@ class GalacticGateway:
         except Exception as e:
             return f"Error writing file: {e}"
 
-    async def tool_exec_shell(self, args):
-        command = args.get('command')
-        try:
-            process = await asyncio.create_subprocess_shell(
-                command,
-                stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.PIPE
-            )
-            stdout, stderr = await process.communicate()
-            return f"STDOUT:\n{stdout.decode()}\nSTDERR:\n{stderr.decode()}"
-        except Exception as e:
-            return f"Error executing command: {e}"
-            
     async def tool_web_search(self, args):
         """Web search using DuckDuckGo — returns parsed, ranked results (no API key needed)."""
         query = args.get('query', '')
