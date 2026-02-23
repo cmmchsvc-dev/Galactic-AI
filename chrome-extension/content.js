@@ -444,13 +444,9 @@
 
     el.focus();
 
-    /* Clear existing value if requested */
-    if (args?.clear !== false) {
-      if ('value' in el) {
-        el.value = '';
-      } else if (el.contentEditable === 'true') {
-        el.textContent = '';
-      }
+    /* PRE-CLEAR: only for value-based inputs (contenteditable is cleared via execCommand below) */
+    if (args?.clear !== false && 'value' in el) {
+      el.value = '';
       el.dispatchEvent(new Event('input', { bubbles: true }));
     }
 
