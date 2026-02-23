@@ -1172,6 +1172,21 @@ class GalacticGateway:
         except Exception as e:
             return f"[ERROR] Browser navigation: {e}"
     
+    async def tool_screenshot(self, args):
+        """Take a screenshot of the current browser page."""
+        path = args.get('path')
+        try:
+            browser_plugin = next((p for p in self.core.plugins if "BrowserExecutorPro" in p.__class__.__name__), None)
+            if not browser_plugin:
+                return "[ERROR] BrowserExecutorPro plugin not loaded."
+            result = await browser_plugin.screenshot(path=path, full_page=True)
+            if result['status'] == 'success':
+                return f"[BROWSER] Screenshot saved: {result['path']}"
+            else:
+                return f"[ERROR] Screenshot failed: {result.get('message', 'Unknown error')}"
+        except Exception as e:
+            return f"[ERROR] Browser screenshot: {e}"
+
     # ── Skills meta-tools ──────────────────────────────────────────────────
 
     async def tool_list_skills(self, args):
