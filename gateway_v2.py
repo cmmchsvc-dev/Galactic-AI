@@ -3,6 +3,7 @@ import json
 import logging
 import os
 import re
+import sys
 import time
 import traceback
 import uuid
@@ -1903,7 +1904,66 @@ class GalacticGateway:
                 }, "required": ["thing_id", "body"]},
                 "fn": self.tool_reply_reddit
             },
+            "create_skill": {
+                "description": (
+                    "Create a new Galactic AI skill. Writes a .py file to skills/community/ "
+                    "and loads it immediately. The skill must subclass GalacticSkill and "
+                    "implement get_tools(). Use list_skills first to check what already exists."
+                ),
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "name":        {"type": "string", "description": "Skill name in snake_case (e.g. 'weather_lookup'). Used as the filename."},
+                        "code":        {"type": "string", "description": "Full Python source code. Must import from skills.base and subclass GalacticSkill."},
+                        "description": {"type": "string", "description": "One-line description of what this skill does."}
+                    },
+                    "required": ["name", "code", "description"]
+                },
+                "fn": self.tool_create_skill
+            },
+            "list_skills": {
+                "description": "List all loaded skills with their metadata and tools. Shows both core and community skills.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {},
+                    "required": []
+                },
+                "fn": self.tool_list_skills
+            },
+            "remove_skill": {
+                "description": (
+                    "Remove a community skill by name. Core skills cannot be removed. "
+                    "Unloads the skill and deletes its file from skills/community/."
+                ),
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "name": {"type": "string", "description": "The skill_name to remove (e.g. 'weather_lookup')."}
+                    },
+                    "required": ["name"]
+                },
+                "fn": self.tool_remove_skill
+            },
         }
+
+    def register_skill_tools(self, skills):
+        """Merge tools from all loaded skills into self.tools.
+        Called by GalacticCore.load_skills() after all skills are instantiated.
+        Tool names already in self.tools are skipped (core/gateway tools take priority).
+        """
+        count = 0
+        for skill in skills:
+            if not skill.enabled:
+                continue
+            skill_tools = skill.get_tools()
+            for tool_name, tool_def in skill_tools.items():
+                if tool_name in self.tools:
+                    print(f"[Skills] Tool conflict: {tool_name} already registered, skipping from {skill.skill_name}")
+                    continue
+                self.tools[tool_name] = tool_def
+                count += 1
+        if count:
+            print(f"[Skills] Registered {count} tool(s) from skills")
 
     # --- Tool Implementations ---
     async def tool_read_file(self, args):
@@ -2800,6 +2860,176 @@ class GalacticGateway:
         elif result['status'] == 'not_found':
             return f"[DESKTOP] Image not found on screen: {image_path}"
         return f"[ERROR] Desktop locate: {result.get('message')}"
+
+    # ── Skills meta-tools ──────────────────────────────────────────────────
+
+    async def tool_list_skills(self, args):
+        """List all loaded skills and their tools."""
+        if not self.core.skills:
+            return "No skills loaded. Core skills are still running as legacy plugins during migration."
+        lines = []
+        for skill in self.core.skills:
+            tool_names = list(skill.get_tools().keys())
+            core_tag = " [core]" if skill.is_core else " [community]"
+            enabled_tag = "" if skill.enabled else " (DISABLED)"
+            lines.append(
+                f"{skill.icon} **{skill.skill_name}** v{skill.version}{core_tag}{enabled_tag}\n"
+                f"   {skill.description}\n"
+                f"   Tools ({len(tool_names)}): {', '.join(tool_names) if tool_names else '(none)'}"
+            )
+        return "\n\n".join(lines)
+
+    async def tool_create_skill(self, args):
+        """Create a new community skill at runtime."""
+        import importlib
+        import ast as _ast
+
+        name = args.get('name', '').strip()
+        code = args.get('code', '')
+        desc = args.get('description', '')
+
+        if not name or not code:
+            return "[ERROR] Both 'name' and 'code' are required."
+
+        # Validate name is safe for use as a Python module name
+        if not all(c.isalnum() or c == '_' for c in name) or name[0].isdigit():
+            return "[ERROR] Skill name must be snake_case (letters, digits, underscores; cannot start with a digit)."
+
+        # Validate code contains required elements
+        if 'GalacticSkill' not in code:
+            return "[ERROR] Code must contain a class that inherits from GalacticSkill."
+        if 'get_tools' not in code:
+            return "[ERROR] Skill class must implement get_tools()."
+
+        # Find the skill class name via AST parsing
+        skill_class_name = None
+        try:
+            tree = _ast.parse(code)
+            for node in _ast.walk(tree):
+                if isinstance(node, _ast.ClassDef):
+                    for base in node.bases:
+                        base_name = ''
+                        if isinstance(base, _ast.Name):
+                            base_name = base.id
+                        elif isinstance(base, _ast.Attribute):
+                            base_name = base.attr
+                        if base_name == 'GalacticSkill':
+                            skill_class_name = node.name
+                            break
+                if skill_class_name:
+                    break
+        except SyntaxError as e:
+            return f"[ERROR] Syntax error in skill code: {e}"
+
+        if not skill_class_name:
+            return "[ERROR] Could not find a class inheriting from GalacticSkill in the provided code."
+
+        # Check for duplicate skill names
+        for existing in self.core.skills:
+            if existing.skill_name == name:
+                return f"[ERROR] Skill '{name}' already loaded. Use remove_skill first to replace it."
+
+        # Write to community/
+        skills_dir = os.path.join(os.path.dirname(os.path.abspath(self.core.config_path)), 'skills', 'community')
+        os.makedirs(skills_dir, exist_ok=True)
+        skill_path = os.path.join(skills_dir, f'{name}.py')
+
+        try:
+            with open(skill_path, 'w', encoding='utf-8') as f:
+                f.write(code)
+        except Exception as e:
+            return f"[ERROR] Failed to write skill file: {e}"
+
+        # Dynamic import
+        try:
+            module_name = f'skills.community.{name}'
+            if module_name in sys.modules:
+                del sys.modules[module_name]
+
+            mod = importlib.import_module(module_name)
+            cls = getattr(mod, skill_class_name)
+            skill = cls(self.core)
+            skill.is_core = False
+
+            await skill.on_load()
+            self.core.skills.append(skill)
+
+            # Register its tools
+            new_tools = skill.get_tools()
+            registered = []
+            for tool_name, tool_def in new_tools.items():
+                if tool_name not in self.tools:
+                    self.tools[tool_name] = tool_def
+                    registered.append(tool_name)
+
+            asyncio.create_task(skill.run())
+
+            # Update registry
+            from datetime import datetime as _dt
+            registry = self.core._read_registry()
+            registry['installed'].append({
+                'module': name,
+                'class': skill_class_name,
+                'file': f'{name}.py',
+                'installed_at': _dt.now().isoformat(),
+                'source': 'ai_authored',
+                'description': desc
+            })
+            self.core._write_registry(registry)
+
+            return (
+                f"[OK] Skill '{name}' created and loaded.\n"
+                f"  Class: {skill_class_name}\n"
+                f"  Tools registered: {', '.join(registered) if registered else '(none)'}\n"
+                f"  File: {skill_path}"
+            )
+
+        except Exception as e:
+            try:
+                os.remove(skill_path)
+            except OSError:
+                pass
+            return f"[ERROR] Failed to load skill '{name}': {e}"
+
+    async def tool_remove_skill(self, args):
+        """Remove a community skill by name."""
+        name = args.get('name', '').strip()
+        if not name:
+            return "[ERROR] 'name' is required."
+
+        target = next((s for s in self.core.skills if s.skill_name == name), None)
+        if not target:
+            return f"[ERROR] Skill '{name}' not found. Use list_skills to see loaded skills."
+
+        if target.is_core:
+            return f"[ERROR] '{name}' is a core skill and cannot be removed."
+
+        try:
+            await target.on_unload()
+        except Exception:
+            pass
+
+        # Unregister tools
+        tool_names = list(target.get_tools().keys())
+        for tn in tool_names:
+            self.tools.pop(tn, None)
+
+        self.core.skills.remove(target)
+
+        # Delete file
+        skills_dir = os.path.join(os.path.dirname(os.path.abspath(self.core.config_path)), 'skills', 'community')
+        skill_path = os.path.join(skills_dir, f'{name}.py')
+        try:
+            os.remove(skill_path)
+        except OSError:
+            pass
+
+        # Update registry
+        registry = self.core._read_registry()
+        registry['installed'] = [e for e in registry['installed'] if e.get('module') != name]
+        self.core._write_registry(registry)
+
+        return f"[OK] Skill '{name}' removed. Tools unregistered: {', '.join(tool_names) if tool_names else '(none)'}"
 
     # ── Chrome Bridge helpers & tool handlers ──────────────────────────
 
