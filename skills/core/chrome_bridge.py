@@ -290,7 +290,7 @@ class ChromeBridgeSkill(GalacticSkill):
                 "description": "Export the recorded frames as an animated GIF. Saves to logs/recordings/ and returns the file path.",
                 "parameters": {
                     "filename": {"type": "string", "description": "Output filename (without .gif extension). Defaults to timestamp."},
-                    "quality": {"type": "number", "description": "GIF quality 1-30 (lower=better, default: 10)"}
+                    "frame_duration_ms": {"type": "number", "description": "Duration per frame in milliseconds (default: 500)"}
                 },
                 "required": [],
                 "fn": self._tool_chrome_gif_export
@@ -658,9 +658,11 @@ class ChromeBridgeSkill(GalacticSkill):
         except ImportError:
             return "[ERROR] chrome_gif_export: Pillow not installed. Run: pip install Pillow"
 
-        quality = int(args.get("quality", 10))
-        if quality < 1 or quality > 30:
-            quality = 10
+        frame_duration = int(args.get("frame_duration_ms", 500))
+        if frame_duration < 100:
+            frame_duration = 100
+        if frame_duration > 3000:
+            frame_duration = 3000
 
         filename = args.get("filename", "")
         if not filename:
@@ -668,7 +670,8 @@ class ChromeBridgeSkill(GalacticSkill):
         # Sanitize filename
         filename = "".join(c for c in filename if c.isalnum() or c in "_-")[:64] or "recording"
 
-        out_dir = Path("logs/recordings")
+        logs_dir = self.core.config.get('paths', {}).get('logs', 'logs') if hasattr(self, 'core') and self.core else 'logs'
+        out_dir = Path(logs_dir) / 'recordings'
         out_dir.mkdir(parents=True, exist_ok=True)
         out_path = out_dir / f"{filename}.gif"
 
@@ -685,9 +688,6 @@ class ChromeBridgeSkill(GalacticSkill):
 
         if not pil_frames:
             return "[ERROR] chrome_gif_export: Could not decode any frames"
-
-        # Frame duration in ms (quality param maps: 1=best quality=longest process time; use as-is for duration calc)
-        frame_duration = max(100, quality * 10)  # ~100ms minimum per frame
 
         pil_frames[0].save(
             str(out_path),
