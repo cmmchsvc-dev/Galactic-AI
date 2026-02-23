@@ -51,11 +51,65 @@ class TelegramBridge:
         except: pass
 
     async def send_message(self, chat_id, text, reply_markup=None):
+        if not text:
+            return
+        # Telegram has a 4096 character limit per message — split if needed
+        chunks = self._split_message(text, limit=4096)
+        for chunk in chunks:
+            await self._send_single_message(chat_id, chunk, reply_markup)
+
+    async def _send_single_message(self, chat_id, text, reply_markup=None):
+        """Send one message chunk, with Markdown fallback on parse failure."""
         try:
             payload = {"chat_id": chat_id, "text": text, "parse_mode": "Markdown"}
-            if reply_markup: payload["reply_markup"] = reply_markup
-            await self.client.post(f"{self.api_url}/sendMessage", json=payload)
-        except: pass
+            if reply_markup:
+                payload["reply_markup"] = reply_markup
+            resp = await self.client.post(f"{self.api_url}/sendMessage", json=payload)
+            result = resp.json()
+            if not result.get("ok"):
+                desc = str(result.get("description", ""))
+                # Markdown parse failure — retry as plain text
+                if "can't parse" in desc.lower() or "parse" in desc.lower():
+                    payload.pop("parse_mode", None)
+                    resp2 = await self.client.post(
+                        f"{self.api_url}/sendMessage", json=payload
+                    )
+                    result2 = resp2.json()
+                    if not result2.get("ok"):
+                        await self._log(
+                            f"Telegram API error (plain fallback): "
+                            f"{result2.get('description', 'unknown')}",
+                            priority=1,
+                        )
+                else:
+                    await self._log(
+                        f"Telegram API error: {desc}",
+                        priority=1,
+                    )
+        except Exception as e:
+            await self._log(f"Send message error: {e}", priority=1)
+
+    @staticmethod
+    def _split_message(text, limit=4096):
+        """Split long text into chunks that fit Telegram's message size limit."""
+        if len(text) <= limit:
+            return [text]
+        chunks = []
+        while text:
+            if len(text) <= limit:
+                chunks.append(text)
+                break
+            # Find a good split point: prefer double-newline, then newline, then space
+            split_at = text.rfind('\n\n', 0, limit)
+            if split_at == -1:
+                split_at = text.rfind('\n', 0, limit)
+            if split_at == -1:
+                split_at = text.rfind(' ', 0, limit)
+            if split_at <= 0:
+                split_at = limit
+            chunks.append(text[:split_at])
+            text = text[split_at:].lstrip('\n')
+        return chunks
 
     async def send_photo(self, chat_id, photo_path, caption=None):
         try:
@@ -771,12 +825,16 @@ class TelegramBridge:
 
     async def process_and_respond(self, chat_id, text):
         typing_task = None
+        response = None  # Initialize BEFORE try — prevents UnboundLocalError on CancelledError
         try:
             typing_task = asyncio.create_task(self.keep_typing(chat_id))
             response = await asyncio.wait_for(
                 self.core.gateway.speak(text, chat_id=chat_id),
                 timeout=self._get_speak_timeout()
             )
+        except asyncio.CancelledError:
+            response = "🛑 Task was cancelled."
+            raise  # Re-raise so the task framework knows it was cancelled
         except asyncio.TimeoutError:
             provider = getattr(self.core.gateway.llm, 'provider', 'unknown')
             model = getattr(self.core.gateway.llm, 'model', 'unknown')
@@ -800,10 +858,11 @@ class TelegramBridge:
                 typing_task.cancel()
                 try:
                     await typing_task
-                except asyncio.CancelledError:
+                except (asyncio.CancelledError, Exception):
                     pass
-                except Exception:
-                    pass  # Ignore any other errors during cleanup
+            # Guard against "[No response]" or empty responses
+            if not response or not response.strip() or response == "[No response]":
+                response = "🤔 I couldn't generate a response for that. Try rephrasing or sending again."
             # Relay to Web UI so Telegram conversations show up in the web chat log
             try:
                 await self.core.relay.emit(2, "chat_from_telegram", {
@@ -838,6 +897,7 @@ class TelegramBridge:
     async def _handle_document(self, chat_id, msg):
         """Download a Telegram document attachment, read its text, and send to the AI."""
         typing_task = None
+        response = None  # Initialize BEFORE try — prevents UnboundLocalError on CancelledError
         try:
             typing_task = asyncio.create_task(self.keep_typing(chat_id))
             doc = msg["document"]
@@ -885,6 +945,9 @@ class TelegramBridge:
                 self.core.gateway.speak(full_msg, chat_id=chat_id),
                 timeout=self._get_speak_timeout()
             )
+        except asyncio.CancelledError:
+            response = "🛑 Task was cancelled."
+            raise
         except asyncio.TimeoutError:
             await self._log(f"[Telegram] Document speak() timed out for chat {chat_id}", priority=1)
             response = "⏱ Took too long processing that file. Please try again."
@@ -898,6 +961,9 @@ class TelegramBridge:
                     await typing_task
                 except (asyncio.CancelledError, Exception):
                     pass
+            # Guard against "[No response]" or empty
+            if not response or not response.strip() or response == "[No response]":
+                response = "🤔 I couldn't generate a response for that file. Try sending again."
             # Relay to Web UI
             try:
                 await self.core.relay.emit(2, "chat_from_telegram", {
@@ -963,6 +1029,9 @@ class TelegramBridge:
                 self.core.gateway.speak(speak_msg, chat_id=chat_id),
                 timeout=self._get_speak_timeout()
             )
+        except asyncio.CancelledError:
+            response = "🛑 Task was cancelled."
+            raise
         except asyncio.TimeoutError:
             await self._log(f"[Telegram] Photo speak() timed out for chat {chat_id}", priority=1)
             response = "⏱ Took too long analyzing that image. Please try again."
@@ -976,7 +1045,9 @@ class TelegramBridge:
                     await typing_task
                 except (asyncio.CancelledError, Exception):
                     pass
-
+            # Guard against "[No response]" or empty
+            if not response or not response.strip() or response == "[No response]":
+                response = "🤔 I couldn't generate a response for that image. Try sending again."
             try:
                 await self.core.relay.emit(2, "chat_from_telegram", {
                     "user": str(chat_id),
@@ -1079,6 +1150,9 @@ class TelegramBridge:
                 except Exception as e:
                     await self._log(f"Auto-TTS voice reply error: {e}", priority=2)
 
+        except asyncio.CancelledError:
+            response = "🛑 Task was cancelled."
+            raise
         except asyncio.TimeoutError:
             await self._log(f"[Telegram] Audio speak() timed out for chat {chat_id}", priority=1)
             response = "⏱ Took too long processing that voice message. Please try again."
@@ -1094,7 +1168,9 @@ class TelegramBridge:
                     pass
             if temp_file_path and os.path.exists(temp_file_path):
                 os.remove(temp_file_path)
-
+            # Guard against "[No response]" or empty
+            if not response or not response.strip() or response == "[No response]":
+                response = "🤔 I couldn't generate a response for that voice message. Try again."
             try:
                 await self.core.relay.emit(2, "chat_from_telegram", {
                     "user": str(chat_id),

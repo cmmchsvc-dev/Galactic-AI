@@ -136,16 +136,26 @@ class CostTracker:
         except Exception:
             pass
 
-    def log_usage(self, model, provider, tokens_in, tokens_out):
-        """Calculate cost, append to JSONL, update running totals."""
-        is_free = provider in FREE_PROVIDERS
-        pricing = MODEL_PRICING.get(model, _PRICING_FALLBACK)
-        if is_free:
-            pricing = {"input": 0, "output": 0}
+    def log_usage(self, model, provider, tokens_in, tokens_out, actual_cost=None):
+        """Calculate cost, append to JSONL, update running totals.
 
-        cost_in = (tokens_in / 1_000_000) * pricing["input"]
-        cost_out = (tokens_out / 1_000_000) * pricing["output"]
-        total_cost = cost_in + cost_out
+        If actual_cost is provided (e.g. from OpenRouter's generation API),
+        it overrides the local estimate for accurate tracking.
+        """
+        is_free = provider in FREE_PROVIDERS
+
+        if actual_cost is not None:
+            # Use the real cost reported by the provider
+            total_cost = actual_cost
+            cost_in = 0.0   # breakdown unavailable for actual costs
+            cost_out = 0.0
+        else:
+            pricing = MODEL_PRICING.get(model, _PRICING_FALLBACK)
+            if is_free:
+                pricing = {"input": 0, "output": 0}
+            cost_in = (tokens_in / 1_000_000) * pricing["input"]
+            cost_out = (tokens_out / 1_000_000) * pricing["output"]
+            total_cost = cost_in + cost_out
 
         entry = {
             "ts": datetime.now().isoformat(),
@@ -157,6 +167,7 @@ class CostTracker:
             "cost_out": round(cost_out, 6),
             "cost": round(total_cost, 6),
             "free": is_free,
+            "actual": actual_cost is not None,
         }
 
         self.entries.append(entry)
@@ -283,6 +294,7 @@ class GalacticGateway:
         self.total_tokens_in = 0
         self.total_tokens_out = 0
         self._last_usage = None  # Populated by provider methods with real API token counts
+        self._last_generation_id = None  # OpenRouter generation ID for cost lookup
 
         # TTS voice file tracking — set by speak() when text_to_speech tool is invoked
         self.last_voice_file = None
@@ -1714,6 +1726,183 @@ class GalacticGateway:
                 }, "required": ["session_id"]},
                 "fn": self.tool_check_subagent
             },
+
+            # ── Chrome Bridge tools (real browser via Galactic Browser extension) ──
+            "chrome_screenshot": {
+                "description": "Take a screenshot of the active tab in the user's real Chrome browser (via Galactic Browser extension). Returns a JPEG image.",
+                "parameters": {"type": "object", "properties": {}},
+                "fn": self.tool_chrome_screenshot
+            },
+            "chrome_navigate": {
+                "description": "Navigate the user's real Chrome browser to a URL, or use 'back'/'forward' for history navigation.",
+                "parameters": {"type": "object", "properties": {
+                    "url": {"type": "string", "description": "URL to navigate to, or 'back'/'forward'"},
+                }, "required": ["url"]},
+                "fn": self.tool_chrome_navigate
+            },
+            "chrome_read_page": {
+                "description": "Get an accessibility tree snapshot of the current page in the user's Chrome browser. Returns element roles, names, and ref IDs for interaction.",
+                "parameters": {"type": "object", "properties": {
+                    "filter": {"type": "string", "description": "Filter: 'interactive' for buttons/links/inputs only, 'all' for everything (default: all)"},
+                }},
+                "fn": self.tool_chrome_read_page
+            },
+            "chrome_find": {
+                "description": "Find elements on the page by CSS selector or text content. Returns matching elements with ref IDs.",
+                "parameters": {"type": "object", "properties": {
+                    "query": {"type": "string", "description": "CSS selector or text to search for"},
+                }, "required": ["query"]},
+                "fn": self.tool_chrome_find
+            },
+            "chrome_click": {
+                "description": "Click an element in the user's Chrome browser by ref ID, CSS selector, or coordinates.",
+                "parameters": {"type": "object", "properties": {
+                    "ref": {"type": "string", "description": "Element ref ID from chrome_read_page (e.g. 'ref_1')"},
+                    "selector": {"type": "string", "description": "CSS selector"},
+                    "x": {"type": "number", "description": "X coordinate"},
+                    "y": {"type": "number", "description": "Y coordinate"},
+                    "double_click": {"type": "boolean", "description": "Double-click instead of single click"},
+                }},
+                "fn": self.tool_chrome_click
+            },
+            "chrome_type": {
+                "description": "Type text into the focused element or a specified element in the user's Chrome browser.",
+                "parameters": {"type": "object", "properties": {
+                    "text": {"type": "string", "description": "Text to type"},
+                    "ref": {"type": "string", "description": "Element ref ID to type into"},
+                    "selector": {"type": "string", "description": "CSS selector of element to type into"},
+                    "clear": {"type": "boolean", "description": "Clear existing content before typing (default: true)"},
+                }, "required": ["text"]},
+                "fn": self.tool_chrome_type
+            },
+            "chrome_scroll": {
+                "description": "Scroll the page or a specific element in the user's Chrome browser.",
+                "parameters": {"type": "object", "properties": {
+                    "direction": {"type": "string", "description": "Scroll direction: up, down, left, right"},
+                    "amount": {"type": "number", "description": "Scroll amount in pixels (default: 300)"},
+                    "ref": {"type": "string", "description": "Element ref ID to scroll into view"},
+                    "selector": {"type": "string", "description": "CSS selector of element to scroll into view"},
+                }},
+                "fn": self.tool_chrome_scroll
+            },
+            "chrome_form_input": {
+                "description": "Set the value of a form element (input, select, checkbox) in the user's Chrome browser.",
+                "parameters": {"type": "object", "properties": {
+                    "ref": {"type": "string", "description": "Element ref ID"},
+                    "selector": {"type": "string", "description": "CSS selector"},
+                    "value": {"type": "string", "description": "Value to set"},
+                }, "required": ["value"]},
+                "fn": self.tool_chrome_form_input
+            },
+            "chrome_execute_js": {
+                "description": "Execute JavaScript code in the user's Chrome browser tab. Returns the result of the last expression.",
+                "parameters": {"type": "object", "properties": {
+                    "code": {"type": "string", "description": "JavaScript code to execute"},
+                }, "required": ["code"]},
+                "fn": self.tool_chrome_execute_js
+            },
+            "chrome_get_text": {
+                "description": "Extract all text content from the current page in the user's Chrome browser.",
+                "parameters": {"type": "object", "properties": {}},
+                "fn": self.tool_chrome_get_text
+            },
+            "chrome_tabs_list": {
+                "description": "List all open tabs in the user's Chrome browser.",
+                "parameters": {"type": "object", "properties": {}},
+                "fn": self.tool_chrome_tabs_list
+            },
+            "chrome_tabs_create": {
+                "description": "Open a new tab in the user's Chrome browser.",
+                "parameters": {"type": "object", "properties": {
+                    "url": {"type": "string", "description": "URL to open (default: new tab page)"},
+                }},
+                "fn": self.tool_chrome_tabs_create
+            },
+            "chrome_key_press": {
+                "description": "Press keyboard key(s) in the user's Chrome browser. Supports modifiers like ctrl+a, shift+Enter.",
+                "parameters": {"type": "object", "properties": {
+                    "key": {"type": "string", "description": "Key to press (e.g. 'Enter', 'Tab', 'ctrl+a')"},
+                    "repeat": {"type": "number", "description": "Number of times to repeat (default: 1)"},
+                }, "required": ["key"]},
+                "fn": self.tool_chrome_key_press
+            },
+            "chrome_read_console": {
+                "description": "Read browser console messages from the user's Chrome browser.",
+                "parameters": {"type": "object", "properties": {
+                    "pattern": {"type": "string", "description": "Regex pattern to filter messages"},
+                    "clear": {"type": "boolean", "description": "Clear messages after reading"},
+                }},
+                "fn": self.tool_chrome_read_console
+            },
+            "chrome_read_network": {
+                "description": "Read network requests made by the current page in the user's Chrome browser.",
+                "parameters": {"type": "object", "properties": {
+                    "url_pattern": {"type": "string", "description": "Filter by URL substring"},
+                    "clear": {"type": "boolean", "description": "Clear requests after reading"},
+                }},
+                "fn": self.tool_chrome_read_network
+            },
+            "chrome_hover": {
+                "description": "Hover over an element in the user's Chrome browser to trigger hover states, tooltips, or menus.",
+                "parameters": {"type": "object", "properties": {
+                    "ref": {"type": "string", "description": "Element ref ID"},
+                    "selector": {"type": "string", "description": "CSS selector"},
+                    "x": {"type": "number", "description": "X coordinate"},
+                    "y": {"type": "number", "description": "Y coordinate"},
+                }},
+                "fn": self.tool_chrome_hover
+            },
+
+            # ── Social Media tools (Twitter/X + Reddit via official APIs) ──
+            "post_tweet": {
+                "description": "Post a tweet to X/Twitter. Max 280 characters.",
+                "parameters": {"type": "object", "properties": {
+                    "text": {"type": "string", "description": "Tweet text (max 280 chars)"},
+                    "reply_to": {"type": "string", "description": "Tweet ID to reply to (optional)"},
+                    "media_path": {"type": "string", "description": "Path to image/video to attach (optional)"},
+                }, "required": ["text"]},
+                "fn": self.tool_post_tweet
+            },
+            "read_mentions": {
+                "description": "Read recent @mentions on X/Twitter.",
+                "parameters": {"type": "object", "properties": {
+                    "count": {"type": "number", "description": "Number of mentions to fetch (default: 10)"},
+                }},
+                "fn": self.tool_read_mentions
+            },
+            "read_dms": {
+                "description": "Read recent direct messages on X/Twitter.",
+                "parameters": {"type": "object", "properties": {
+                    "count": {"type": "number", "description": "Number of DMs to fetch (default: 10)"},
+                }},
+                "fn": self.tool_read_dms
+            },
+            "post_reddit": {
+                "description": "Post to a subreddit on Reddit. Supports text posts and link posts.",
+                "parameters": {"type": "object", "properties": {
+                    "subreddit": {"type": "string", "description": "Subreddit name (without r/)"},
+                    "title": {"type": "string", "description": "Post title"},
+                    "body": {"type": "string", "description": "Post body text (for text posts)"},
+                    "url": {"type": "string", "description": "URL (for link posts)"},
+                    "flair": {"type": "string", "description": "Flair text (optional)"},
+                }, "required": ["subreddit", "title"]},
+                "fn": self.tool_post_reddit
+            },
+            "read_reddit_inbox": {
+                "description": "Read Reddit inbox messages (replies, mentions, DMs).",
+                "parameters": {"type": "object", "properties": {
+                    "count": {"type": "number", "description": "Number of messages to fetch (default: 10)"},
+                }},
+                "fn": self.tool_read_reddit_inbox
+            },
+            "reply_reddit": {
+                "description": "Reply to a Reddit comment or post.",
+                "parameters": {"type": "object", "properties": {
+                    "thing_id": {"type": "string", "description": "Reddit fullname ID of the thing to reply to (e.g. t1_abc123 for comment, t3_abc123 for post)"},
+                    "body": {"type": "string", "description": "Reply text (Markdown supported)"},
+                }, "required": ["thing_id", "body"]},
+                "fn": self.tool_reply_reddit
+            },
         }
 
     # --- Tool Implementations ---
@@ -2611,6 +2800,303 @@ class GalacticGateway:
         elif result['status'] == 'not_found':
             return f"[DESKTOP] Image not found on screen: {image_path}"
         return f"[ERROR] Desktop locate: {result.get('message')}"
+
+    # ── Chrome Bridge helpers & tool handlers ──────────────────────────
+
+    def _get_chrome_bridge(self):
+        return next((p for p in self.core.plugins if 'ChromeBridge' in p.__class__.__name__), None)
+
+    def _get_social_media_plugin(self):
+        return next((p for p in self.core.plugins if 'SocialMediaPlugin' in p.__class__.__name__), None)
+
+    async def tool_chrome_screenshot(self, args):
+        bridge = self._get_chrome_bridge()
+        if not bridge: return "[ERROR] ChromeBridge plugin not loaded."
+        if not bridge.ws_connection: return "[ERROR] Chrome extension not connected. Install the Galactic Browser extension and click Connect."
+        result = await bridge.screenshot()
+        if result.get('status') == 'success':
+            img_data = result.get('image_b64', '')
+            if img_data:
+                return f"[CHROME] Screenshot captured ({len(img_data)} bytes base64)"
+            return "[CHROME] Screenshot captured (no image data)"
+        return f"[ERROR] Chrome screenshot: {result.get('error') or result.get('message') or 'unknown error'}"
+
+    async def tool_chrome_navigate(self, args):
+        bridge = self._get_chrome_bridge()
+        if not bridge: return "[ERROR] ChromeBridge plugin not loaded."
+        if not bridge.ws_connection: return "[ERROR] Chrome extension not connected."
+        url = args.get('url', '')
+        result = await bridge.navigate(url)
+        if result.get('status') == 'success':
+            return f"[CHROME] Navigated to: {result.get('url', url)}"
+        return f"[ERROR] Chrome navigate: {result.get('error') or result.get('message') or 'unknown error'}"
+
+    async def tool_chrome_read_page(self, args):
+        bridge = self._get_chrome_bridge()
+        if not bridge: return "[ERROR] ChromeBridge plugin not loaded."
+        if not bridge.ws_connection: return "[ERROR] Chrome extension not connected."
+        result = await bridge.read_page(
+            tab_id=args.get('tab_id'),
+            filter_val=args.get('filter', 'all'),
+        )
+        if result.get('status') == 'success':
+            tree = result.get('tree', '')
+            refs = result.get('ref_count', 0)
+            return f"[CHROME] Page snapshot ({refs} refs):\n{tree}"
+        return f"[ERROR] Chrome read_page: {result.get('error') or result.get('message') or 'unknown error'}"
+
+    async def tool_chrome_find(self, args):
+        bridge = self._get_chrome_bridge()
+        if not bridge: return "[ERROR] ChromeBridge plugin not loaded."
+        if not bridge.ws_connection: return "[ERROR] Chrome extension not connected."
+        result = await bridge.find_element(args.get('query', ''))
+        if result.get('status') == 'success':
+            elements = result.get('elements', [])
+            if not elements:
+                return "[CHROME] No elements found matching query."
+            lines = [f"[CHROME] Found {len(elements)} element(s):"]
+            for el in elements[:20]:
+                ref = el.get('ref', '?')
+                tag = el.get('tag', '?')
+                text = (el.get('text', '') or '')[:80]
+                lines.append(f"  {ref}: <{tag}> {text}")
+            return "\n".join(lines)
+        return f"[ERROR] Chrome find: {result.get('error') or result.get('message') or 'unknown error'}"
+
+    async def tool_chrome_click(self, args):
+        bridge = self._get_chrome_bridge()
+        if not bridge: return "[ERROR] ChromeBridge plugin not loaded."
+        if not bridge.ws_connection: return "[ERROR] Chrome extension not connected."
+        result = await bridge.click(
+            ref=args.get('ref'), selector=args.get('selector'),
+            x=args.get('x'), y=args.get('y'),
+            double_click=args.get('double_click', False)
+        )
+        if result.get('status') == 'success':
+            target = args.get('ref') or args.get('selector') or f"({args.get('x')},{args.get('y')})"
+            return f"[CHROME] Clicked: {target}"
+        return f"[ERROR] Chrome click: {result.get('error') or result.get('message') or 'unknown error'}"
+
+    async def tool_chrome_type(self, args):
+        bridge = self._get_chrome_bridge()
+        if not bridge: return "[ERROR] ChromeBridge plugin not loaded."
+        if not bridge.ws_connection: return "[ERROR] Chrome extension not connected."
+        result = await bridge.type_text(
+            text=args.get('text', ''),
+            ref=args.get('ref'), selector=args.get('selector'),
+            clear=args.get('clear', True)
+        )
+        if result.get('status') == 'success':
+            return f"[CHROME] Typed {len(args.get('text', ''))} chars"
+        return f"[ERROR] Chrome type: {result.get('error') or result.get('message') or 'unknown error'}"
+
+    async def tool_chrome_scroll(self, args):
+        bridge = self._get_chrome_bridge()
+        if not bridge: return "[ERROR] ChromeBridge plugin not loaded."
+        if not bridge.ws_connection: return "[ERROR] Chrome extension not connected."
+        result = await bridge.scroll(
+            direction=args.get('direction'), amount=args.get('amount'),
+            ref=args.get('ref'), selector=args.get('selector')
+        )
+        if result.get('status') == 'success':
+            return f"[CHROME] Scrolled {args.get('direction', 'element into view')}"
+        return f"[ERROR] Chrome scroll: {result.get('error') or result.get('message') or 'unknown error'}"
+
+    async def tool_chrome_form_input(self, args):
+        bridge = self._get_chrome_bridge()
+        if not bridge: return "[ERROR] ChromeBridge plugin not loaded."
+        if not bridge.ws_connection: return "[ERROR] Chrome extension not connected."
+        result = await bridge.form_input(
+            ref=args.get('ref'), selector=args.get('selector'),
+            value=args.get('value', '')
+        )
+        if result.get('status') == 'success':
+            return f"[CHROME] Form value set"
+        return f"[ERROR] Chrome form_input: {result.get('error') or result.get('message') or 'unknown error'}"
+
+    async def tool_chrome_execute_js(self, args):
+        bridge = self._get_chrome_bridge()
+        if not bridge: return "[ERROR] ChromeBridge plugin not loaded."
+        if not bridge.ws_connection: return "[ERROR] Chrome extension not connected."
+        result = await bridge.execute_js(args.get('code', ''))
+        if result.get('status') == 'success':
+            return f"[CHROME] JS result: {result.get('result', 'undefined')}"
+        return f"[ERROR] Chrome execute_js: {result.get('error') or result.get('message') or 'unknown error'}"
+
+    async def tool_chrome_get_text(self, args):
+        bridge = self._get_chrome_bridge()
+        if not bridge: return "[ERROR] ChromeBridge plugin not loaded."
+        if not bridge.ws_connection: return "[ERROR] Chrome extension not connected."
+        result = await bridge.get_page_text()
+        if result.get('status') == 'success':
+            text = result.get('text', '')
+            return f"[CHROME] Page text ({len(text)} chars):\n{text[:5000]}"
+        return f"[ERROR] Chrome get_text: {result.get('error') or result.get('message') or 'unknown error'}"
+
+    async def tool_chrome_tabs_list(self, args):
+        bridge = self._get_chrome_bridge()
+        if not bridge: return "[ERROR] ChromeBridge plugin not loaded."
+        if not bridge.ws_connection: return "[ERROR] Chrome extension not connected."
+        result = await bridge.tabs_list()
+        if result.get('status') == 'success':
+            tabs = result.get('tabs', [])
+            lines = [f"[CHROME] {len(tabs)} tab(s):"]
+            for t in tabs:
+                active = " (active)" if t.get('active') else ""
+                lines.append(f"  Tab {t.get('id')}: {t.get('title', 'Untitled')[:60]}{active}\n    {t.get('url', '')}")
+            return "\n".join(lines)
+        return f"[ERROR] Chrome tabs_list: {result.get('error') or result.get('message') or 'unknown error'}"
+
+    async def tool_chrome_tabs_create(self, args):
+        bridge = self._get_chrome_bridge()
+        if not bridge: return "[ERROR] ChromeBridge plugin not loaded."
+        if not bridge.ws_connection: return "[ERROR] Chrome extension not connected."
+        result = await bridge.tabs_create(url=args.get('url'))
+        if result.get('status') == 'success':
+            return f"[CHROME] New tab created: {result.get('url', 'new tab')}"
+        return f"[ERROR] Chrome tabs_create: {result.get('error') or result.get('message') or 'unknown error'}"
+
+    async def tool_chrome_key_press(self, args):
+        bridge = self._get_chrome_bridge()
+        if not bridge: return "[ERROR] ChromeBridge plugin not loaded."
+        if not bridge.ws_connection: return "[ERROR] Chrome extension not connected."
+        result = await bridge.key_press(
+            key=args.get('key', ''),
+            repeat=args.get('repeat', 1)
+        )
+        if result.get('status') == 'success':
+            return f"[CHROME] Key pressed: {args.get('key')}"
+        return f"[ERROR] Chrome key_press: {result.get('error') or result.get('message') or 'unknown error'}"
+
+    async def tool_chrome_read_console(self, args):
+        bridge = self._get_chrome_bridge()
+        if not bridge: return "[ERROR] ChromeBridge plugin not loaded."
+        if not bridge.ws_connection: return "[ERROR] Chrome extension not connected."
+        result = await bridge.read_console(
+            pattern=args.get('pattern'),
+            clear=args.get('clear', False)
+        )
+        if result.get('status') == 'success':
+            messages = result.get('messages', [])
+            if not messages:
+                return "[CHROME] No console messages."
+            lines = [f"[CHROME] {len(messages)} console message(s):"]
+            for m in messages[:50]:
+                lines.append(f"  [{m.get('level', '?')}] {m.get('text', '')[:200]}")
+            return "\n".join(lines)
+        return f"[ERROR] Chrome read_console: {result.get('error') or result.get('message') or 'unknown error'}"
+
+    async def tool_chrome_read_network(self, args):
+        bridge = self._get_chrome_bridge()
+        if not bridge: return "[ERROR] ChromeBridge plugin not loaded."
+        if not bridge.ws_connection: return "[ERROR] Chrome extension not connected."
+        result = await bridge.read_network(
+            url_pattern=args.get('url_pattern'),
+            clear=args.get('clear', False)
+        )
+        if result.get('status') == 'success':
+            requests_list = result.get('requests', [])
+            if not requests_list:
+                return "[CHROME] No network requests captured."
+            lines = [f"[CHROME] {len(requests_list)} network request(s):"]
+            for r in requests_list[:50]:
+                lines.append(f"  {r.get('method', '?')} {r.get('status', '?')} {r.get('url', '')[:120]}")
+            return "\n".join(lines)
+        return f"[ERROR] Chrome read_network: {result.get('error') or result.get('message') or 'unknown error'}"
+
+    async def tool_chrome_hover(self, args):
+        bridge = self._get_chrome_bridge()
+        if not bridge: return "[ERROR] ChromeBridge plugin not loaded."
+        if not bridge.ws_connection: return "[ERROR] Chrome extension not connected."
+        result = await bridge.hover(
+            ref=args.get('ref'), selector=args.get('selector'),
+            x=args.get('x'), y=args.get('y')
+        )
+        if result.get('status') == 'success':
+            target = args.get('ref') or args.get('selector') or f"({args.get('x')},{args.get('y')})"
+            return f"[CHROME] Hovered: {target}"
+        return f"[ERROR] Chrome hover: {result.get('error') or result.get('message') or 'unknown error'}"
+
+    # ── Social Media tool handlers ─────────────────────────────────────
+
+    async def tool_post_tweet(self, args):
+        plugin = self._get_social_media_plugin()
+        if not plugin: return "[ERROR] SocialMediaPlugin not loaded."
+        result = await plugin.post_tweet(
+            text=args.get('text', ''),
+            reply_to=args.get('reply_to'),
+            media_path=args.get('media_path')
+        )
+        if result.get('status') == 'success':
+            return f"[TWITTER] Tweet posted! ID: {result.get('tweet_id', '?')} — {result.get('url', '')}"
+        return f"[ERROR] post_tweet: {result.get('message', 'unknown error')}"
+
+    async def tool_read_mentions(self, args):
+        plugin = self._get_social_media_plugin()
+        if not plugin: return "[ERROR] SocialMediaPlugin not loaded."
+        result = await plugin.read_mentions(count=int(args.get('count', 10)))
+        if result.get('status') == 'success':
+            mentions = result.get('mentions', [])
+            if not mentions:
+                return "[TWITTER] No recent mentions."
+            lines = [f"[TWITTER] {len(mentions)} mention(s):"]
+            for m in mentions:
+                lines.append(f"  @{m.get('author', '?')} (ID: {m.get('id', '?')}): {m.get('text', '')[:200]}")
+            return "\n".join(lines)
+        return f"[ERROR] read_mentions: {result.get('message', 'unknown error')}"
+
+    async def tool_read_dms(self, args):
+        plugin = self._get_social_media_plugin()
+        if not plugin: return "[ERROR] SocialMediaPlugin not loaded."
+        result = await plugin.read_dms(count=int(args.get('count', 10)))
+        if result.get('status') == 'success':
+            dms = result.get('messages', [])
+            if not dms:
+                return "[TWITTER] No recent DMs."
+            lines = [f"[TWITTER] {len(dms)} DM(s):"]
+            for d in dms:
+                lines.append(f"  From {d.get('sender', '?')}: {d.get('text', '')[:200]}")
+            return "\n".join(lines)
+        return f"[ERROR] read_dms: {result.get('message', 'unknown error')}"
+
+    async def tool_post_reddit(self, args):
+        plugin = self._get_social_media_plugin()
+        if not plugin: return "[ERROR] SocialMediaPlugin not loaded."
+        result = await plugin.post_reddit(
+            subreddit=args.get('subreddit', ''),
+            title=args.get('title', ''),
+            body=args.get('body'),
+            url=args.get('url'),
+            flair=args.get('flair')
+        )
+        if result.get('status') == 'success':
+            return f"[REDDIT] Post created! URL: {result.get('url', '?')}"
+        return f"[ERROR] post_reddit: {result.get('message', 'unknown error')}"
+
+    async def tool_read_reddit_inbox(self, args):
+        plugin = self._get_social_media_plugin()
+        if not plugin: return "[ERROR] SocialMediaPlugin not loaded."
+        result = await plugin.read_reddit_inbox(count=int(args.get('count', 10)))
+        if result.get('status') == 'success':
+            messages = result.get('messages', [])
+            if not messages:
+                return "[REDDIT] Inbox empty."
+            lines = [f"[REDDIT] {len(messages)} message(s):"]
+            for m in messages:
+                lines.append(f"  [{m.get('type', '?')}] u/{m.get('author', '?')}: {m.get('subject', '')[:60]} — {m.get('body', '')[:150]}")
+            return "\n".join(lines)
+        return f"[ERROR] read_reddit_inbox: {result.get('message', 'unknown error')}"
+
+    async def tool_reply_reddit(self, args):
+        plugin = self._get_social_media_plugin()
+        if not plugin: return "[ERROR] SocialMediaPlugin not loaded."
+        result = await plugin.reply_reddit(
+            thing_id=args.get('thing_id', ''),
+            body=args.get('body', '')
+        )
+        if result.get('status') == 'success':
+            return f"[REDDIT] Reply posted! ID: {result.get('comment_id', '?')}"
+        return f"[ERROR] reply_reddit: {result.get('message', 'unknown error')}"
 
     async def tool_generate_image(self, args):
         """Generate an image using FLUX via NVIDIA's GenAI API."""
@@ -3828,11 +4314,19 @@ class GalacticGateway:
                     else:
                         tin = self._estimated_input_tokens
                         tout = len(display_text) // 4
+                    # Fetch actual cost from OpenRouter when available
+                    actual_cost = None
+                    gen_id = getattr(self, '_last_generation_id', None)
+                    if self.llm.provider == 'openrouter' and gen_id:
+                        actual_cost = await self._fetch_openrouter_generation_cost(gen_id)
+                        self._last_generation_id = None
+
                     self.core.cost_tracker.log_usage(
                         model=self.llm.model,
                         provider=self.llm.provider,
                         tokens_in=tin,
                         tokens_out=tout,
+                        actual_cost=actual_cost,
                     )
 
                 # Persist to JSONL
@@ -3967,6 +4461,16 @@ class GalacticGateway:
         'regex_search': 30, 'send_telegram': 15,
         'git_status': 15, 'git_diff': 15, 'git_commit': 30, 'git_log': 15,
         'image_resize': 15, 'image_convert': 15, 'http_request': 60,
+        # Chrome Bridge tools
+        'chrome_screenshot': 15, 'chrome_navigate': 30, 'chrome_read_page': 15,
+        'chrome_find': 10, 'chrome_click': 10, 'chrome_type': 15,
+        'chrome_scroll': 10, 'chrome_form_input': 10, 'chrome_execute_js': 30,
+        'chrome_get_text': 15, 'chrome_tabs_list': 10, 'chrome_tabs_create': 10,
+        'chrome_key_press': 10, 'chrome_read_console': 10, 'chrome_read_network': 10,
+        'chrome_hover': 10,
+        # Social Media tools
+        'post_tweet': 30, 'read_mentions': 30, 'read_dms': 30,
+        'post_reddit': 30, 'read_reddit_inbox': 30, 'reply_reddit': 30,
     }
 
     def _get_tool_timeout(self, tool_name):
@@ -4533,6 +5037,18 @@ class GalacticGateway:
                 msg = data['choices'][0]['message']
                 content = (msg.get('content') or '').strip()
                 reasoning = (msg.get('reasoning_content') or '').strip()
+                # Handle native tool_calls
+                if not content and not reasoning and msg.get('tool_calls'):
+                    tc_list = msg['tool_calls']
+                    if tc_list:
+                        fn = tc_list[0].get('function', {})
+                        fn_name = fn.get('name', '')
+                        fn_args_str = fn.get('arguments', '{}')
+                        try:
+                            fn_args = json.loads(fn_args_str) if fn_args_str else {}
+                        except json.JSONDecodeError:
+                            fn_args = {}
+                        return json.dumps({"tool": fn_name, "args": fn_args})
                 if content:
                     return content
                 elif reasoning:
@@ -4580,6 +5096,30 @@ class GalacticGateway:
             return "".join(full_response)
         except Exception as e:
             return f"[ERROR] {self.llm.provider} (streaming): {str(e)}"
+
+    async def _fetch_openrouter_generation_cost(self, generation_id):
+        """Query OpenRouter's generation API for the actual cost charged.
+
+        Returns the total cost as a float, or None on failure.
+        This is a lightweight GET request (no streaming, fast timeout).
+        """
+        api_key = self._get_provider_api_key('openrouter')
+        if not api_key:
+            return None
+        try:
+            url = f"https://openrouter.ai/api/v1/generation?id={generation_id}"
+            async with httpx.AsyncClient(timeout=5.0) as client:
+                resp = await client.get(url, headers={
+                    "Authorization": f"Bearer {api_key}",
+                })
+                if resp.status_code == 200:
+                    data = resp.json().get('data', {})
+                    cost = data.get('total_cost')
+                    if cost is not None:
+                        return float(cost)
+        except Exception:
+            pass  # Non-fatal — fall back to estimated cost
+        return None
 
     async def _call_openai_compatible_messages(self, messages):
         """
@@ -4661,6 +5201,10 @@ class GalacticGateway:
                                 err_msg = body.decode('utf-8', errors='replace')[:500]
                             return f"[ERROR] {provider} HTTP {response.status_code}: {err_msg}"
                         token_buf = []
+                        # Accumulator for streamed native tool_calls (arguments arrive
+                        # incrementally across multiple chunks)
+                        _tc_name = ''
+                        _tc_args_parts = []
                         async for line in response.aiter_lines():
                             if not line.startswith("data: "):
                                 continue
@@ -4677,11 +5221,34 @@ class GalacticGateway:
                                         err_msg = chunk['error'].get('message', str(chunk['error']))
                                         return f"[ERROR] {provider}: {err_msg}"
                                     continue
-                                delta_obj = choices[0].get('delta', {})
+                                choice = choices[0]
+                                delta_obj = choice.get('delta', {})
                                 delta = delta_obj.get('content', '') or ''
                                 # NVIDIA thinking models may also stream reasoning_content
                                 if not delta:
                                     delta = delta_obj.get('reasoning_content', '') or ''
+
+                                # ── Accumulate native tool_calls from delta ──
+                                # Some models (Gemini via OpenRouter, GPT-4+) return tool
+                                # calls in the native `tool_calls` field instead of text.
+                                # Arguments arrive incrementally, so we accumulate them.
+                                tc_deltas = delta_obj.get('tool_calls', [])
+                                for tc in (tc_deltas or []):
+                                    fn = tc.get('function', {})
+                                    if fn.get('name'):
+                                        _tc_name = fn['name']
+                                    if fn.get('arguments'):
+                                        _tc_args_parts.append(fn['arguments'])
+
+                                # ── Capture finish_reason for diagnostics ──
+                                finish_reason = choice.get('finish_reason')
+                                if finish_reason and finish_reason not in ('stop', None):
+                                    await self.core.log(
+                                        f"⚠️ Stream finish_reason={finish_reason} "
+                                        f"(provider={provider}, model={self.llm.model})",
+                                        priority=2
+                                    )
+
                                 if delta:
                                     full_response.append(delta)
                                     token_buf.append(delta)
@@ -4697,12 +5264,37 @@ class GalacticGateway:
                                         "prompt_tokens": usage.get('prompt_tokens', 0),
                                         "completion_tokens": usage.get('completion_tokens', 0),
                                     }
+                                # Capture OpenRouter generation ID for actual cost lookup
+                                if 'id' in chunk and provider == 'openrouter':
+                                    self._last_generation_id = chunk['id']
                             except json.JSONDecodeError:
                                 continue
                         # Flush remaining buffer
                         if token_buf:
                             await self.core.relay.emit(3, "stream_chunk", "".join(token_buf))
+                        # ── Flush accumulated native tool_call ──
+                        if _tc_name and not full_response:
+                            args_str = "".join(_tc_args_parts) or '{}'
+                            try:
+                                fn_args = json.loads(args_str)
+                            except json.JSONDecodeError:
+                                fn_args = {}
+                            synthesized = json.dumps({"tool": _tc_name, "args": fn_args})
+                            full_response.append(synthesized)
+                            await self.core.log(
+                                f"🔧 Native tool_call intercepted (stream): "
+                                f"{_tc_name} → converted to text",
+                                priority=2
+                            )
                 result = "".join(full_response)
+                # ── Diagnostic: log when streaming produced empty result ──
+                if not result.strip():
+                    await self.core.log(
+                        f"⚠️ [DIAG] Streaming returned empty content "
+                        f"(provider={provider}, model={self.llm.model}, "
+                        f"chunks_processed={len(full_response)})",
+                        priority=1
+                    )
                 if not result.strip() and provider == "nvidia":
                     # Streaming returned no content — model may not support streaming.
                     # Fall through to non-streaming path as a last resort.
@@ -4788,16 +5380,42 @@ class GalacticGateway:
                             "prompt_tokens": usage.get('prompt_tokens', 0),
                             "completion_tokens": usage.get('completion_tokens', 0),
                         }
+                    # Capture OpenRouter generation ID for actual cost lookup
+                    if provider == 'openrouter' and 'id' in data:
+                        self._last_generation_id = data['id']
                     if 'choices' not in data:
                         return f"[ERROR] {provider}: {json.dumps(data)[:500]}"
                     msg = data['choices'][0]['message']
                     content = (msg.get('content') or '').strip()
                     reasoning = (msg.get('reasoning_content') or '').strip()
+                    # Handle native tool_calls (Gemini/GPT via OpenRouter may
+                    # use this instead of putting JSON in content text)
+                    if not content and not reasoning and msg.get('tool_calls'):
+                        tc_list = msg['tool_calls']
+                        if tc_list:
+                            fn = tc_list[0].get('function', {})
+                            fn_name = fn.get('name', '')
+                            fn_args_str = fn.get('arguments', '{}')
+                            try:
+                                fn_args = json.loads(fn_args_str) if fn_args_str else {}
+                            except json.JSONDecodeError:
+                                fn_args = {}
+                            await self.core.log(
+                                f"🔧 Native tool_call intercepted (non-stream): {fn_name}",
+                                priority=3
+                            )
+                            return json.dumps({"tool": fn_name, "args": fn_args})
                     if content:
                         return content
                     elif reasoning:
                         return f"[Reasoning]\n{reasoning}"
                     else:
+                        await self.core.log(
+                            f"⚠️ [DIAG] Non-streaming returned empty content "
+                            f"(provider={provider}, model={self.llm.model}, "
+                            f"msg_keys={list(msg.keys())})",
+                            priority=1
+                        )
                         return '[No response]'
             except Exception as e:
                 if _attempt < _max_retries and provider == "nvidia":
