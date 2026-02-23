@@ -195,13 +195,32 @@ class ChromeBridgeSkill(GalacticSkill):
     # ── Tool handlers ────────────────────────────────────────────────────
 
     async def _tool_chrome_screenshot(self, args):
-        if not self.ws_connection: return "[ERROR] Chrome extension not connected. Install the Galactic Browser extension and click Connect."
+        if not self.ws_connection:
+            return "[ERROR] Chrome extension not connected. Install the Galactic Browser extension and click Connect."
         result = await self.screenshot()
         if result.get('status') == 'success':
             img_data = result.get('image_b64', '')
-            if img_data:
-                return f"[CHROME] Screenshot captured ({len(img_data)} bytes base64)"
-            return "[CHROME] Screenshot captured (no image data)"
+            if not img_data:
+                return "[ERROR] Chrome screenshot: no image data returned"
+
+            # Save to images/browser/ directory (consistent with Playwright screenshot tool)
+            try:
+                import base64
+                from pathlib import Path
+                from datetime import datetime
+                images_dir = self.core.config.get('paths', {}).get('images', './images')
+                img_subdir = Path(images_dir) / 'browser'
+                img_subdir.mkdir(parents=True, exist_ok=True)
+                ts = datetime.now().strftime('%Y%m%d_%H%M%S')
+                path = str(img_subdir / f'chrome_{ts}.jpg')
+                raw = base64.b64decode(img_data)
+                with open(path, 'wb') as f:
+                    f.write(raw)
+                # Return special dict that gateway detects and renders as a vision message
+                return {"__image_b64__": img_data, "path": path, "media_type": "image/jpeg",
+                        "text": f"[CHROME] Screenshot saved: {path}"}
+            except Exception as e:
+                return f"[CHROME] Screenshot captured ({len(img_data)} chars base64) — save failed: {e}"
         return f"[ERROR] Chrome screenshot: {result.get('error') or result.get('message') or 'unknown error'}"
 
     async def _tool_chrome_navigate(self, args):

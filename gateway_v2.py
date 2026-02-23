@@ -2509,7 +2509,20 @@ class GalacticGateway:
                             recent_tools.pop(0)
 
                         messages.append({"role": "assistant", "content": response_text})
-                        messages.append({"role": "user", "content": f"Tool Output: {result}"})
+
+                        # Vision-capable tool result: screenshot or zoom returned an image dict
+                        if isinstance(result, dict) and "__image_b64__" in result:
+                            img_b64 = result["__image_b64__"]
+                            media_type = result.get("media_type", "image/jpeg")
+                            caption = result.get("text", "[CHROME] Screenshot captured")
+                            # Build multimodal user message so the LLM can visually see the screenshot
+                            img_content = [
+                                {"type": "text", "text": f"Tool Output: {caption}"},
+                                {"type": "image_url", "image_url": {"url": f"data:{media_type};base64,{img_b64}"}}
+                            ]
+                            messages.append({"role": "user", "content": img_content})
+                        else:
+                            messages.append({"role": "user", "content": f"Tool Output: {result}"})
 
                         # ── Circuit breaker: 3+ consecutive failures ──
                         if consecutive_failures >= 3:
