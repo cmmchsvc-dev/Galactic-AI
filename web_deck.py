@@ -4054,7 +4054,12 @@ try {
             data = await request.json()
             cmd = data.get('command', '')
             args = data.get('args', {})
-            bp = next((p for p in self.core.plugins if 'BrowserExecutorPro' in p.__class__.__name__), None)
+            bp = next(
+                (p for p in self.core.plugins
+                 if 'BrowserExecutorPro' in p.__class__.__name__
+                 or getattr(p, 'skill_name', '') == 'browser_pro'),
+                None
+            )
             if not bp:
                 return web.json_response({'error': 'Browser plugin not loaded'}, status=503)
             method = getattr(bp, cmd, None)
@@ -4448,8 +4453,13 @@ try {
             await ws.close(code=4001)
             return ws
 
-        # Find the ChromeBridge plugin
-        bridge = next((p for p in self.core.plugins if 'ChromeBridge' in p.__class__.__name__), None)
+        # Find the ChromeBridge plugin (or migrated ChromeBridgeSkill)
+        bridge = next(
+            (p for p in self.core.plugins
+             if 'ChromeBridge' in p.__class__.__name__
+             or getattr(p, 'skill_name', '') == 'chrome_bridge'),
+            None
+        )
         if not bridge:
             await ws.send_str(json.dumps({'type': 'error', 'message': 'ChromeBridge plugin not loaded'}))
             await ws.close(code=4002)
