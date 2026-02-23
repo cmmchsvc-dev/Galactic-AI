@@ -163,7 +163,7 @@ class GalacticCore:
         # Initialize Plugins — all optional, missing files are skipped gracefully
         _BUILTIN_PLUGINS = [
             # ('plugins.shell_executor', 'ShellPlugin'),  # Migrated to skills/core/
-            ('plugins.browser_executor_pro','BrowserExecutorPro'),
+            # ('plugins.browser_executor_pro','BrowserExecutorPro'),  # Migrated to skills/core/
             # ('plugins.subagent_manager',    'SubAgentPlugin'),  # Migrated to skills/core/
             # ('plugins.desktop_tool',        'DesktopTool'),  # Migrated to skills/core/
             # ('plugins.chrome_bridge',       'ChromeBridge'),  # Migrated to skills/core/
@@ -183,7 +183,13 @@ class GalacticCore:
                 await self.log(f"[Plugin] {class_name} failed to load: {e}", priority=2)
 
         # Ensure browser executor is available (after plugins are loaded)
-        browser_plugin = next((p for p in self.plugins if "BrowserExecutorPro" in p.__class__.__name__), None)
+        # Also checks skill_name for BrowserProSkill (Phase 4 migration)
+        browser_plugin = next(
+            (p for p in self.plugins
+             if "BrowserExecutorPro" in p.__class__.__name__
+             or getattr(p, 'skill_name', '') == 'browser_pro'),
+            None
+        )
         if browser_plugin:
             self.browser = browser_plugin
 
@@ -240,7 +246,7 @@ class GalacticCore:
             ('skills.core.chrome_bridge',    'ChromeBridgeSkill'),   # Phase 3
             ('skills.core.social_media',     'SocialMediaSkill'),    # Phase 3
             ('skills.core.subagent_manager', 'SubAgentSkill'),       # Phase 3
-            # ('skills.core.browser_pro',    'BrowserProSkill'),     # Phase 4
+            ('skills.core.browser_pro',    'BrowserProSkill'),     # Phase 4
         ]
         loaded_skill_names = []
         for module_path, class_name in CORE_SKILLS:
