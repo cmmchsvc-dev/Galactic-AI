@@ -88,6 +88,8 @@ class GalacticWebDeck:
         # Power control endpoints
         self.app.router.add_post('/api/restart', self.handle_restart)
         self.app.router.add_post('/api/shutdown', self.handle_shutdown)
+        # Chrome Bridge WebSocket — connects the Galactic Browser extension
+        self.app.router.add_get('/ws/chrome_bridge', self.handle_chrome_bridge_ws)
         self.trace_buffer = []  # last 500 agent trace entries for persistence
         
     async def handle_index(self, request):
@@ -4428,10 +4430,12 @@ try {
                 return web.json_response({'ok': False, 'error': str(e)})
         return web.json_response({'ok': True})
 
-    async def handle_stream(self, request):
-        ws = web.WebSocketResponse()
+    # ── Chrome Bridge WebSocket ────────────────────────────────────────
+    async def handle_chrome_bridge_ws(self, request):
+        """WebSocket endpoint for the Galactic Browser Chrome extension."""
+        ws = web.WebSocketResponse(heartbeat=30)
         await ws.prepare(request)
-        
+
         token = request.query.get('token')
         # Accept either legacy password hash or JWT token
         token_valid = (token == self.password_hash)
@@ -4441,6 +4445,66 @@ try {
         if not token_valid:
             await ws.close(code=4001)
             return ws
+
+        # Find the ChromeBridge plugin
+        bridge = next((p for p in self.core.plugins if 'ChromeBridge' in p.__class__.__name__), None)
+        if not bridge:
+            await ws.send_str(json.dumps({'type': 'error', 'message': 'ChromeBridge plugin not loaded'}))
+            await ws.close(code=4002)
+            return ws
+
+        # Register the WebSocket with the bridge plugin
+        bridge.ws_connection = ws
+        await self.core.log("[Chrome Bridge] Extension connected", priority=2)
+
+        # Send hello acknowledgement
+        await ws.send_str(json.dumps({'type': 'hello', 'status': 'connected', 'version': '1.0.0'}))
+
+        try:
+            async for msg in ws:
+                if msg.type == web.WSMsgType.TEXT:
+                    try:
+                        # Pass raw string — handle_ws_message does its own json.loads()
+                        await bridge.handle_ws_message(msg.data)
+                    except json.JSONDecodeError:
+                        pass
+                    except Exception as e:
+                        await self.core.log(f"[Chrome Bridge] Message error: {e}", priority=1)
+                elif msg.type in (web.WSMsgType.ERROR, web.WSMsgType.CLOSE):
+                    break
+        except Exception as e:
+            await self.core.log(f"[Chrome Bridge] Connection error: {e}", priority=1)
+        finally:
+            bridge.ws_connection = None
+            # Cancel any pending futures
+            for req_id, fut in list(bridge._pending.items()):
+                if not fut.done():
+                    fut.set_exception(ConnectionError("Chrome extension disconnected"))
+            bridge._pending.clear()
+            await self.core.log("[Chrome Bridge] Extension disconnected", priority=2)
+        return ws
+
+    async def handle_stream(self, request):
+        ws = web.WebSocketResponse()
+        await ws.prepare(request)
+
+        # Local connections (127.0.0.1, ::1) bypass token auth — matches
+        # the middleware pattern in remote_access.py so the Chrome extension
+        # side-panel (which connects without a token) works from localhost.
+        peername = request.transport.get_extra_info('peername')
+        client_ip = peername[0] if peername else (request.remote or '127.0.0.1')
+        is_local = client_ip in {'127.0.0.1', '::1', 'localhost'}
+
+        if not is_local:
+            token = request.query.get('token')
+            # Accept either legacy password hash or JWT token
+            token_valid = (token == self.password_hash)
+            if not token_valid and self.jwt_secret:
+                from remote_access import verify_jwt
+                token_valid = verify_jwt(token, self.jwt_secret)
+            if not token_valid:
+                await ws.close(code=4001)
+                return ws
 
         web_deck = self
         class WebAdapter:

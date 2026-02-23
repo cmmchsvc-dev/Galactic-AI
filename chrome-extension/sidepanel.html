@@ -1,0 +1,45 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Galactic AI</title>
+  <link rel="stylesheet" href="sidepanel.css">
+</head>
+<body>
+  <!-- Header -->
+  <div class="sp-header">
+    <div class="sp-header-left">
+      <span class="sp-title">GALACTIC AI</span>
+      <span class="sp-subtitle">Byte</span>
+    </div>
+    <div class="sp-header-right">
+      <span id="sp-status-dot" class="sp-dot disconnected" title="Disconnected"></span>
+    </div>
+  </div>
+
+  <!-- Chat Log -->
+  <div id="sp-chat-log" class="sp-chat-log">
+    <div class="sp-welcome">
+      <div class="sp-welcome-icon">✦</div>
+      <p>How can I help you?</p>
+    </div>
+  </div>
+
+  <!-- Input Area -->
+  <div class="sp-input-area">
+    <textarea
+      id="sp-input"
+      class="sp-textarea"
+      placeholder="Message Byte... (Enter to send, Shift+Enter for newline)"
+      rows="1"
+      spellcheck="true"
+    ></textarea>
+    <button id="sp-send-btn" class="sp-send-btn" title="Send (Enter)">
+      ▶
+    </button>
+  </div>
+
+  <script src="sidepanel.js"></script>
+</body>
+</html>

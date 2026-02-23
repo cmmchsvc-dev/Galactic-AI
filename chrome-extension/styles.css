@@ -1,0 +1,269 @@
+/**
+ * Galactic Browser - Shared Styles
+ * Dark theme matching Galactic AI aesthetic.
+ */
+
+/* ─── Reset & Base ────────────────────────────────────────────────────── */
+
+*, *::before, *::after {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+
+body {
+  font-family: system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+  background: #04050d;
+  color: #e8e8e8;
+  width: 320px;
+  min-height: 280px;
+  overflow: hidden;
+  -webkit-font-smoothing: antialiased;
+}
+
+/* ─── Container ───────────────────────────────────────────────────────── */
+
+.container {
+  padding: 20px 24px;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+/* ─── Header ──────────────────────────────────────────────────────────── */
+
+.header {
+  text-align: center;
+  padding-bottom: 4px;
+}
+
+.title {
+  font-size: 18px;
+  font-weight: 700;
+  letter-spacing: 3px;
+  color: #00f3ff;
+  text-shadow: 0 0 12px rgba(0, 243, 255, 0.35);
+  margin-bottom: 4px;
+}
+
+.subtitle {
+  font-size: 11px;
+  color: #6a6a8a;
+  letter-spacing: 0.5px;
+}
+
+/* ─── Status Row ──────────────────────────────────────────────────────── */
+
+.status-row {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 8px 0;
+}
+
+.status-dot {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+
+.status-dot.connected {
+  background: #00ff88;
+  box-shadow: 0 0 8px rgba(0, 255, 136, 0.6);
+  animation: pulse-green 2s ease-in-out infinite;
+}
+
+.status-dot.disconnected {
+  background: #ff3355;
+  box-shadow: 0 0 6px rgba(255, 51, 85, 0.4);
+}
+
+.status-dot.connecting {
+  background: #ffaa00;
+  box-shadow: 0 0 6px rgba(255, 170, 0, 0.4);
+  animation: pulse-amber 1s ease-in-out infinite;
+}
+
+.status-dot.error {
+  background: #ff3355;
+  box-shadow: 0 0 8px rgba(255, 51, 85, 0.7);
+  animation: pulse-red 0.8s ease-in-out infinite;
+}
+
+.status-text {
+  font-size: 13px;
+  font-weight: 500;
+  color: #c0c0d0;
+}
+
+/* ─── Pulse Animations ────────────────────────────────────────────────── */
+
+@keyframes pulse-green {
+  0%, 100% {
+    box-shadow: 0 0 4px rgba(0, 255, 136, 0.4);
+  }
+  50% {
+    box-shadow: 0 0 12px rgba(0, 255, 136, 0.8);
+  }
+}
+
+@keyframes pulse-amber {
+  0%, 100% {
+    box-shadow: 0 0 4px rgba(255, 170, 0, 0.3);
+  }
+  50% {
+    box-shadow: 0 0 10px rgba(255, 170, 0, 0.7);
+  }
+}
+
+@keyframes pulse-red {
+  0%, 100% {
+    box-shadow: 0 0 4px rgba(255, 51, 85, 0.5);
+  }
+  50% {
+    box-shadow: 0 0 12px rgba(255, 51, 85, 0.9);
+  }
+}
+
+/* ─── Input Group ─────────────────────────────────────────────────────── */
+
+.input-group {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.input-label {
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 1px;
+  text-transform: uppercase;
+  color: #8888aa;
+}
+
+.input-field {
+  width: 100%;
+  padding: 10px 12px;
+  font-size: 13px;
+  font-family: system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+  color: #e8e8e8;
+  background: #0d0e1a;
+  border: 1px solid #1e1f3a;
+  border-radius: 6px;
+  outline: none;
+  transition: border-color 0.2s ease, box-shadow 0.2s ease;
+}
+
+.input-field:focus {
+  border-color: #00f3ff;
+  box-shadow: 0 0 0 2px rgba(0, 243, 255, 0.15);
+}
+
+.input-field:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.input-field::placeholder {
+  color: #44445a;
+}
+
+.input-field.error {
+  border-color: #ff3355;
+  box-shadow: 0 0 0 2px rgba(255, 51, 85, 0.2);
+  animation: shake 0.3s ease;
+}
+
+@keyframes shake {
+  0%, 100% { transform: translateX(0); }
+  25% { transform: translateX(-4px); }
+  75% { transform: translateX(4px); }
+}
+
+/* ─── Button ──────────────────────────────────────────────────────────── */
+
+.btn-primary {
+  width: 100%;
+  padding: 11px 16px;
+  font-size: 13px;
+  font-weight: 700;
+  letter-spacing: 2px;
+  font-family: system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+  color: #04050d;
+  background: linear-gradient(135deg, #00f3ff, #ff00c8);
+  border: none;
+  border-radius: 6px;
+  cursor: pointer;
+  transition: opacity 0.2s ease, transform 0.1s ease, box-shadow 0.2s ease;
+  box-shadow: 0 2px 12px rgba(0, 243, 255, 0.2), 0 2px 12px rgba(255, 0, 200, 0.15);
+}
+
+.btn-primary:hover {
+  opacity: 0.92;
+  box-shadow: 0 4px 20px rgba(0, 243, 255, 0.3), 0 4px 20px rgba(255, 0, 200, 0.2);
+}
+
+.btn-primary:active {
+  transform: scale(0.98);
+}
+
+.btn-primary:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+  transform: none;
+}
+
+.btn-primary.connected {
+  background: linear-gradient(135deg, #1e1f3a, #2a1a3a);
+  color: #e8e8e8;
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.3);
+  border: 1px solid #33334a;
+}
+
+.btn-primary.connected:hover {
+  border-color: #ff3355;
+  color: #ff3355;
+  opacity: 1;
+}
+
+/* ─── Chat Panel Button ───────────────────────────────────────────────── */
+
+.btn-chat {
+  width: 100%;
+  padding: 9px 16px;
+  font-size: 12px;
+  font-weight: 600;
+  font-family: system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+  color: #00f3ff;
+  background: transparent;
+  border: 1px solid #00f3ff33;
+  border-radius: 6px;
+  cursor: pointer;
+  letter-spacing: 0.5px;
+  transition: background 0.2s ease, border-color 0.2s ease, box-shadow 0.2s ease;
+}
+
+.btn-chat:hover {
+  background: rgba(0, 243, 255, 0.08);
+  border-color: #00f3ff88;
+  box-shadow: 0 0 12px rgba(0, 243, 255, 0.15);
+}
+
+.btn-chat:active {
+  background: rgba(0, 243, 255, 0.14);
+}
+
+/* ─── Footer ──────────────────────────────────────────────────────────── */
+
+.footer {
+  text-align: center;
+  padding-top: 4px;
+}
+
+.version {
+  font-size: 10px;
+  color: #44445a;
+  letter-spacing: 1px;
+}

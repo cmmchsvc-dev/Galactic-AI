@@ -1,0 +1,52 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=320">
+  <title>Galactic Browser</title>
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <div class="container">
+    <!-- Header -->
+    <div class="header">
+      <h1 class="title">GALACTIC BROWSER</h1>
+      <p class="subtitle">Chrome Bridge for Galactic AI</p>
+    </div>
+
+    <!-- Status -->
+    <div class="status-row">
+      <span id="status-dot" class="status-dot disconnected"></span>
+      <span id="status-text" class="status-text">Disconnected</span>
+    </div>
+
+    <!-- Passphrase Input -->
+    <div class="input-group">
+      <label for="passphrase" class="input-label">Passphrase</label>
+      <input
+        type="password"
+        id="passphrase"
+        class="input-field"
+        placeholder="Enter your Galactic AI passphrase"
+        autocomplete="off"
+        spellcheck="false"
+      />
+    </div>
+
+    <!-- Connect Button -->
+    <button id="connect-btn" class="btn-primary">CONNECT</button>
+
+    <!-- Chat Panel Button (shown only when connected) -->
+    <button id="chat-btn" class="btn-chat" style="display:none">
+      💬 Open Chat Panel
+    </button>
+
+    <!-- Footer -->
+    <div class="footer">
+      <span class="version">v1.0.0</span>
+    </div>
+  </div>
+
+  <script src="popup.js"></script>
+</body>
+</html>

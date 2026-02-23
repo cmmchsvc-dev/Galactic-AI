@@ -1,0 +1,695 @@
+/**
+ * Galactic Browser - Content Script
+ * Injected into every page. Handles DOM inspection, interaction, and element tracking.
+ */
+
+(() => {
+  /* Prevent double-injection */
+  if (window.__galacticContentLoaded) return;
+  window.__galacticContentLoaded = true;
+
+  /* ─── Element Reference System ──────────────────────────────────────── */
+
+  let refMap = new Map();   // refId (string) -> Element
+  let refCounter = 0;
+
+  function resetRefs() {
+    refMap.clear();
+    refCounter = 0;
+  }
+
+  function assignRef(element) {
+    refCounter++;
+    const refId = `ref_${refCounter}`;
+    refMap.set(refId, element);
+    return refId;
+  }
+
+  function getElementByRef(refId) {
+    return refMap.get(refId) || null;
+  }
+
+  /* ─── Visibility Check ─────────────────────────────────────────────── */
+
+  function isVisible(el) {
+    if (!el || el.nodeType !== Node.ELEMENT_NODE) return false;
+    /* Quick checks */
+    if (el.hidden) return false;
+    const style = getComputedStyle(el);
+    if (style.display === 'none') return false;
+    if (style.visibility === 'hidden' || style.visibility === 'collapse') return false;
+    if (parseFloat(style.opacity) === 0) return false;
+    /* offsetParent is null for hidden elements, but also for position:fixed, body, html */
+    if (!el.offsetParent && style.position !== 'fixed' && style.position !== 'sticky'
+        && el.tagName !== 'BODY' && el.tagName !== 'HTML') {
+      return false;
+    }
+    return true;
+  }
+
+  /* ─── Role / Name Inference ─────────────────────────────────────────── */
+
+  const TAG_ROLE_MAP = {
+    'A': 'link',
+    'BUTTON': 'button',
+    'INPUT': 'textbox',
+    'TEXTAREA': 'textbox',
+    'SELECT': 'combobox',
+    'IMG': 'image',
+    'NAV': 'navigation',
+    'MAIN': 'main',
+    'HEADER': 'banner',
+    'FOOTER': 'contentinfo',
+    'ASIDE': 'complementary',
+    'SECTION': 'region',
+    'ARTICLE': 'article',
+    'FORM': 'form',
+    'TABLE': 'table',
+    'THEAD': 'rowgroup',
+    'TBODY': 'rowgroup',
+    'TR': 'row',
+    'TH': 'columnheader',
+    'TD': 'cell',
+    'UL': 'list',
+    'OL': 'list',
+    'LI': 'listitem',
+    'H1': 'heading',
+    'H2': 'heading',
+    'H3': 'heading',
+    'H4': 'heading',
+    'H5': 'heading',
+    'H6': 'heading',
+    'DIALOG': 'dialog',
+    'DETAILS': 'group',
+    'SUMMARY': 'button',
+    'LABEL': 'label',
+    'FIELDSET': 'group',
+    'LEGEND': 'legend',
+    'P': 'paragraph',
+    'PRE': 'code',
+    'BLOCKQUOTE': 'blockquote',
+    'IFRAME': 'iframe'
+  };
+
+  const INPUT_TYPE_ROLE = {
+    'checkbox': 'checkbox',
+    'radio': 'radio',
+    'range': 'slider',
+    'number': 'spinbutton',
+    'search': 'searchbox',
+    'email': 'textbox',
+    'tel': 'textbox',
+    'url': 'textbox',
+    'password': 'textbox',
+    'text': 'textbox',
+    'submit': 'button',
+    'reset': 'button',
+    'button': 'button',
+    'image': 'button',
+    'file': 'textbox'
+  };
+
+  function getRole(el) {
+    const explicitRole = el.getAttribute('role');
+    if (explicitRole) return explicitRole;
+
+    const tag = el.tagName;
+    if (tag === 'INPUT') {
+      const type = (el.type || 'text').toLowerCase();
+      return INPUT_TYPE_ROLE[type] || 'textbox';
+    }
+    return TAG_ROLE_MAP[tag] || null;
+  }
+
+  function getAccessibleName(el) {
+    /* aria-label takes priority */
+    const ariaLabel = el.getAttribute('aria-label');
+    if (ariaLabel) return ariaLabel.trim();
+
+    /* aria-labelledby */
+    const labelledBy = el.getAttribute('aria-labelledby');
+    if (labelledBy) {
+      const parts = labelledBy.split(/\s+/).map(id => {
+        const ref = document.getElementById(id);
+        return ref ? ref.textContent.trim() : '';
+      }).filter(Boolean);
+      if (parts.length > 0) return parts.join(' ');
+    }
+
+    /* Specific element types */
+    const tag = el.tagName;
+
+    if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') {
+      /* Associated label */
+      if (el.id) {
+        const label = document.querySelector(`label[for="${CSS.escape(el.id)}"]`);
+        if (label) return label.textContent.trim();
+      }
+      /* Placeholder */
+      if (el.placeholder) return el.placeholder;
+      /* Name attribute as fallback */
+      if (el.name) return el.name;
+      return '';
+    }
+
+    if (tag === 'IMG') {
+      return el.alt || el.title || '';
+    }
+
+    if (tag === 'A') {
+      return (el.textContent || el.title || '').trim();
+    }
+
+    /* title attribute */
+    if (el.title) return el.title.trim();
+
+    /* Direct text content (not too deep) */
+    const text = getDirectText(el);
+    return text;
+  }
+
+  function getDirectText(el) {
+    let text = '';
+    for (const child of el.childNodes) {
+      if (child.nodeType === Node.TEXT_NODE) {
+        text += child.textContent;
+      }
+    }
+    text = text.trim().replace(/\s+/g, ' ');
+    if (text.length > 80) text = text.substring(0, 77) + '...';
+    return text;
+  }
+
+  function isInteractive(el) {
+    const tag = el.tagName;
+    if (['BUTTON', 'A', 'INPUT', 'TEXTAREA', 'SELECT', 'SUMMARY'].includes(tag)) return true;
+    if (el.getAttribute('role') && ['button', 'link', 'textbox', 'checkbox', 'radio',
+        'tab', 'menuitem', 'option', 'switch', 'slider', 'combobox', 'searchbox',
+        'spinbutton', 'treeitem'].includes(el.getAttribute('role'))) return true;
+    if (el.hasAttribute('onclick') || el.hasAttribute('tabindex')) return true;
+    if (el.hasAttribute('contenteditable') && el.contentEditable === 'true') return true;
+    return false;
+  }
+
+  /* ─── Snapshot / Accessibility Tree ─────────────────────────────────── */
+
+  function buildSnapshot(args) {
+    resetRefs();
+
+    const maxDepth = args?.max_depth || 15;
+    const interactiveOnly = args?.filter === 'interactive';
+    const maxChars = args?.max_chars || 60000;
+    const lines = [];
+
+    function walk(el, depth) {
+      if (depth > maxDepth) return;
+      if (!isVisible(el)) return;
+      if (lines.join('\n').length > maxChars) return;
+
+      const role = getRole(el);
+      const tag = el.tagName.toLowerCase();
+      const name = getAccessibleName(el);
+      const interactive = isInteractive(el);
+
+      /* Decide whether to include this element */
+      const hasRole = !!role;
+      const hasName = !!name;
+      const isStructural = ['main', 'navigation', 'banner', 'contentinfo',
+        'complementary', 'region', 'article', 'form', 'dialog', 'list',
+        'heading', 'table', 'row', 'cell', 'columnheader', 'rowgroup',
+        'group', 'iframe'].includes(role);
+
+      const shouldInclude = interactive || isStructural || hasRole;
+
+      if (interactiveOnly && !interactive) {
+        /* Still walk children for interactive-only mode */
+        for (const child of el.children) {
+          walk(child, depth);
+        }
+        return;
+      }
+
+      if (shouldInclude) {
+        const indent = '  '.repeat(depth);
+        let line = `${indent}- ${role || tag}`;
+
+        /* Add name */
+        if (name) {
+          line += ` "${name}"`;
+        }
+
+        /* Ref for interactive elements */
+        if (interactive) {
+          const refId = assignRef(el);
+          line += ` [ref=${refId}]`;
+        }
+
+        /* Extra attributes */
+        if (role === 'heading') {
+          const level = el.tagName.match(/H(\d)/)?.[1];
+          if (level) line += ` level=${level}`;
+        }
+
+        if (role === 'link' && el.href) {
+          line += ` url="${el.getAttribute('href') || ''}"`;
+        }
+
+        if ((role === 'textbox' || role === 'combobox' || role === 'searchbox' || role === 'spinbutton') && el.value !== undefined) {
+          line += ` value="${el.value}"`;
+        }
+
+        if (role === 'checkbox' || role === 'radio') {
+          line += ` checked=${el.checked}`;
+        }
+
+        if (el.disabled) {
+          line += ` disabled`;
+        }
+
+        if (el.getAttribute('aria-expanded') !== null) {
+          line += ` expanded=${el.getAttribute('aria-expanded')}`;
+        }
+
+        if (el.getAttribute('aria-selected') !== null) {
+          line += ` selected=${el.getAttribute('aria-selected')}`;
+        }
+
+        lines.push(line);
+
+        /* Walk children at increased depth */
+        for (const child of el.children) {
+          walk(child, depth + 1);
+        }
+      } else {
+        /* Not significant, but walk children at same depth to find nested content */
+        /* Include text-only elements (paragraphs, spans with text) */
+        if (['P', 'SPAN', 'DIV', 'STRONG', 'EM', 'B', 'I', 'LABEL', 'LEGEND',
+             'FIGCAPTION', 'CAPTION', 'BLOCKQUOTE', 'PRE', 'CODE', 'DD', 'DT'].includes(el.tagName)) {
+          const text = getDirectText(el);
+          if (text && text.length > 1) {
+            const indent = '  '.repeat(depth);
+            lines.push(`${indent}- text "${text}"`);
+          }
+        }
+
+        for (const child of el.children) {
+          walk(child, depth);
+        }
+      }
+    }
+
+    /* Start from body */
+    if (document.body) {
+      lines.push('- document');
+      for (const child of document.body.children) {
+        walk(child, 1);
+      }
+    }
+
+    return { status: 'success', tree: lines.join('\n'), ref_count: refCounter };
+  }
+
+  /* ─── Find Elements ─────────────────────────────────────────────────── */
+
+  function findElements(args) {
+    resetRefs();
+    const query = args?.query || '';
+    const selector = args?.selector || null;
+    const maxResults = args?.max_results || 20;
+    const results = [];
+
+    if (selector) {
+      /* CSS selector search */
+      try {
+        const elements = document.querySelectorAll(selector);
+        for (const el of elements) {
+          if (results.length >= maxResults) break;
+          if (!isVisible(el)) continue;
+          const refId = assignRef(el);
+          results.push({
+            ref: refId,
+            tag: el.tagName.toLowerCase(),
+            role: getRole(el) || el.tagName.toLowerCase(),
+            name: getAccessibleName(el),
+            text: getDirectText(el),
+            rect: el.getBoundingClientRect().toJSON()
+          });
+        }
+      } catch (_) {
+        return { error: `Invalid CSS selector: ${selector}` };
+      }
+    }
+
+    if (query) {
+      /* Text-based search */
+      const lowerQuery = query.toLowerCase();
+      const walker = document.createTreeWalker(document.body, NodeFilter.SHOW_ELEMENT);
+      let node;
+      while ((node = walker.nextNode()) && results.length < maxResults) {
+        if (!isVisible(node)) continue;
+
+        const text = (node.textContent || '').toLowerCase();
+        const ariaLabel = (node.getAttribute('aria-label') || '').toLowerCase();
+        const placeholder = (node.placeholder || '').toLowerCase();
+        const title = (node.title || '').toLowerCase();
+        const alt = (node.alt || '').toLowerCase();
+
+        const matches = text.includes(lowerQuery) || ariaLabel.includes(lowerQuery)
+          || placeholder.includes(lowerQuery) || title.includes(lowerQuery)
+          || alt.includes(lowerQuery);
+
+        if (matches) {
+          /* Prefer leaf/interactive elements over containers */
+          const isLeaf = node.children.length === 0 || isInteractive(node);
+          const directText = getDirectText(node).toLowerCase();
+          const directMatch = directText.includes(lowerQuery) || ariaLabel.includes(lowerQuery)
+            || placeholder.includes(lowerQuery);
+
+          if (isLeaf || directMatch) {
+            const refId = assignRef(node);
+            results.push({
+              ref: refId,
+              tag: node.tagName.toLowerCase(),
+              role: getRole(node) || node.tagName.toLowerCase(),
+              name: getAccessibleName(node),
+              text: getDirectText(node),
+              rect: node.getBoundingClientRect().toJSON()
+            });
+          }
+        }
+      }
+    }
+
+    return { status: 'success', elements: results, count: results.length };
+  }
+
+  /* ─── Click ─────────────────────────────────────────────────────────── */
+
+  function performClick(args) {
+    let el = null;
+
+    if (args?.ref) {
+      el = getElementByRef(args.ref);
+    } else if (args?.selector) {
+      el = document.querySelector(args.selector);
+    } else if (args?.coordinate) {
+      const [x, y] = args.coordinate;
+      el = document.elementFromPoint(x, y);
+    }
+
+    if (!el) return { error: 'Element not found' };
+
+    /* Scroll into view if needed */
+    el.scrollIntoView({ block: 'center', behavior: 'instant' });
+
+    /* Dispatch proper mouse events */
+    const rect = el.getBoundingClientRect();
+    const cx = rect.left + rect.width / 2;
+    const cy = rect.top + rect.height / 2;
+    const eventOpts = {
+      bubbles: true,
+      cancelable: true,
+      view: window,
+      clientX: cx,
+      clientY: cy
+    };
+
+    el.dispatchEvent(new MouseEvent('mouseover', eventOpts));
+    el.dispatchEvent(new MouseEvent('mouseenter', { ...eventOpts, bubbles: false }));
+    el.dispatchEvent(new MouseEvent('mousedown', { ...eventOpts, button: 0 }));
+    el.focus();
+    el.dispatchEvent(new MouseEvent('mouseup', { ...eventOpts, button: 0 }));
+    el.dispatchEvent(new MouseEvent('click', { ...eventOpts, button: 0 }));
+
+    /* Double click if requested */
+    if (args?.double_click) {
+      el.dispatchEvent(new MouseEvent('dblclick', { ...eventOpts, button: 0 }));
+    }
+
+    return { status: 'success' };
+  }
+
+  /* ─── Type ──────────────────────────────────────────────────────────── */
+
+  function performType(args) {
+    let el = null;
+
+    if (args?.ref) {
+      el = getElementByRef(args.ref);
+    } else if (args?.selector) {
+      el = document.querySelector(args.selector);
+    }
+
+    if (!el) return { error: 'Element not found' };
+
+    el.focus();
+
+    /* Clear existing value if requested */
+    if (args?.clear !== false) {
+      if ('value' in el) {
+        el.value = '';
+      } else if (el.contentEditable === 'true') {
+        el.textContent = '';
+      }
+      el.dispatchEvent(new Event('input', { bubbles: true }));
+    }
+
+    const text = args?.text || '';
+
+    if ('value' in el) {
+      /* Standard input/textarea */
+      el.value = text;
+      el.dispatchEvent(new Event('input', { bubbles: true }));
+      el.dispatchEvent(new Event('change', { bubbles: true }));
+    } else if (el.contentEditable === 'true') {
+      /* ContentEditable elements */
+      el.textContent = text;
+      el.dispatchEvent(new Event('input', { bubbles: true }));
+    } else {
+      /* Fallback: dispatch key events character by character */
+      for (const char of text) {
+        el.dispatchEvent(new KeyboardEvent('keydown', { key: char, bubbles: true }));
+        el.dispatchEvent(new KeyboardEvent('keypress', { key: char, bubbles: true }));
+        el.dispatchEvent(new KeyboardEvent('keyup', { key: char, bubbles: true }));
+      }
+    }
+
+    return { status: 'success' };
+  }
+
+  /* ─── Scroll ────────────────────────────────────────────────────────── */
+
+  function performScroll(args) {
+    if (args?.ref) {
+      const el = getElementByRef(args.ref);
+      if (!el) return { error: 'Element not found' };
+      el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      return { status: 'success' };
+    }
+
+    if (args?.selector) {
+      const el = document.querySelector(args.selector);
+      if (!el) return { error: 'Element not found' };
+      el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      return { status: 'success' };
+    }
+
+    /* Page scroll by direction */
+    const direction = (args?.direction || 'down').toLowerCase();
+    const amount = args?.amount || 3;
+    const pixels = amount * 100;
+
+    switch (direction) {
+      case 'up':    window.scrollBy(0, -pixels); break;
+      case 'down':  window.scrollBy(0, pixels); break;
+      case 'left':  window.scrollBy(-pixels, 0); break;
+      case 'right': window.scrollBy(pixels, 0); break;
+      default:      window.scrollBy(0, pixels); break;
+    }
+
+    return { status: 'success' };
+  }
+
+  /* ─── Form Input ────────────────────────────────────────────────────── */
+
+  function performFormInput(args) {
+    let el = null;
+
+    if (args?.ref) {
+      el = getElementByRef(args.ref);
+    } else if (args?.selector) {
+      el = document.querySelector(args.selector);
+    }
+
+    if (!el) return { error: 'Element not found' };
+
+    const value = args?.value;
+
+    const tag = el.tagName;
+    const type = (el.type || '').toLowerCase();
+
+    if (tag === 'SELECT') {
+      /* Try matching by value first, then by text */
+      let matched = false;
+      for (const opt of el.options) {
+        if (opt.value === String(value) || opt.textContent.trim() === String(value)) {
+          el.value = opt.value;
+          matched = true;
+          break;
+        }
+      }
+      if (!matched && typeof value === 'number') {
+        el.selectedIndex = value;
+      }
+      el.dispatchEvent(new Event('change', { bubbles: true }));
+      el.dispatchEvent(new Event('input', { bubbles: true }));
+      return { status: 'success' };
+    }
+
+    if (type === 'checkbox' || type === 'radio') {
+      const shouldBeChecked = typeof value === 'boolean' ? value : value === 'true' || value === true;
+      if (el.checked !== shouldBeChecked) {
+        el.checked = shouldBeChecked;
+        el.dispatchEvent(new Event('change', { bubbles: true }));
+        el.dispatchEvent(new Event('input', { bubbles: true }));
+      }
+      return { status: 'success' };
+    }
+
+    if (type === 'file') {
+      return { error: 'Cannot programmatically set file inputs for security reasons' };
+    }
+
+    /* Text inputs, textareas, etc. */
+    el.focus();
+    el.value = String(value);
+    el.dispatchEvent(new Event('input', { bubbles: true }));
+    el.dispatchEvent(new Event('change', { bubbles: true }));
+    return { status: 'success' };
+  }
+
+  /* ─── Key Press ─────────────────────────────────────────────────────── */
+
+  function performKeyPress(args) {
+    const keys = args?.text || args?.key || '';
+    const target = args?.ref ? getElementByRef(args.ref) : document.activeElement || document.body;
+
+    if (!target) return { error: 'No target element' };
+
+    /* Parse space-separated key sequences, handle modifiers like "ctrl+a" */
+    const keySequences = keys.split(' ').filter(Boolean);
+    const repeat = Math.min(args?.repeat || 1, 100);
+
+    for (let r = 0; r < repeat; r++) {
+      for (const keyCombo of keySequences) {
+        const parts = keyCombo.split('+');
+        const key = parts.pop();
+        const modifiers = {
+          ctrlKey: parts.includes('ctrl') || parts.includes('Control'),
+          shiftKey: parts.includes('shift') || parts.includes('Shift'),
+          altKey: parts.includes('alt') || parts.includes('Alt'),
+          metaKey: parts.includes('meta') || parts.includes('cmd') || parts.includes('Meta')
+        };
+
+        const keyMap = {
+          'Enter': 'Enter', 'Tab': 'Tab', 'Escape': 'Escape', 'Esc': 'Escape',
+          'Backspace': 'Backspace', 'Delete': 'Delete', 'Space': ' ',
+          'ArrowUp': 'ArrowUp', 'ArrowDown': 'ArrowDown',
+          'ArrowLeft': 'ArrowLeft', 'ArrowRight': 'ArrowRight',
+          'Home': 'Home', 'End': 'End', 'PageUp': 'PageUp', 'PageDown': 'PageDown',
+          'F1': 'F1', 'F2': 'F2', 'F3': 'F3', 'F4': 'F4', 'F5': 'F5',
+          'F6': 'F6', 'F7': 'F7', 'F8': 'F8', 'F9': 'F9', 'F10': 'F10',
+          'F11': 'F11', 'F12': 'F12'
+        };
+        const resolvedKey = keyMap[key] || key;
+
+        const eventInit = {
+          key: resolvedKey,
+          code: resolvedKey.length === 1 ? `Key${resolvedKey.toUpperCase()}` : resolvedKey,
+          bubbles: true,
+          cancelable: true,
+          ...modifiers
+        };
+
+        target.dispatchEvent(new KeyboardEvent('keydown', eventInit));
+        if (resolvedKey.length === 1) {
+          target.dispatchEvent(new KeyboardEvent('keypress', eventInit));
+        }
+        target.dispatchEvent(new KeyboardEvent('keyup', eventInit));
+      }
+    }
+
+    return { status: 'success' };
+  }
+
+  /* ─── Hover ─────────────────────────────────────────────────────────── */
+
+  function performHover(args) {
+    let el = null;
+
+    if (args?.ref) {
+      el = getElementByRef(args.ref);
+    } else if (args?.selector) {
+      el = document.querySelector(args.selector);
+    } else if (args?.coordinate) {
+      const [x, y] = args.coordinate;
+      el = document.elementFromPoint(x, y);
+    }
+
+    if (!el) return { error: 'Element not found' };
+
+    el.scrollIntoView({ block: 'center', behavior: 'instant' });
+
+    const rect = el.getBoundingClientRect();
+    const cx = rect.left + rect.width / 2;
+    const cy = rect.top + rect.height / 2;
+    const eventOpts = {
+      bubbles: true,
+      cancelable: true,
+      view: window,
+      clientX: cx,
+      clientY: cy
+    };
+
+    el.dispatchEvent(new MouseEvent('mouseenter', { ...eventOpts, bubbles: false }));
+    el.dispatchEvent(new MouseEvent('mouseover', eventOpts));
+    el.dispatchEvent(new MouseEvent('mousemove', eventOpts));
+
+    return { status: 'success' };
+  }
+
+  /* ─── Get Page Text ─────────────────────────────────────────────────── */
+
+  function getPageText() {
+    const text = (document.body?.innerText || '').trim();
+    return { status: 'success', text };
+  }
+
+  /* ─── Command Dispatcher ────────────────────────────────────────────── */
+
+  async function handleCommand(command, args) {
+    switch (command) {
+      case 'snapshot':    return buildSnapshot(args);
+      case 'find':        return findElements(args);
+      case 'click':       return performClick(args);
+      case 'type':        return performType(args);
+      case 'scroll':      return performScroll(args);
+      case 'form_input':  return performFormInput(args);
+      case 'key_press':   return performKeyPress(args);
+      case 'hover':       return performHover(args);
+      case 'get_text':    return getPageText();
+      default:            return { error: `Unknown content command: ${command}` };
+    }
+  }
+
+  /* ─── Message Listener ──────────────────────────────────────────────── */
+
+  chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
+    if (msg.type === 'galactic') {
+      handleCommand(msg.command, msg.args)
+        .then(result => sendResponse({ result }))
+        .catch(err => sendResponse({ error: err.message }));
+      return true; /* Keep channel open for async response */
+    }
+  });
+})();

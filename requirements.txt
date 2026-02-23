@@ -45,6 +45,10 @@ apscheduler>=3.10.0          # Advanced task scheduling
 qrcode[pil]>=8.0             # QR code generation for mobile app pairing
 cryptography>=42.0.0         # TLS certificate generation for remote access
 
+# ─── Social Media APIs ──────────────────────────────────────────────────────
+tweepy>=4.14.0               # Twitter/X API v2 (OAuth 1.0a posting, mentions, DMs)
+praw>=7.7.0                  # Reddit API (post, comment, inbox)
+
 # ─── Utilities ────────────────────────────────────────────────────────────────
 python-dotenv>=1.0.0         # Load .env files
 rich>=13.7.0                 # Beautiful terminal output / formatted logs

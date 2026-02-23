@@ -96,6 +96,7 @@ social-media-promo.md
 !index.html
 !privacy.html
 !terms.html
+!chrome-extension/*.html
 *.jpg
 *.svg
 *.docx
