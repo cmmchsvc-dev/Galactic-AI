@@ -164,10 +164,10 @@ class GalacticCore:
         _BUILTIN_PLUGINS = [
             # ('plugins.shell_executor', 'ShellPlugin'),  # Migrated to skills/core/
             ('plugins.browser_executor_pro','BrowserExecutorPro'),
-            ('plugins.subagent_manager',    'SubAgentPlugin'),
+            # ('plugins.subagent_manager',    'SubAgentPlugin'),  # Migrated to skills/core/
             # ('plugins.desktop_tool',        'DesktopTool'),  # Migrated to skills/core/
-            ('plugins.chrome_bridge',       'ChromeBridge'),
-            ('plugins.social_media',        'SocialMediaPlugin'),
+            # ('plugins.chrome_bridge',       'ChromeBridge'),  # Migrated to skills/core/
+            # ('plugins.social_media',        'SocialMediaPlugin'),  # Migrated to skills/core/
         ]
         loaded_plugin_names = []
         for module_path, class_name in _BUILTIN_PLUGINS:
@@ -234,14 +234,13 @@ class GalacticCore:
         self.skills = []
 
         # Core skills — add entries here as plugins are migrated
-        # Phase 0: empty (all still running as legacy plugins)
         CORE_SKILLS = [
-            ('skills.core.shell_executor', 'ShellSkill'),
-            ('skills.core.desktop_tool',   'DesktopSkill'),
-            # ('skills.core.chrome_bridge',  'ChromeBridgeSkill'), # Phase 3
-            # ('skills.core.social_media',   'SocialMediaSkill'),  # Phase 3
-            # ('skills.core.subagent_manager', 'SubAgentSkill'),   # Phase 3
-            # ('skills.core.browser_pro',    'BrowserProSkill'),   # Phase 4
+            ('skills.core.shell_executor',   'ShellSkill'),
+            ('skills.core.desktop_tool',     'DesktopSkill'),
+            ('skills.core.chrome_bridge',    'ChromeBridgeSkill'),   # Phase 3
+            ('skills.core.social_media',     'SocialMediaSkill'),    # Phase 3
+            ('skills.core.subagent_manager', 'SubAgentSkill'),       # Phase 3
+            # ('skills.core.browser_pro',    'BrowserProSkill'),     # Phase 4
         ]
         loaded_skill_names = []
         for module_path, class_name in CORE_SKILLS:
@@ -261,6 +260,11 @@ class GalacticCore:
         if self.skills:
             self.gateway.register_skill_tools(self.skills)
             await self.log(f"Skills loaded: {', '.join(loaded_skill_names)}", priority=2)
+
+        # Backwards compat: also populate self.plugins so web_deck.py can find skills by class name
+        for skill in self.skills:
+            if skill not in self.plugins:
+                self.plugins.append(skill)
 
     async def imprint_workspace(self):
         """Initial memory imprint of key personality files."""
