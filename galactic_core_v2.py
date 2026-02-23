@@ -160,40 +160,7 @@ class GalacticCore:
             priority=2
         )
         
-        # Initialize Plugins — all optional, missing files are skipped gracefully
-        _BUILTIN_PLUGINS = [
-            # ('plugins.shell_executor', 'ShellPlugin'),  # Migrated to skills/core/
-            # ('plugins.browser_executor_pro','BrowserExecutorPro'),  # Migrated to skills/core/
-            # ('plugins.subagent_manager',    'SubAgentPlugin'),  # Migrated to skills/core/
-            # ('plugins.desktop_tool',        'DesktopTool'),  # Migrated to skills/core/
-            # ('plugins.chrome_bridge',       'ChromeBridge'),  # Migrated to skills/core/
-            # ('plugins.social_media',        'SocialMediaPlugin'),  # Migrated to skills/core/
-        ]
-        loaded_plugin_names = []
-        for module_path, class_name in _BUILTIN_PLUGINS:
-            try:
-                import importlib
-                mod = importlib.import_module(module_path)
-                cls = getattr(mod, class_name)
-                self.plugins.append(cls(self))
-                loaded_plugin_names.append(class_name)
-            except ModuleNotFoundError:
-                await self.log(f"[Plugin] {class_name} not found — skipping (remove the file to disable permanently)", priority=3)
-            except Exception as e:
-                await self.log(f"[Plugin] {class_name} failed to load: {e}", priority=2)
-
-        # Ensure browser executor is available (after plugins are loaded)
-        # Also checks skill_name for BrowserProSkill (Phase 4 migration)
-        browser_plugin = next(
-            (p for p in self.plugins
-             if "BrowserExecutorPro" in p.__class__.__name__
-             or getattr(p, 'skill_name', '') == 'browser_pro'),
-            None
-        )
-        if browser_plugin:
-            self.browser = browser_plugin
-
-        await self.log(f"Systems initialized. Plugins loaded: {', '.join(loaded_plugin_names) or 'none'}", priority=2)
+        await self.log("Systems initialized. All capabilities running as skills.", priority=2)
 
         # Load Skills (runs alongside plugins during migration)
         await self.load_skills()
@@ -594,10 +561,6 @@ class GalacticCore:
         asyncio.create_task(self.ollama_manager.auto_discover_loop())
         asyncio.create_task(self._recovery_check_loop())
         asyncio.create_task(self._update_check_loop())
-
-        # Start Plugins
-        for plugin in self.plugins:
-            asyncio.create_task(plugin.run())
 
         # Start Skills
         for skill in self.skills:
