@@ -162,7 +162,7 @@ class GalacticCore:
         
         # Initialize Plugins — all optional, missing files are skipped gracefully
         _BUILTIN_PLUGINS = [
-            ('plugins.shell_executor',      'ShellPlugin'),
+            # ('plugins.shell_executor', 'ShellPlugin'),  # Migrated to skills/core/
             ('plugins.browser_executor_pro','BrowserExecutorPro'),
             ('plugins.subagent_manager',    'SubAgentPlugin'),
             ('plugins.desktop_tool',        'DesktopTool'),
@@ -236,7 +236,7 @@ class GalacticCore:
         # Core skills — add entries here as plugins are migrated
         # Phase 0: empty (all still running as legacy plugins)
         CORE_SKILLS = [
-            # ('skills.core.shell_executor', 'ShellSkill'),  # Phase 1
+            ('skills.core.shell_executor', 'ShellSkill'),
             # ('skills.core.desktop_tool',   'DesktopSkill'), # Phase 2
             # ('skills.core.chrome_bridge',  'ChromeBridgeSkill'), # Phase 3
             # ('skills.core.social_media',   'SocialMediaSkill'),  # Phase 3
