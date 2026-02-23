@@ -1040,16 +1040,16 @@ body.glow-max .status-dot{box-shadow:0 0 14px var(--green),0 0 28px rgba(0,255,1
         <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:12px">
           <div class="stat-card" style="padding:16px">
             <div class="lbl" style="margin-bottom:10px;text-align:left">Daily Spend (14 days)</div>
-            <canvas id="chart-daily" height="180"></canvas>
+            <div style="position:relative;height:180px"><canvas id="chart-daily"></canvas></div>
           </div>
           <div class="stat-card" style="padding:16px">
             <div class="lbl" style="margin-bottom:10px;text-align:left">Cost by Model (30 days)</div>
-            <canvas id="chart-models" height="180"></canvas>
+            <div style="position:relative;height:180px"><canvas id="chart-models"></canvas></div>
           </div>
         </div>
         <div class="stat-card" style="padding:16px;margin-bottom:12px">
           <div class="lbl" style="margin-bottom:10px;text-align:left">Cost per Message Trend (14 days)</div>
-          <canvas id="chart-trend" height="120"></canvas>
+          <div style="position:relative;height:120px"><canvas id="chart-trend"></canvas></div>
         </div>
         <div id="cost-free-note" style="font-size:0.72rem;color:var(--dim);margin-bottom:18px"></div>
 
