@@ -610,12 +610,12 @@ class GalacticGateway:
 
             # ── File & system utilities ────────────────────────────────────────
             "list_dir": {
-                "description": "List files and directories at a path with sizes, dates, and types. Better than exec_shell for directory listings.",
+                "description": "List files and directories at a path with sizes, dates, and types. ALWAYS use absolute paths (e.g. 'C:/Users/name/folder' or 'F:/My Folder') — relative paths resolve to the server working directory and will return errors for user folders. If the result starts with [ERROR], report that error to the user verbatim.",
                 "parameters": {
                     "type": "object",
                     "properties": {
-                        "path":    {"type": "string",  "description": "Directory path to list (default: current working directory)"},
-                        "pattern": {"type": "string",  "description": "Optional glob pattern to filter, e.g. '*.py' or '*.txt'"},
+                        "path":    {"type": "string",  "description": "ABSOLUTE directory path to list (e.g. 'F:/Galactic AI Media'). Relative paths resolve to server CWD, not user folders."},
+                        "pattern": {"type": "string",  "description": "Optional glob pattern to filter, e.g. '*.py' or '*.mp4'"},
                         "recurse": {"type": "boolean", "description": "Recurse into subdirectories (default: false)"},
                     },
                     "required": []
@@ -4019,7 +4019,13 @@ class GalacticGateway:
         try:
             base = os.path.abspath(path)
             if not os.path.isdir(base):
-                return f"[ERROR] Not a directory: {base}"
+                return (
+                    f"[ERROR] list_dir FAILED — path does not exist or is not a directory.\n"
+                    f"  Requested: {path!r}\n"
+                    f"  Resolved to: {base!r}\n"
+                    f"STOP — do not guess or invent file listings. Report this error to the user "
+                    f"and ask them for the correct absolute path."
+                )
             search = os.path.join(base, '**', pattern) if recurse else os.path.join(base, pattern)
             entries = _glob.glob(search, recursive=recurse)
             if not entries:
