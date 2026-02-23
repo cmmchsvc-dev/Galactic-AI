@@ -2,7 +2,7 @@
 
 **Sovereign. Universal. Fast.**
 
-A powerful, local-first AI automation platform with 100+ built-in tools, true persistent memory, voice I/O, video generation, browser automation, 14 AI providers, multi-platform messaging bridges, and a real-time web Control Deck. **v1.0.9**
+A powerful, local-first AI automation platform with 100+ built-in tools, true persistent memory, voice I/O, video generation, browser automation, 14 AI providers, multi-platform messaging bridges, and a real-time web Control Deck. **v1.1.0**
 
 Run fully local with Ollama (no API keys, no cloud, no tracking), or connect to any of 14 cloud providers. Your data stays yours.
 
@@ -450,6 +450,7 @@ MIT License — see LICENSE file.
 
 | Version | Highlights |
 |---|---|
+| **v1.1.0** | 💰 Token cost dashboard (6 summary cards, 9 currencies, persistent JSONL tracking, real token extraction); OpenRouter expansion (6 → 26 curated models across Frontier/Strong/Fast tiers); Chart.js removal for stability |
 | **v1.0.9** | 🎬 Video generation via Google Veo (text-to-video + image-to-video), inline HTML5 player; NVIDIA provider hardening (streaming fixes, cold-start retry, broken SSE workaround); new models (Nemotron Super 49B, Nano 9B, Phi-3 Medium, DeepSeek V3.2); HuggingFace URL migration; conventional bottom-up chat scroll; bulletproof shutdown |
 | **v1.0.8** | 🔧 Model persistence definitive fix — safe read-modify-write config saves, defensive model-key writeback; Imagen 4 safety filter fix; inline image display diagnostics |
 | **v1.0.7** | 🔄 Newest-first scroll, shutdown/restart buttons, Imagen 4 SDK migration to google-genai, SD3.5 NVIDIA fix, SubAgent overhaul |

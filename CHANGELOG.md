@@ -4,6 +4,19 @@ All notable changes to Galactic AI are documented here.
 
 ---
 
+## [v1.1.0] — 2026-02-22
+
+### Added
+- **🌐 OpenRouter Model Expansion (6 → 26)** — 26 curated models across 3 tiers: Frontier (Gemini 3.1 Pro, Claude Opus 4.6, GPT-5.2, Grok 4.1 Fast, DeepSeek V3.2, Qwen 3.5 Plus, GPT-5.2 Codex), Strong (12 models including Claude Sonnet 4.6, GPT-5.1, Kimi K2.5, GLM-5), Fast (7 models including Mistral Large, Devstral, MiniMax M2.5, Sonar Pro Search, Nemotron Nano 30B). All models added to Control Deck Models page and Telegram model menus
+- **💰 Token Cost Dashboard** — Real-time cost tracking in the Status tab with 6 summary cards (Session, Today, This Week, This Month, Last Request, Avg/Message), multi-currency support (USD, EUR, GBP, CAD, AUD, JPY, INR, BRL, KRW), persistent JSONL logging (`logs/cost_log.jsonl`), real token extraction from all providers (Google, Anthropic, OpenAI-compatible, Ollama), MODEL_PRICING for 33 models, free provider detection (NVIDIA, Cerebras, Groq, HuggingFace, Ollama show FREE), 90-day auto-prune
+- **📊 CostTracker Backend** — New `CostTracker` class in `gateway_v2.py` with append-only JSONL storage, session/daily/weekly/monthly aggregation, per-model breakdowns, `/api/cost-stats` endpoint
+- **💱 Multi-Currency Support** — 9 currencies with static exchange rates, currency selector saved to localStorage, all costs stored in USD with client-side conversion
+
+### Fixed
+- **📈 Chart.js Removal** — Removed Chart.js CDN dependency that caused Chrome STATUS_BREAKPOINT crashes and infinite resize loops in the Status tab. Cost dashboard now uses lightweight summary cards only
+
+---
+
 ## [v1.0.9] — 2026-02-22
 
 ### Added
