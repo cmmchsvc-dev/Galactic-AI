@@ -259,6 +259,14 @@ class ChromeBridgeSkill(GalacticSkill):
                 }, "required": []},
                 "fn": self._tool_chrome_resize
             },
+            "chrome_wait": {
+                "description": "Wait for N seconds. Use to let pages load, animations settle, or rate-limit between actions.",
+                "parameters": {
+                    "seconds": {"type": "number", "description": "Number of seconds to wait (max 30)"}
+                },
+                "required": ["seconds"],
+                "fn": self._tool_chrome_wait
+            },
         }
 
     # ── Tool handlers ────────────────────────────────────────────────────
@@ -555,6 +563,18 @@ class ChromeBridgeSkill(GalacticSkill):
             return f"[CHROME] Viewport resized to {result['width']}\u00d7{result['height']}"
         return f"[ERROR] chrome_resize: {result.get('error') or result.get('message') or 'unknown error'}"
 
+    async def _tool_chrome_wait(self, args: dict) -> str:
+        try:
+            seconds = float(args.get("seconds", 1))
+        except (TypeError, ValueError):
+            return "[ERROR] chrome_wait: seconds must be a number"
+        if seconds <= 0:
+            return "[ERROR] chrome_wait: seconds must be positive"
+        if seconds > 30:
+            seconds = 30  # cap at 30 seconds
+        await asyncio.sleep(seconds)
+        return f"[CHROME] Waited {seconds} seconds"
+
     # ── Inbound message handler (called by web_deck) ─────────────────────
 
     async def handle_ws_message(self, msg_data: str) -> None:
@@ -837,6 +857,10 @@ class ChromeBridgeSkill(GalacticSkill):
         if height is not None:
             args["height"] = height
         return await self.send_command("resize_window", args)
+
+    async def wait(self, seconds: float) -> str:
+        """Sleep for *seconds* seconds (Python-side only, no extension command)."""
+        return await self._tool_chrome_wait({"seconds": seconds})
 
     # ── Internal helpers ─────────────────────────────────────────────────
 
