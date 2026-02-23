@@ -2902,7 +2902,7 @@ class GalacticGateway:
             return "[ERROR] Skill class must implement get_tools()."
 
         # Find the skill class name via AST parsing
-        skill_class_name = None
+        skill_class_names = []
         try:
             tree = _ast.parse(code)
             for node in _ast.walk(tree):
@@ -2914,15 +2914,16 @@ class GalacticGateway:
                         elif isinstance(base, _ast.Attribute):
                             base_name = base.attr
                         if base_name == 'GalacticSkill':
-                            skill_class_name = node.name
+                            skill_class_names.append(node.name)
                             break
-                if skill_class_name:
-                    break
         except SyntaxError as e:
             return f"[ERROR] Syntax error in skill code: {e}"
 
-        if not skill_class_name:
+        if not skill_class_names:
             return "[ERROR] Could not find a class inheriting from GalacticSkill in the provided code."
+        if len(skill_class_names) > 1:
+            return f"[ERROR] Found multiple GalacticSkill subclasses: {', '.join(skill_class_names)}. Only one is allowed per skill file."
+        skill_class_name = skill_class_names[0]
 
         # Check for duplicate skill names
         for existing in self.core.skills:
@@ -2967,6 +2968,8 @@ class GalacticGateway:
             # Update registry
             from datetime import datetime as _dt
             registry = self.core._read_registry()
+            if not registry.get('installed') and any(not s.is_core for s in self.core.skills if s.skill_name != name):
+                await self.core.log("[Skills] Warning: registry.json was empty/missing — existing community skill entries may have been lost. Check skills/registry.json.", priority=1)
             registry['installed'].append({
                 'module': name,
                 'class': skill_class_name,
@@ -2989,6 +2992,7 @@ class GalacticGateway:
                 os.remove(skill_path)
             except OSError:
                 pass
+            sys.modules.pop(f'skills.community.{name}', None)
             return f"[ERROR] Failed to load skill '{name}': {e}"
 
     async def tool_remove_skill(self, args):
@@ -3026,6 +3030,8 @@ class GalacticGateway:
 
         # Update registry
         registry = self.core._read_registry()
+        if not registry.get('installed') and any(not s.is_core for s in self.core.skills if s.skill_name != name):
+            await self.core.log("[Skills] Warning: registry.json was empty/missing — existing community skill entries may have been lost. Check skills/registry.json.", priority=1)
         registry['installed'] = [e for e in registry['installed'] if e.get('module') != name]
         self.core._write_registry(registry)
 
