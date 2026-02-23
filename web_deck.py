@@ -3688,7 +3688,8 @@ try {
 
         plugin_statuses = {}
         for p in self.core.plugins:
-            plugin_statuses[p.name] = getattr(p, 'enabled', True)
+            pname = getattr(p, 'name', None) or getattr(p, 'skill_name', p.__class__.__name__)
+            plugin_statuses[pname] = getattr(p, 'enabled', True)
 
         ollama_status = {}
         if hasattr(self.core, 'ollama_manager'):
@@ -3829,8 +3830,9 @@ try {
         """GET /api/plugins — list all loaded plugins with status."""
         plugins = []
         for p in self.core.plugins:
+            pname = getattr(p, 'name', None) or getattr(p, 'skill_name', p.__class__.__name__)
             plugins.append({
-                'name': p.name,
+                'name': pname,
                 'enabled': getattr(p, 'enabled', True),
                 'class': p.__class__.__name__,
             })
