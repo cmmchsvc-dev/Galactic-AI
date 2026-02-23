@@ -1,6 +1,6 @@
 # Galactic AI — Feature Reference
 
-Complete feature reference for Galactic AI Automation Suite **v1.1.1**.
+Complete feature reference for Galactic AI Automation Suite **v1.1.2**.
 
 ---
 
@@ -26,6 +26,41 @@ Every tool execution is wrapped in a configurable `asyncio.wait_for` timeout (de
 - Relay message queue uses a 2-second poll timeout so it wakes up to check the shutdown flag
 
 ---
+
+---
+
+## Skills Ecosystem
+
+### GalacticSkill Base Class
+Every capability in Galactic AI is a `GalacticSkill` subclass. Skills declare structured metadata and register their tools dynamically via `get_tools()`. This replaces the hardcoded plugin list and moves tool definitions out of the gateway.
+
+**Metadata fields:** `skill_name`, `version`, `author`, `description`, `category`, `icon`, `is_core`
+
+**Lifecycle hooks:** `on_load()`, `on_unload()`, `run()` (background loop)
+
+### Core Skills
+Six built-in skills ship with Galactic AI:
+
+| Skill | Tools | Description |
+|-------|-------|-------------|
+| ShellSkill | 1 | PowerShell/bash command execution |
+| DesktopSkill | 8 | Mouse, keyboard, screenshot via pyautogui |
+| ChromeBridgeSkill | 16 | Real Chrome browser control via WebSocket extension |
+| SocialMediaSkill | 6 | Twitter/X and Reddit integration |
+| SubAgentSkill | 2 | Spawn and monitor parallel AI subagents |
+| BrowserProSkill | 55 | Full Playwright browser automation |
+
+### AI Self-Authoring
+Byte can create new skills at runtime using three meta-tools:
+
+- **`create_skill(name, code, description)`** — Validates Python via AST, writes to `skills/community/<name>.py`, dynamically imports and loads the skill, registers all its tools immediately. No restart required.
+- **`list_skills()`** — Returns all loaded skills with full metadata and tool lists.
+- **`remove_skill(name)`** — Safely unloads a community skill and deletes its file.
+
+Community skills persist across restarts via `skills/registry.json`.
+
+### Skills Tab
+The Control Deck's Skills tab displays all loaded skills as rich cards with: icon, display name, CORE/COMMUNITY badge, version, author, description, and a tool count preview. Toggle skills on/off without restarting.
 
 ## True Persistent Memory
 
@@ -767,4 +802,4 @@ Set `web.remote_access: true` in `config.yaml`. On next startup, Galactic AI:
 
 ---
 
-**v1.1.1** — Galactic AI Automation Suite
+**v1.1.2** — Galactic AI Automation Suite
