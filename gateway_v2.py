@@ -2287,6 +2287,7 @@ class GalacticGateway:
                 "9. BEFORE writing scripts: read config.yaml for real credentials. NEVER use placeholder values.\n"
                 "10. NEVER overwrite requirements.txt, config.yaml, or core .py files. Create NEW files with unique names.\n"
                 "11. NEVER run scripts with while True loops or sleep() via exec_shell — they timeout. Tell the user how to launch them.\n"
+                "12. CRITICAL: NEVER use `write_file` or `edit_file` on an existing file without using `read_file` first to see its content.\n"
             )
 
             system_prompt = (
@@ -2317,6 +2318,7 @@ class GalacticGateway:
                 f"- NEVER launch long-running background processes via exec_shell — they timeout after 120s. Write the script and tell the user how to run it\n"
                 f"- If stuck after 3+ failed attempts: STOP. Tell the user what you tried, what went wrong, and ask for guidance\n"
                 f"\nCRITICAL RULES:\n"
+                f"- NEVER use `write_file` or `edit_file` on an existing file without using `read_file` first to see its content.\n"
                 f"- BEFORE writing any script: read config.yaml to get real credentials (Telegram token, API keys, etc.). NEVER use placeholder values like 'YOUR_TOKEN_HERE'\n"
                 f"- NEVER overwrite requirements.txt, config.yaml, or any core .py file unless explicitly asked. Create NEW files with unique names for scripts\n"
                 f"- When asked to 'create a script': write ONE complete file with all logic, then STOP. Do not write multiple draft versions\n"
@@ -2498,7 +2500,7 @@ class GalacticGateway:
             if lower_input.startswith("/plan ") or "plan out" in lower_input or "scan the codebase" in lower_input:
                 needs_plan = True
                 user_input = user_input.replace("/plan ", "").strip()
-            elif any(kw in lower_input for kw in ["refactor", "build a ", "create a ", "write a script", "complex task"]):
+            elif any(kw in lower_input for kw in ["refactor", "build a ", "create a ", "write a script", "complex task", "update", "add", "fix", "change", "implement"]):
                 needs_plan = True
 
         if needs_plan and not self.active_plan:
