@@ -14,7 +14,6 @@ Galactic AI is a fully custom AI assistant platform built by Chesley McDaniel. I
 ---
 
 ## Current Focus
-- Automated release scripting (`release.py` and `.claude/hooks/post-push-release.sh`)
 - Telegram UX polish: `/status` lite/full, menu + `/help` docs
 
 ---
@@ -25,12 +24,16 @@ Galactic AI is a fully custom AI assistant platform built by Chesley McDaniel. I
 - [x] Resume development that was happening in Claude Code
 - [x] Implement Strategic Planner in ReAct loop
 - [x] Add Long-Term Vector Memory (ChromaDB)
-- [ ] Build auto-release script
+- [x] Build auto-release script
+- [x] Implement Self-Healing Code Execution (Test-Driven Development)
+- [x] Implement Workspace Context Awareness (RAG for Local Codebase)
 
 ---
 
 ## Milestones
-- [x] v1.1.7 Strategic Planning & Deep Memory updates completed
+- [x] v1.1.8 Self-Healing Code & Workspace RAG updates completed
+- [x] v1.1.8 Computer Use & Live Voice updates completed
+- [x] v1.1.6 Strategic Planning & Deep Memory updates completed
 - [x] Restart resilience: conversation_auto_recall + boot_recall_banner community skills
 - [x] v1.1.2 release implementation plan completed
 - [x] v1.1.4 current version
