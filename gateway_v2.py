@@ -2876,7 +2876,9 @@ class GalacticGateway:
             # Snapshot current state
             saved_speaking = self._speaking
             saved_history = self.history
-            saved_llm_obj = self.llm
+            saved_llm_prov = self.llm.provider
+            saved_llm_model = self.llm.model
+            saved_llm_key = self.llm.api_key
             saved_queued = self._queued_switch
 
             # Snapshot model_manager routing state
@@ -2887,18 +2889,9 @@ class GalacticGateway:
             try:
                 # Apply overrides if provided
                 if override_provider and override_model and model_mgr:
-                    # Find the correct provider instance from the manager's registry
-                    if override_provider in model_mgr.providers:
-                        self.llm = model_mgr.providers[override_provider]
-                        self.llm.model = override_model
-                        self.llm.provider = override_provider
-                    else:
-                        # This case should be rare, but handles if a planner model is set for a provider not in the main cycle
-                        await self.core.log(f"[Planner] Warning: Could not find provider instance for '{override_provider}'. A new instance may be created.", priority=1)
-                        # Fallback to re-init logic (might not be perfect)
-                        self.llm.provider = override_provider
-                        self.llm.model = override_model
-                        self.llm.init_provider()
+                    self.llm.provider = override_provider
+                    self.llm.model = override_model
+                    model_mgr._set_api_key(override_provider)
 
                 # Use isolated history (sub-agent has no prior conversation)
                 self.history = []
@@ -2913,7 +2906,9 @@ class GalacticGateway:
                 # Restore all state
                 self._speaking = saved_speaking
                 self.history = saved_history
-                self.llm = saved_llm_obj
+                self.llm.provider = saved_llm_prov
+                self.llm.model = saved_llm_model
+                self.llm.api_key = saved_llm_key
                 self._queued_switch = saved_queued
                 if model_mgr:
                     model_mgr._routed = saved_routed
