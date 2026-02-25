@@ -91,17 +91,11 @@ class WorkspaceIndexerSkill(GalacticSkill):
                 if not results or not results.get('documents') or not results['documents'][0]:
                     return "No relevant code snippets found in workspace."
 
-                output = [f"### Workspace Search Results for: '{query}'
-"]
+                output = [f"### Workspace Search Results for: '{query}'\n"]
                 for doc, meta in zip(results['documents'][0], results['metadatas'][0]):
                     file_path = meta.get('file', 'Unknown File')
-                    output.append(f"**File:** `{file_path}`
-```
-{doc}
-```
----")
-                return "
-".join(output)
+                    output.append(f"**File:** `{file_path}`\n```\n{doc}\n```\n---")
+                return "\n".join(output)
             except Exception as e:
                 return f"[ERROR] Failed to search workspace: {e}"
 
