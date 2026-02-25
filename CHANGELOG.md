@@ -4,6 +4,15 @@ All notable changes to Galactic AI are documented here.
 
 ---
 
+## v1.1.7 — Computer Use & Live Voice (2026-02-25)
+
+### Added
+- **Computer Use (Vision GUI Automation):** Added `computer_use` skill. The AI can now take a screenshot, use a vision model (like Gemini 2.5 Pro) to find the exact X,Y coordinates of an element based on a natural language description, and interact with it (click, double-click, right-click, hover). This enables automation of entirely unknown, non-web applications without brittle template matching.
+- **Live Voice Mode:** Added a "Live Call" button (`📞`) next to the chat input in the Control Deck. When active, AI responses are automatically played aloud via TTS. If you click the microphone to speak while the AI is talking, it instantly pauses the audio, listens to your interruption, and responds to your new input.
+- **Dual-Brain UI Config:** Added the ability to select and configure the "Planner" (Big Brain) model directly from the web Control Deck (Settings tab) and the Telegram Bot (`/models` menu).
+
+---
+
 ## v1.1.6 — Strategic Planning & Deep Memory (2026-02-25)
 
 ### Added
