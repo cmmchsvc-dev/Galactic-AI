@@ -9,8 +9,19 @@ Complete feature reference for Galactic AI Automation Suite **v1.1.4**.
 ### AsyncIO Runtime
 The entire system runs on Python's `asyncio` event loop. Every subsystem — LLM gateway, web server, Telegram bridge, Discord bridge, WhatsApp bridge, Gmail bridge, plugin engine, Ollama manager, task scheduler — is fully non-blocking. Nothing stalls the core.
 
-### Strategic Planning Phase
-Before diving into the execution loop for complex queries, the gateway initiates a pre-planning phase. It utilizes a highly capable LLM (like Gemini via the `gemini_code` tool) to break down the task into concrete steps, stores this plan in long-term memory, and guides the ReAct loop step-by-step.
+### Strategic Planning Phase (Big Brain / Builder Architecture)
+Before diving into the execution loop for complex queries, the gateway initiates a pre-planning phase. It isolates a dedicated "Planner" model in its own ReAct loop. This Planner acts as a Lead Architect: it autonomously scans the necessary files and codebase to understand the context, then outputs a detailed, step-by-step implementation plan.
+
+This plan is stored in long-term memory and guides the primary "Builder" model through execution. This architecture allows you to use a more expensive, high-intelligence model for planning, and a faster, cheaper model for the actual typing and tool execution.
+
+**Configuration (`config.yaml`):**
+```yaml
+models:
+  primary_model: x-ai/grok-4.1-fast           # The "Builder"
+  planner_model: google/gemini-3.1-pro-preview # The "Planner" (Big Brain)
+```
+
+**Explicit Trigger:** You can force the planning phase on any query by starting your message with `/plan`.
 
 ### ReAct Agentic Loop
 The AI operates in a **Think → Act → Observe → Answer** loop. It chains multiple tool calls in sequence, observes results, reasons about what to do next, and keeps going until the task is complete. Each tool call has a configurable timeout (default 60 seconds) — no single operation can block the loop indefinitely. The entire ReAct loop is capped by a speak() wall-clock timeout (default 600 seconds).
