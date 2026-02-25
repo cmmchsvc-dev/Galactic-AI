@@ -4,7 +4,7 @@ All notable changes to Galactic AI are documented here.
 
 ---
 
-## v1.1.5 — Strategic Planning & Deep Memory (2026-02-25)
+## v1.1.6 — Strategic Planning & Deep Memory (2026-02-25)
 
 ### Added
 - **Strategic Planner:** Integrated a pre-planning phase into the ReAct loop (`gateway_v2.py`). For complex queries, the AI automatically uses Gemini to generate a step-by-step plan, stores it in memory, and follows it during execution.
@@ -12,6 +12,7 @@ All notable changes to Galactic AI are documented here.
 - **Gemini Coder Skill:** Added `gemini_coder` community skill. Uses the new `google-genai` SDK to provide a dedicated "Senior Dev" coding expert tool (`gemini_code`) for generating and debugging code.
 - **Desktop Window Awareness:** Added `desktop_list_windows` and `desktop_focus_window` to `desktop_tool.py` (using `pygetwindow`), allowing the AI to reliably find and focus applications instead of relying solely on screenshots.
 - **Browser Wait Tool:** Added `chrome_wait_for` to `chrome_bridge.py` and the extension, enabling the AI to wait for specific DOM elements or text to appear before interacting.
+- **Automated Release Pipeline:** Added `scripts/release.py` and `build_release.ps1/sh` to automate the creation of sanitized, versioned release packages for Windows, macOS, and Linux, including SHA256 sums and release notes.
 
 ### Fixed
 - **Browser Stable Identifiers:** Replaced sequential `ref_` IDs in the Chrome extension (`content.js`) with stable, hash-based signatures. Element IDs no longer change when the DOM updates, drastically improving click reliability on dynamic pages.
