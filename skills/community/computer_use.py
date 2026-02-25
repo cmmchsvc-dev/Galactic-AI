@@ -87,7 +87,7 @@ class ComputerUseSkill(GalacticSkill):
                 "You are an expert GUI automation assistant. Your job is to locate a specific UI element on the provided screen capture. "
                 "The screen dimensions are width=" + str(screenshot.width) + ", height=" + str(screenshot.height) + ". "
                 "Return ONLY a raw JSON object containing the center x and y coordinates of the requested element. "
-                "Format: {"x": 500, "y": 300}. If you cannot find it, return {"error": "not found"}. Do not use markdown."
+                "Format: {\"x\": 500, \"y\": 300}. If you cannot find it, return {\"error\": \"not found\"}. Do not use markdown."
             )
             
             try:
@@ -100,9 +100,7 @@ class ComputerUseSkill(GalacticSkill):
                     model='gemini-2.5-pro',
                     contents=[
                         types.Content(parts=[
-                            types.Part.from_text(text=f"System: {sys_instruct}
-
-Task: Find this element: {target}"),
+                            types.Part.from_text(text=f"System: {sys_instruct}\n\nTask: Find this element: {target}"),
                             image_part
                         ])
                     ],
