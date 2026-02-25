@@ -24,16 +24,11 @@ When the AI learns something important, it writes it to **MEMORY.md** on disk. T
 
 Additionally, Galactic AI includes a `memory_manager` community skill powered by **ChromaDB**. This provides true, queryable long-term vector memory, allowing the AI to semantic-search its entire history to find the most relevant context before answering a question.
 
-### 14 AI Providers, One Interface
-Switch between Google Gemini, Claude, GPT, Grok, Groq, Mistral, DeepSeek, NVIDIA, and more — or run completely offline with Ollama. Change providers mid-conversation. Set automatic fallback so the AI never goes down.
+### Self-Healing Code Execution (Test-Driven Development)
+Galactic AI now writes robust code that *actually works*. With the `test_driven_coder` tool (part of the Gemini Coder skill), the AI can write a Python script, execute it in a sandboxed environment, automatically catch any errors (tracebacks), and then autonomously iterate with Gemini to fix the code until it runs successfully. This means the AI delivers working code solutions, not just drafts.
 
-### 147 Tools + Extensible Skills
-The AI doesn't just answer questions — it acts. It browses the web, reads and writes files, runs shell commands, controls a full Chromium browser, generates images and videos, manages schedules, sends messages across platforms, and more. It chains tool calls in a ReAct loop until the task is done. Add new capabilities at any time by asking Byte to create a skill — it writes, validates, and loads the skill live without restarting.
-
-### Voice I/O + Multi-Platform Messaging
-Send a voice message to your Telegram bot — the AI transcribes it with Whisper, thinks, responds with a voice message back. Or message from Discord, WhatsApp, or Gmail. Control everything from wherever you are.
-
----
+### Workspace Context Awareness (RAG for Local Codebase)
+Beyond recalling chat history, Galactic AI now has a living memory of your local codebase. A background process continuously watches your `workspace/` folder, chunking and embedding code files into ChromaDB. The AI can use the `search_workspace` tool to instantly find relevant code snippets, function definitions, or documentation semantically, making it an expert on your project's internals without manual file searches.
 
 ## Quick Start
 
