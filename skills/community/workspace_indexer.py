@@ -113,6 +113,10 @@ class WorkspaceIndexerSkill(GalacticSkill):
         extensions = ('.py', '.js', '.ts', '.html', '.css', '.md', '.txt', '.json', '.yaml', '.yml', '.ps1', '.sh')
         
         while self.enabled:
+            if not self.collection:
+                await asyncio.sleep(5) # Wait 5 seconds if ChromaDB isn't ready
+                continue
+
             def _index_files():
                 try:
                     updated_count = 0
