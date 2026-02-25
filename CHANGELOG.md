@@ -7,7 +7,7 @@ All notable changes to Galactic AI are documented here.
 ## v1.1.6 — Strategic Planning & Deep Memory (2026-02-25)
 
 ### Added
-- **Strategic Planner:** Integrated a pre-planning phase into the ReAct loop (`gateway_v2.py`). For complex queries, the AI automatically uses Gemini to generate a step-by-step plan, stores it in memory, and follows it during execution.
+- **Strategic Planner (Big Brain / Builder):** Completely rewrote the pre-planning phase in `gateway_v2.py`. Instead of a single API call, the Planner is now an isolated ReAct agent. If configured in `config.yaml` (`planner_model`, `planner_provider`), this "Big Brain" model will autonomously scan your codebase, read files, and investigate *before* writing the step-by-step plan for your primary "Builder" model to execute. Trigger explicitly with `/plan`.
 - **Long-Term Vector Memory:** Added `memory_manager` community skill. Integrates ChromaDB for semantic search and permanent storage of facts, preferences, and plans. Tools: `store_memory`, `recall_memories`.
 - **Gemini Coder Skill:** Added `gemini_coder` community skill. Uses the new `google-genai` SDK to provide a dedicated "Senior Dev" coding expert tool (`gemini_code`) for generating and debugging code.
 - **Desktop Window Awareness:** Added `desktop_list_windows` and `desktop_focus_window` to `desktop_tool.py` (using `pygetwindow`), allowing the AI to reliably find and focus applications instead of relying solely on screenshots.

@@ -2341,22 +2341,80 @@ class GalacticGateway:
         await self.core.relay.emit(3, "agent_trace", payload)
 
     async def _generate_plan(self, user_input):
-        """Generates a step-by-step plan using a powerful LLM (e.g., Gemini) via the gemini_code tool."""
-        if "gemini_code" not in self.tools:
-            await self.core.log("[Planner] Gemini Coder tool not available for planning.", priority=1)
-            return None
+        """Generates a step-by-step plan using an isolated planner agent that can scan the codebase."""
+        planner_provider = self.core.config.get('models', {}).get('planner_provider')
+        planner_model = self.core.config.get('models', {}).get('planner_model')
 
-        planning_prompt = _PLANNING_PROMPT_TEMPLATE.format(user_input=user_input)
-        await self.core.log(f"[Planner] Generating plan for: {user_input[:80]}...")
+        # Fallback to simple gemini_code tool if no planner model is explicitly configured
+        if not planner_provider or not planner_model:
+            if "gemini_code" not in self.tools:
+                await self.core.log("[Planner] Gemini Coder tool not available for planning.", priority=1)
+                return None
+
+            planning_prompt = _PLANNING_PROMPT_TEMPLATE.format(user_input=user_input)
+            await self.core.log(f"[Planner] Generating plan for: {user_input[:80]}...")
+            await self._emit_trace("planning_start", 0, session_id="planner", query=user_input[:500])
+
+            try:
+                # Use the gemini_code tool for planning
+                plan_raw_output = await self.tools["gemini_code"]["fn"]({"prompt": planning_prompt, "model": "gemini-3-flash-preview"})
+                
+                # Extract the numbered list
+                plan_steps = re.findall(r'^\\s*\\d\\.\\s*(.*)', plan_raw_output, re.MULTILINE)
+                
+                if plan_steps:
+                    plan = { "steps": plan_steps, "current_step": 0, "original_query": user_input }
+                    await self.core.log(f"[Planner] Generated plan with {len(plan_steps)} steps.", priority=2)
+                    await self._emit_trace("plan_generated", 0, session_id="planner", plan=plan_steps)
+                    
+                    # Store the plan in long-term memory
+                    if "store_memory" in self.tools:
+                        plan_text = "\n".join([f"{i+1}. {step}" for i, step in enumerate(plan_steps)])
+                        await self.tools["store_memory"]["fn"]({
+                            "text": f"User request: {user_input}\nGenerated Plan:\n{plan_text}",
+                            "metadata": { "type": "plan", "original_query": user_input[:200] }
+                        })
+                    return plan
+                else:
+                    await self.core.log("[Planner] Failed to extract plan steps from LLM response.", priority=1)
+                    return None
+            except Exception as e:
+                await self.core.log(f"[Planner] Error generating plan: {e}", priority=1)
+                return None
+
+        # --- ADVANCED PLANNER LOOP ---
+        await self.core.log(f"[Planner] Spawning isolated planner agent ({planner_provider}/{planner_model})...")
         await self._emit_trace("planning_start", 0, session_id="planner", query=user_input[:500])
 
+        planner_context = (
+            "You are the Lead Architect and Strategic Planner.\n"
+            "Your job is to thoroughly analyze the user's request, scan the necessary files and codebase to understand the context, "
+            "and output a detailed step-by-step implementation plan.\n"
+            "DO NOT execute the final changes (do not write the final code). Only explore, use tools like `list_dir`, `find_files`, `regex_search`, or `read_file` to gather information.\n"
+            "Once you have fully investigated the problem and formulated a plan, output your final plan wrapped EXACTLY in <plan>...</plan> tags as a numbered list.\n"
+            "Focus on identifying information gaps, research needs, and logical progression."
+        )
+
         try:
-            # Use the gemini_code tool for planning
-            plan_raw_output = await self.tools["gemini_code"]["fn"]({"prompt": planning_prompt, "model": "gemini-3-flash-preview"})
+            # Run the isolated ReAct loop using the planner model
+            result = await self.speak_isolated(
+                user_input=f"Analyze and plan the following task:\n\n{user_input}",
+                context=planner_context,
+                override_provider=planner_provider,
+                override_model=planner_model
+            )
+
+            # Extract the <plan> from the result
+            match = re.search(r'<plan>(.*?)</plan>', result, re.DOTALL)
+            plan_text = match.group(1).strip() if match else result
             
             # Extract the numbered list
-            plan_steps = re.findall(r'^\\s*\\d\\.\\s*(.*)', plan_raw_output, re.MULTILINE)
+            plan_steps = re.findall(r'^\\s*\\d\\.\\s*(.*)', plan_text, re.MULTILINE)
             
+            if not plan_steps and "<plan>" in result:
+                # Fallback if no numbers were used but plan tag exists
+                plan_steps = [s.strip() for s in plan_text.split('\n') if s.strip()]
+
             if plan_steps:
                 plan = { "steps": plan_steps, "current_step": 0, "original_query": user_input }
                 await self.core.log(f"[Planner] Generated plan with {len(plan_steps)} steps.", priority=2)
@@ -2364,17 +2422,18 @@ class GalacticGateway:
                 
                 # Store the plan in long-term memory
                 if "store_memory" in self.tools:
-                    plan_text = "\n".join([f"{i+1}. {step}" for i, step in enumerate(plan_steps)])
+                    formatted_plan = "\n".join([f"{i+1}. {step}" for i, step in enumerate(plan_steps)])
                     await self.tools["store_memory"]["fn"]({
-                        "text": f"User request: {user_input}\nGenerated Plan:\n{plan_text}",
+                        "text": f"User request: {user_input}\nGenerated Plan:\n{formatted_plan}",
                         "metadata": { "type": "plan", "original_query": user_input[:200] }
                     })
                 return plan
             else:
-                await self.core.log("[Planner] Failed to extract plan steps from LLM response.", priority=1)
+                await self.core.log("[Planner] Failed to extract plan steps from Planner Agent output.", priority=1)
                 return None
+                
         except Exception as e:
-            await self.core.log(f"[Planner] Error generating plan: {e}", priority=1)
+            await self.core.log(f"[Planner] Error generating plan via agent: {e}", priority=1)
             return None
 
     async def speak(self, user_input, context="", chat_id=None, images=None):
@@ -2432,8 +2491,17 @@ class GalacticGateway:
         is_ollama = (self.llm.provider == "ollama")
 
         # ── Planning Phase (for complex tasks) ──────────────────────────
-        # Decide if a plan is needed. For now, any multi-word input triggers planning.
-        if len(user_input.split()) > 3 and not self.active_plan:
+        # Decide if a plan is needed. Trigger on explicit command or complex code tasks.
+        needs_plan = False
+        lower_input = user_input.lower()
+        if not self.active_plan:
+            if lower_input.startswith("/plan ") or "plan out" in lower_input or "scan the codebase" in lower_input:
+                needs_plan = True
+                user_input = user_input.replace("/plan ", "").strip()
+            elif any(kw in lower_input for kw in ["refactor", "build a ", "create a ", "write a script", "complex task"]):
+                needs_plan = True
+
+        if needs_plan and not self.active_plan:
             plan = await self._generate_plan(user_input)
             if plan:
                 self.active_plan = plan
@@ -2794,9 +2862,9 @@ class GalacticGateway:
 
     # ── Isolated speak for sub-agents ─────────────────────────────────
 
-    async def speak_isolated(self, user_input, context="", chat_id=None, images=None):
+    async def speak_isolated(self, user_input, context="", chat_id=None, images=None, override_provider=None, override_model=None):
         """
-        Run speak() with isolated state for sub-agents.
+        Run speak() with isolated state for sub-agents or planners.
         Saves and restores all mutable gateway state so concurrent calls
         don't corrupt the main agent's session.
         Serialized via _speak_lock to prevent sub-agents from interfering
@@ -2806,9 +2874,7 @@ class GalacticGateway:
             # Snapshot current state
             saved_speaking = self._speaking
             saved_history = self.history
-            saved_provider = self.llm.provider
-            saved_model = self.llm.model
-            saved_api_key = self.llm.api_key
+            saved_llm_obj = self.llm
             saved_queued = self._queued_switch
 
             # Snapshot model_manager routing state
@@ -2817,6 +2883,12 @@ class GalacticGateway:
             saved_pre_route = getattr(model_mgr, '_pre_route_state', None) if model_mgr else None
 
             try:
+                # Apply overrides if provided
+                if override_provider and override_model and model_mgr:
+                    self.llm = model_mgr.get_llm(override_provider)
+                    self.llm.model = override_model
+                    self.llm.provider = override_provider
+
                 # Use isolated history (sub-agent has no prior conversation)
                 self.history = []
                 self._speaking = False
@@ -2830,9 +2902,7 @@ class GalacticGateway:
                 # Restore all state
                 self._speaking = saved_speaking
                 self.history = saved_history
-                self.llm.provider = saved_provider
-                self.llm.model = saved_model
-                self.llm.api_key = saved_api_key
+                self.llm = saved_llm_obj
                 self._queued_switch = saved_queued
                 if model_mgr:
                     model_mgr._routed = saved_routed

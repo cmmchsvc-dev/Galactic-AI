@@ -10,8 +10,12 @@ Run fully local with Ollama (no API keys, no cloud, no tracking), or connect to 
 
 ## What Makes Galactic AI Different
 
-### Strategic Planning for Complex Tasks
-Instead of diving blindly into a problem, Galactic AI thinks ahead. For complex multi-step requests, the system automatically uses a high-powered model (like Gemini) to generate a step-by-step plan, stores it in memory, and follows it during the ReAct loop. This transforms the AI from a simple tool-user into a strategic problem solver.
+### Strategic Planning for Complex Tasks (Big Brain / Builder Architecture)
+Instead of diving blindly into a problem, Galactic AI thinks ahead. For complex multi-step requests, the system automatically isolates a high-powered "Planner" model (like Gemini 3.1 Pro or Claude 3.5 Sonnet) in its own ReAct loop. This Planner autonomously scans your codebase, reads files, and investigates the environment *before* generating a step-by-step implementation plan. 
+
+Once the plan is generated and stored in long-term memory, your standard, affordable "Builder" model (like Grok 4.1 Fast or Qwen) wakes up to execute the tools and write the code based on the Planner's blueprint. This gives you top-tier intelligence with highly efficient execution.
+
+You can trigger this explicitly anytime by starting your prompt with `/plan`.
 
 ### True Persistent Memory — Without Burning Tokens
 Most AI tools forget everything the moment you close the tab. Galactic AI doesn't.
