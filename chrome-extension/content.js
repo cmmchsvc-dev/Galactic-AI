@@ -11,17 +11,100 @@
   /* ─── Element Reference System ──────────────────────────────────────── */
 
   let refMap = new Map();   // refId (string) -> Element
-  let refCounter = 0;
+  let elementToRefMap = new WeakMap(); // Element -> refId (string)
 
   function resetRefs() {
     refMap.clear();
-    refCounter = 0;
+    // We don't need to clear the WeakMap, it handles its own garbage collection
+  }
+
+  // Simple string hashing function (djb2)
+  function hashString(str) {
+    let hash = 5381;
+    for (let i = 0; i < str.length; i++) {
+      hash = ((hash << 5) + hash) + str.charCodeAt(i); /* hash * 33 + c */
+    }
+    // Convert to positive integer and make it shorter
+    return Math.abs(hash).toString(36).slice(0, 6);
+  }
+
+  // Generate a stable signature for an element based on its DOM path and attributes
+  function generateElementSignature(el) {
+    if (!el || el.nodeType !== Node.ELEMENT_NODE) return 'unknown';
+
+    let signature = el.tagName.toLowerCase();
+    
+    // ID is highly stable
+    if (el.id) {
+      signature += `#${el.id}`;
+      return signature; // If it has an ID, that's usually unique enough
+    }
+
+    // Classes are moderately stable
+    if (el.className && typeof el.className === 'string') {
+        const classes = el.className.split(' ').filter(c => c).sort().join('.');
+        if (classes) signature += `.${classes}`;
+    }
+
+    // Role and Aria labels
+    const role = el.getAttribute('role');
+    if (role) signature += `[role=${role}]`;
+    
+    const ariaLabel = el.getAttribute('aria-label');
+    if (ariaLabel) signature += `[aria=${ariaLabel.substring(0, 15)}]`;
+    
+    // Form attributes
+    if (el.name) signature += `[name=${el.name}]`;
+    if (el.type) signature += `[type=${el.type}]`;
+    
+    // Add text content (truncated) as a strong differentiator for links/buttons
+    const text = (el.textContent || '').trim().replace(/\\s+/g, ' ');
+    if (text && text.length < 50) {
+        signature += `|${text}`;
+    }
+
+    // DOM Path (up to 3 levels) to differentiate siblings
+    let path = '';
+    let current = el;
+    let depth = 0;
+    while (current && current.parentElement && depth < 3) {
+      let index = 1;
+      let sibling = current.previousElementSibling;
+      while (sibling) {
+        if (sibling.tagName === current.tagName) index++;
+        sibling = sibling.previousElementSibling;
+      }
+      path = `/${current.tagName.toLowerCase()}[${index}]${path}`;
+      current = current.parentElement;
+      depth++;
+    }
+    
+    return signature + path;
   }
 
   function assignRef(element) {
-    refCounter++;
-    const refId = `ref_${refCounter}`;
+    // Return existing ref if already assigned during this snapshot cycle
+    if (elementToRefMap.has(element)) {
+        const existingRef = elementToRefMap.get(element);
+        // Ensure it's in the current active map
+        refMap.set(existingRef, element);
+        return existingRef;
+    }
+
+    // Generate a stable hash-based ID
+    const signature = generateElementSignature(element);
+    let hash = hashString(signature);
+    let refId = `ref_${hash}`;
+
+    // Handle extremely rare collisions by appending a counter
+    let counter = 1;
+    while (refMap.has(refId) && refMap.get(refId) !== element) {
+        refId = `ref_${hash}_${counter}`;
+        counter++;
+    }
+
     refMap.set(refId, element);
+    elementToRefMap.set(element, refId);
     return refId;
   }
 
@@ -465,31 +548,48 @@
         document.execCommand('selectAll', false, null);
         document.execCommand('delete', false, null);
       }
+
+      // Modern SPAs (X.com, Notion) need the 'beforeinput' event to prepare their state
+      el.dispatchEvent(new InputEvent('beforeinput', {
+        bubbles: true,
+        cancelable: true,
+        inputType: 'insertText',
+        data: text
+      }));
+
       // insertText fires the InputEvent with inputType='insertText'
-      // that modern SPAs (X.com, Notion, Reddit) need to update their internal state
       const inserted = document.execCommand('insertText', false, text);
+      
       if (!inserted) {
-        // execCommand fallback: dispatch keyboard events character by character
-        for (const char of text) {
-          ['keydown', 'keypress', 'keyup'].forEach(evtType => {
-            el.dispatchEvent(new KeyboardEvent(evtType, {
-              key: char, char: char, charCode: char.codePointAt(0),
-              keyCode: char.codePointAt(0), which: char.codePointAt(0),
-              bubbles: true, cancelable: true
-            }));
-          });
-          const sel = window.getSelection();
-          if (sel && sel.rangeCount > 0) {
-            const range = sel.getRangeAt(0);
-            range.deleteContents();
-            range.insertNode(document.createTextNode(char));
-            range.collapse(false);
-          } else {
-            el.insertAdjacentText('beforeend', char);
-          }
-          el.dispatchEvent(new Event('input', { bubbles: true }));
+        // execCommand fallback
+        const sel = window.getSelection();
+        if (sel && sel.rangeCount > 0) {
+          const range = sel.getRangeAt(0);
+          range.deleteContents();
+          range.insertNode(document.createTextNode(text));
+          range.collapse(false);
+        } else {
+          el.insertAdjacentText('beforeend', text);
         }
       }
+
+      // Force an 'input' event which is critical for React/Vue state updates
+      el.dispatchEvent(new InputEvent('input', {
+        bubbles: true,
+        cancelable: true,
+        inputType: 'insertText',
+        data: text
+      }));
+
+      // X.com specifically often needs a KeyboardEvent to trigger the "Post" button activation
+      el.dispatchEvent(new KeyboardEvent('keyup', {
+        key: 'Enter',
+        code: 'Enter',
+        keyCode: 13,
+        which: 13,
+        bubbles: true
+      }));
+
       el.dispatchEvent(new Event('change', { bubbles: true }));
     } else {
       /* Fallback: dispatch key events character by character */
@@ -775,12 +875,44 @@
     return { status: 'success', text };
   }
 
+  /* ─── Wait For ──────────────────────────────────────────────────────── */
+
+  async function waitFor(args) {
+    const selector = args?.selector;
+    const text = args?.text;
+    const timeout = args?.timeout || 10000;
+    const interval = 250;
+    const start = Date.now();
+
+    return new Promise((resolve) => {
+      const check = () => {
+        let found = false;
+        if (selector) {
+          const el = document.querySelector(selector);
+          if (el && isVisible(el)) found = true;
+        } else if (text) {
+          if (document.body.innerText.includes(text)) found = true;
+        }
+
+        if (found) {
+          resolve({ status: 'success' });
+        } else if (Date.now() - start > timeout) {
+          resolve({ status: 'timeout', message: `Timed out waiting for ${selector || text}` });
+        } else {
+          setTimeout(check, interval);
+        }
+      };
+      check();
+    });
+  }
+
   /* ─── Command Dispatcher ────────────────────────────────────────────── */
 
   async function handleCommand(command, args) {
     switch (command) {
       case 'snapshot':    return buildSnapshot(args);
       case 'find':        return findElements(args);
+      case 'wait_for':    return await waitFor(args);
       case 'click':       return performClick(args);
       case 'type':        return performType(args);
       case 'scroll':      return performScroll(args);

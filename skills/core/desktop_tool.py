@@ -14,6 +14,12 @@ except ImportError:
     PYAUTOGUI_AVAILABLE = False
 
 try:
+    import pygetwindow as gw
+    GW_AVAILABLE = True
+except ImportError:
+    GW_AVAILABLE = False
+
+try:
     import pyperclip
     PYPERCLIP_AVAILABLE = True
 except ImportError:
@@ -138,6 +144,27 @@ class DesktopSkill(GalacticSkill):
                 },
                 "fn": self._tool_desktop_locate
             },
+            "desktop_list_windows": {
+                "description": "List all visible window titles and their coordinates/sizes. Use this to find where an application (like 'Chrome' or 'Notepad') is positioned before clicking.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "only_visible": {"type": "boolean", "description": "Only return windows that are not minimized (default: true)"}
+                    }
+                },
+                "fn": self._tool_desktop_list_windows
+            },
+            "desktop_focus_window": {
+                "description": "Bring a specific window to the foreground and focus it by its title (or part of the title).",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "title": {"type": "string", "description": "The title or partial title of the window to focus (e.g. 'Chrome')"}
+                    },
+                    "required": ["title"]
+                },
+                "fn": self._tool_desktop_focus_window
+            },
         }
 
     # ── Tool handlers ─────────────────────────────────────────────────────────
@@ -254,6 +281,50 @@ class DesktopSkill(GalacticSkill):
         elif result['status'] == 'not_found':
             return f"[DESKTOP] Image not found on screen: {image_path}"
         return f"[ERROR] Desktop locate: {result.get('message')}"
+
+    async def _tool_desktop_list_windows(self, args):
+        """List all open windows."""
+        if not GW_AVAILABLE:
+            return "[ERROR] pygetwindow not available."
+        
+        only_visible = args.get('only_visible', True)
+        try:
+            windows = gw.getAllWindows()
+            output = []
+            for w in windows:
+                if not w.title: continue
+                if only_visible and w.isMinimized: continue
+                output.append(f"- \"{w.title}\" at ({w.left}, {w.top}), size {w.width}x{w.height}")
+            
+            if not output:
+                return "[DESKTOP] No visible windows found."
+            return "[DESKTOP] Open Windows:\n" + "\n".join(output)
+        except Exception as e:
+            return f"[ERROR] Desktop list windows: {e}"
+
+    async def _tool_desktop_focus_window(self, args):
+        """Focus a window by title."""
+        if not GW_AVAILABLE:
+            return "[ERROR] pygetwindow not available."
+        
+        title = args.get('title', '')
+        try:
+            target_wins = gw.getWindowsWithTitle(title)
+            if not target_wins:
+                # Try partial case-insensitive match
+                all_wins = gw.getAllWindows()
+                target_wins = [w for w in all_wins if title.lower() in w.title.lower()]
+            
+            if not target_wins:
+                return f"[ERROR] No window found matching: \"{title}\""
+            
+            win = target_wins[0]
+            if win.isMinimized:
+                win.restore()
+            win.activate()
+            return f"[DESKTOP] Focused window: \"{win.title}\""
+        except Exception as e:
+            return f"[ERROR] Desktop focus window: {e}"
 
     # ── Copied from plugins/desktop_tool.py ──────────────────────────────────
 

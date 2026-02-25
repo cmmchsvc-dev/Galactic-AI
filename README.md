@@ -2,7 +2,7 @@
 
 **Sovereign. Universal. Fast.**
 
-A powerful, local-first AI automation platform with 147 built-in tools, an extensible Skills ecosystem, true persistent memory, voice I/O, video generation, Chrome browser extension, social media tools, 14 AI providers, multi-platform messaging bridges, and a real-time web Control Deck. **v1.1.3**
+A powerful, local-first AI automation platform with 147 built-in tools, an extensible Skills ecosystem, true persistent memory, voice I/O, video generation, Chrome browser extension, social media tools, 14 AI providers, multi-platform messaging bridges, and a real-time web Control Deck. **v1.1.4**
 
 Run fully local with Ollama (no API keys, no cloud, no tracking), or connect to any of 14 cloud providers. Your data stays yours.
 
@@ -10,12 +10,15 @@ Run fully local with Ollama (no API keys, no cloud, no tracking), or connect to 
 
 ## What Makes Galactic AI Different
 
+### Strategic Planning for Complex Tasks
+Instead of diving blindly into a problem, Galactic AI thinks ahead. For complex multi-step requests, the system automatically uses a high-powered model (like Gemini) to generate a step-by-step plan, stores it in memory, and follows it during the ReAct loop. This transforms the AI from a simple tool-user into a strategic problem solver.
+
 ### True Persistent Memory — Without Burning Tokens
 Most AI tools forget everything the moment you close the tab. Galactic AI doesn't.
 
 When the AI learns something important, it writes it to **MEMORY.md** on disk. The next time it starts up, it reads that file and immediately knows everything it learned in past sessions — no searches, no extra API calls, just the file loaded once into the system prompt. As the AI learns more, the memory file grows. You can edit it directly in the Control Deck.
 
-This is fundamentally different from session memory or expensive vector search on every message.
+Additionally, Galactic AI includes a `memory_manager` community skill powered by **ChromaDB**. This provides true, queryable long-term vector memory, allowing the AI to semantic-search its entire history to find the most relevant context before answering a question.
 
 ### 14 AI Providers, One Interface
 Switch between Google Gemini, Claude, GPT, Grok, Groq, Mistral, DeepSeek, NVIDIA, and more — or run completely offline with Ollama. Change providers mid-conversation. Set automatic fallback so the AI never goes down.
@@ -155,6 +158,26 @@ Facts, documents, and imprinted knowledge stored in a local JSON index. The AI c
 
 ---
 
+### 4. Restart Resilience — Conversation Recall
+Two lightweight, local-first mechanisms make restarts less amnesiac without running heavy retrieval on every message:
+
+- **Auto-Recall Injection** — `skills/community/conversation_auto_recall.py`
+  - Runtime-patches `GalacticGateway.speak()`.
+  - When the user asks *remember/last time/earlier/what did I say* type questions, it scans `logs/conversations/` (hot buffer + recent session archives) and injects a compact **Conversation Recall (auto)** block into context.
+  - Tool: `conversation_auto_recall_status`
+
+- **Boot Recall Banner** — `skills/community/boot_recall_banner.py`
+  - On startup, prints the last N hot-buffer messages and writes: `logs/conversations/boot_recall_banner.txt`
+  - Config:
+    ```yaml
+    conversation:
+      boot_recall_messages: 10
+    ```
+  - Tool: `boot_recall_show`
+
+---
+
+
 ## VAULT — Personal Data for Automation
 
 **VAULT.md** is a private credentials file that the AI loads into every prompt. It lets the agent log into services, fill forms, and automate tasks on your behalf without you having to re-type credentials every time.
@@ -208,7 +231,8 @@ Control Galactic AI from your phone with full voice support:
 **Commands:**
 | Command | What it does |
 |---|---|
-| `/status` | Live system telemetry |
+| `/status` | Live system telemetry (lite) |
+| `/status full` | Live system telemetry (full) (`--full` / `-f` also supported) |
 | `/model` | Switch AI model or select image generation model |
 | `/models` | Configure primary and fallback models |
 | `/browser` | Open a URL in the browser |
@@ -498,6 +522,7 @@ MIT License — see LICENSE file.
 
 | Version | Highlights |
 |---|---|
+| **v1.1.4** | 🛰️ Telegram UX update — `/status` lite/full (`/status`, `/status full`, `--full`, `-f`); `/help` + command menu updated • 🧠 Restart resilience: conversation auto-recall injection + boot recall banner |
 | **v1.1.3** | 🔧 Chrome extension parity — 11 new tools (16 → 27 total): `chrome_zoom`, `chrome_drag`, `chrome_right_click`, `chrome_triple_click`, `chrome_upload`, `chrome_resize`, `chrome_get_network_body`, `chrome_wait`, `chrome_gif_start/stop/export`; contenteditable fix (X.com, Notion, Reddit); screenshot now returns real image to LLM |
 | **v1.1.1** | 🌐 Chrome extension (Galactic Browser) with 10 browser tools, side panel chat, real-time page interaction; 📱 Social media plugin (Twitter/X + Reddit, 8 tools); 🔧 System-wide [No response] fix (native tool_calls capture); 📨 Telegram reliability overhaul (Markdown fallback, message splitting, CancelledError fix) |
 | **v1.1.0** | 💰 Token cost dashboard (6 summary cards, 9 currencies, persistent JSONL tracking, real token extraction); OpenRouter expansion (6 → 26 curated models across Frontier/Strong/Fast tiers); Chart.js removal for stability |

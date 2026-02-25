@@ -62,6 +62,8 @@ class GalacticWebDeck:
         self.app.router.add_get('/api/plugins', self.handle_list_plugins)
         self.app.router.add_post('/api/switch_model', self.handle_switch_model)
         self.app.router.add_post('/api/browser_cmd', self.handle_browser_cmd)
+        # Aliases (config.yaml -> aliases:)
+        self.app.router.add_get('/api/aliases', self.handle_aliases)
         # OpenClaw migration endpoints
         self.app.router.add_get('/api/check_openclaw', self.handle_check_openclaw)
         self.app.router.add_post('/api/migrate_openclaw', self.handle_migrate_openclaw)
@@ -119,7 +121,7 @@ body{background:var(--bg);color:var(--text);font-family:var(--font);height:100vh
 .status-dot.offline{background:var(--red);box-shadow:0 0 8px var(--red)}
 #ollama-pill{display:flex;align-items:center;gap:6px;padding:5px 13px;border:1px solid var(--border);border-radius:20px;font-size:0.82rem;background:var(--bg3);cursor:pointer;transition:border-color .2s}
 #ollama-pill:hover{border-color:var(--border-hi)}
-#model-badge{padding:5px 13px;border:1px solid var(--pink);border-radius:20px;font-size:0.82rem;color:var(--pink);text-shadow:0 0 8px rgba(255,0,200,0.4);cursor:pointer;white-space:nowrap;max-width:260px;overflow:hidden;text-overflow:ellipsis;transition:all .2s}
+#model-badge{display:inline-flex;align-items:center;justify-content:center;padding:5px 13px;min-width:96px;max-width:260px;flex-shrink:0;border:1px solid var(--pink);border-radius:20px;font-size:0.82rem;color:var(--pink);text-shadow:0 0 8px rgba(255,0,200,0.4);cursor:pointer;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;transition:all .2s}
 #model-badge:hover{background:rgba(255,0,200,0.08)}
 .topbar-btn{padding:6px 14px;border:1px solid var(--border);border-radius:7px;background:var(--bg3);color:var(--text);cursor:pointer;font-size:0.82rem;transition:all .2s}
 .topbar-btn:hover{border-color:var(--cyan);color:var(--cyan);text-shadow:0 0 8px var(--cyan)}
@@ -883,6 +885,19 @@ body.glow-max .status-dot{box-shadow:0 0 14px var(--green),0 0 28px rgba(0,255,1
     <div class="tab-pane" id="tab-models">
       <div id="models-pane">
         <h3>🧠 MODEL MATRIX</h3>
+
+        <!-- Nitro-only toggle (aliases) -->
+        <div style="display:flex;align-items:center;justify-content:space-between;gap:12px;margin:10px 0 14px;padding:10px 12px;background:var(--bg3);border:1px solid var(--border);border-radius:10px">
+          <div>
+            <div style="font-size:0.86em;color:var(--text);font-weight:600">🚀 OpenRouter Nitro only</div>
+            <div style="font-size:0.72em;color:var(--dim)">When enabled, Models page shows only your Nitro aliases (hides all other model grids)</div>
+          </div>
+          <label class="toggle-switch" title="Show only OpenRouter Nitro aliases">
+            <input type="checkbox" id="nitro-only-toggle">
+            <span class="toggle-slider"></span>
+          </label>
+        </div>
+
         <div id="ollama-health-row">
           <div class="status-dot" id="ollama-health-dot"></div>
           <span id="ollama-health">Checking Ollama...</span>
@@ -1299,6 +1314,51 @@ let currentTool = null;
 let autoScroll = true;
 let allLogs = [];
 let httpChatPending = false;  // suppresses WS 'thought' dupes while HTTP /api/chat in flight
+let ALIASES = [];
+
+async function loadAliases() {
+  try {
+    const r = await authFetch('/api/aliases');
+    const d = await r.json();
+    ALIASES = d.aliases || [];
+  } catch(e) { console.error('loadAliases error:', e); ALIASES = []; }
+}
+
+function aliasEmoji(aliasName, target, isNitro) {
+  const s = `${aliasName || ''} ${target || ''}`.toLowerCase();
+  
+  // Strict priority matching for specific aliases
+  if (isNitro || s.includes('nitro')) return '🚀';
+  if (s.includes('flux') || s.includes('sd35') || s.includes('imagen')) return '🎨';
+  if (s.includes('gpt') || s.includes('o1') || s.includes('o3') || s.includes('codex')) return '🧠';
+  if (s.includes('claude') || s.includes('sonnet') || s.includes('opus') || s.includes('haiku')) return '🤖';
+  if (s.includes('gemini')) return '🌐';
+  if (s.includes('grok')) return '⚡';
+  if (s.includes('deepseek')) return '🐋';
+  if (s.includes('qwen') || s.includes('coder') || s.includes('code')) return '💻';
+  if (s.includes('llama') || s.includes('q8') || s.includes('q30')) return '🦙';
+  if (s.includes('kimi') || s.includes('moonshot')) return '🌙';
+  if (s.includes('groq')) return '⚡';
+  if (s.includes('mistral')) return '🌬️';
+  
+  // Fallback based on provider if target is visible
+  if (s.includes('openrouter')) return '🔀';
+  if (s.includes('nvidia')) return '🟢';
+  
+  return '📌';
+}
+
+function prettyAliasLabel(aliasName, target) {
+  const raw = String(aliasName || '').trim();
+  if (raw) {
+    return raw
+      .replace(/[-_]+/g, ' ')
+      .replace(/\b(gpt|glm|qwen|api|ai)\b/gi, m => m.toUpperCase())
+      .replace(/\b(\w)/g, c => c.toUpperCase());
+  }
+  const t = String(target || '').split('/').pop() || '(alias)';
+  return t.replace(':nitro','').replace(/[-_]+/g,' ');
+}
 
 // Auth helper — adds JWT Bearer header to all fetch calls
 function authHeaders(extra) {
@@ -1658,6 +1718,7 @@ async function init() {
   await loadTools();
   await loadPlugins();
   loadOllamaStatus();
+  await loadAliases();
   renderModelGrid();
   refreshStatus();
   loadFileList();
@@ -2180,7 +2241,8 @@ const ALL_MODELS = {
   '\ud83d\udd00 OpenRouter — Frontier': [
     {name:'Gemini 3.1 Pro Preview \ud83d\udc51', id:'google/gemini-3.1-pro-preview', provider:'openrouter'},
     {name:'Claude Opus 4.6 \ud83d\udc51', id:'anthropic/claude-opus-4.6', provider:'openrouter'},
-    {name:'GPT-5.2 \ud83d\udc51', id:'openai/gpt-5.2', provider:'openrouter'},
+    {name:'GPT-5.3 Codex \ud83d\udcbb', id:'openai/gpt-5.3-codex', provider:'openrouter'},
+    {name:'GPT-5.2 \ud83e\udde0', id:'openai/gpt-5.2', provider:'openrouter'},
     {name:'GPT-5.2 Codex \ud83d\udcbb', id:'openai/gpt-5.2-codex', provider:'openrouter'},
     {name:'Grok 4.1 Fast \u26a1', id:'x-ai/grok-4.1-fast', provider:'openrouter'},
     {name:'DeepSeek V3.2 \ud83d\ude80', id:'deepseek/deepseek-v3.2', provider:'openrouter'},
@@ -2297,6 +2359,72 @@ function renderModelGrid() {
   const root = document.getElementById('model-grid-root');
   if (!root) return;
   root.innerHTML = '';
+
+  // ── Aliases category (separate) ──────────────────────────────────────────
+  if (typeof ALIASES !== 'undefined' && Array.isArray(ALIASES) && ALIASES.length) {
+    const sec = document.createElement('div');
+    sec.className = 'provider-section';
+    sec.id = 'aliases-section';
+    
+    sec.innerHTML = `
+      <div class="provider-label">🚀 Nitro Aliases & Shortcuts</div>
+      <div class="model-grid" id="aliases-favorites"></div>
+      <details style="margin-top: 12px; padding: 6px; background: rgba(255,255,255,0.02); border-radius: 8px; border: 1px solid var(--border);">
+        <summary style="cursor: pointer; color: var(--dim); font-size: 0.85em; user-select: none; list-style: none;">Show all aliases (${ALIASES.length}) ...</summary>
+        <div class="model-grid" id="aliases-all" style="margin-top: 10px;"></div>
+      </details>
+    `;
+    const favGrid = sec.querySelector('#aliases-favorites');
+    const allGrid = sec.querySelector('#aliases-all');
+
+    const items = [...ALIASES].sort((a,b) => {
+      const an = (a.is_nitro ? 0 : 1);
+      const bn = (b.is_nitro ? 0 : 1);
+      if (an !== bn) return an - bn;
+      return String(a.alias || a.name || '').toLowerCase().localeCompare(String(a.alias || a.name || '').toLowerCase());
+    });
+
+    items.forEach(m => {
+      const modelId = m.model || m.id || m.target || '';
+      const rawAlias = m.alias || m.name || modelId || '(alias)';
+      const targetLabel = m.target || modelId;
+      
+      // Use the centralized aliasEmoji function for consistent icons
+      const icon = aliasEmoji(rawAlias, targetLabel, m.is_nitro);
+
+      const safeAlias = escHtml(rawAlias);
+      const safeTarget = escHtml(targetLabel);
+      
+      // Create button for Favorites grid
+      const btn = document.createElement('button');
+      btn.className = 'model-btn' + (modelId === currentModelId ? ' active' : '');
+      btn.innerHTML = `
+        <div style="display:flex;align-items:center;gap:6px;margin-bottom:4px;pointer-events:none">
+          <span style="font-size:1.1em;pointer-events:none">${icon}</span>
+          <span style="font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;pointer-events:none">${safeAlias}</span>
+        </div>
+        <div style="font-size:0.65em;color:var(--dim);line-height:1.3;word-break:break-all;opacity:0.8;pointer-events:none">${safeTarget}</div>
+      `;
+      btn.onclick = (e) => { e.stopPropagation(); switchModel(m.provider, modelId, btn); };
+      
+      // Create button for All grid (clone logic but fresh element)
+      const btnClone = document.createElement('button');
+      btnClone.className = btn.className;
+      btnClone.innerHTML = btn.innerHTML;
+      btnClone.onclick = (e) => { e.stopPropagation(); switchModel(m.provider, modelId, btnClone); };
+      
+      allGrid.appendChild(btnClone);
+
+      // Show Nitro models in favorites, plus first 3 others
+      if (m.is_nitro || favGrid.children.length < 3) {
+        favGrid.appendChild(btn);
+      }
+    });
+
+    root.appendChild(sec);
+  }
+
+  // ── Normal provider presets ─────────────────────────────────────────────
   for (const [provName, models] of Object.entries(ALL_MODELS)) {
     const sec = document.createElement('div');
     sec.className = 'provider-section';
@@ -2731,15 +2859,28 @@ function _modelProviders() {
 
 function populateSettingsProviders() {
   const provs = _modelProviders();
+  const fallbackOrder = [
+    'google','anthropic','openai','xai','groq','mistral','cerebras',
+    'openrouter','huggingface','kimi','zai','minimax','nvidia','ollama','deepseek'
+  ];
+
   ['primary', 'fallback'].forEach(role => {
     const sel = document.getElementById(`set-${role}-provider`);
+    if (!sel) return;
     sel.innerHTML = '';
-    for (const [prov, label] of provs) {
+
+    let list = Array.from(provs.keys());
+    if (!list.length) list = fallbackOrder.slice();
+
+    list.forEach(prov => {
       const opt = document.createElement('option');
       opt.value = prov;
       opt.textContent = prov.charAt(0).toUpperCase() + prov.slice(1);
       sel.appendChild(opt);
-    }
+    });
+
+    if (!sel.value && sel.options.length) sel.value = sel.options[0].value;
+    updateSettingsModelList(role);
   });
 }
 
@@ -2750,12 +2891,40 @@ function updateSettingsModelList(role) {
   modSel.innerHTML = '';
   const flat = _flatModels();
   const provModels = flat.filter(m => m.provider === prov);
+  
   provModels.forEach(m => {
     const opt = document.createElement('option');
     opt.value = m.id;
     opt.textContent = m.name.replace(/\[LATEST\]/g, '').trim();
     modSel.appendChild(opt);
   });
+
+  // ⭐ FIX: Inject Aliases (Nitro models) into OpenRouter dropdown
+  if (prov === 'openrouter' && typeof ALIASES !== 'undefined' && Array.isArray(ALIASES) && ALIASES.length) {
+    // Add a separator
+    const sep = document.createElement('option');
+    sep.disabled = true;
+    sep.textContent = '─── Nitro Aliases ───';
+    modSel.appendChild(sep);
+
+    ALIASES.forEach(m => {
+      const modelId = m.model || m.id || m.target || '';
+      const rawAlias = m.alias || m.name || modelId || '(alias)';
+      // Reuse the emoji logic from renderModelGrid for consistency
+      let icon = '📌';
+      const lowAlias = String(rawAlias).toLowerCase();
+      if(m.is_nitro || lowAlias.includes('nitro') || lowAlias.includes('fast')) icon = '🚀';
+      else if(lowAlias.includes('gpt') || lowAlias.includes('o1') || lowAlias.includes('o3')) icon = '🧠';
+      else if(lowAlias.includes('claude') || lowAlias.includes('sonnet')) icon = '🤖';
+      else if(lowAlias.includes('gemini')) icon = '🌐';
+      
+      const opt = document.createElement('option');
+      opt.value = modelId;
+      opt.textContent = `${icon} ${rawAlias}`;
+      modSel.appendChild(opt);
+    });
+  }
+
   // If Ollama, add discovered models
   if (prov === 'ollama') {
     const ollamaKey = Object.keys(ALL_MODELS).find(k => k.includes('Ollama'));
@@ -3097,7 +3266,13 @@ function switchTab(name) {
   if (pane) pane.classList.add('active');
   document.querySelectorAll('.tab-btn').forEach(b => { if (b.textContent.toLowerCase().includes(name)) b.classList.add('active'); });
   document.querySelectorAll('.sidebar-item').forEach(s => { if (s.textContent.toLowerCase().includes(name)) s.classList.add('active'); });
-  if (name === 'status') refreshStatus();
+  if (name === 'status') {
+    refreshStatus();
+    // Force token counter sync from Status API data immediately
+    const r = authFetch('/api/status').then(r => r.json()).then(d => {
+      document.getElementById('token-counter').textContent = '↑' + (d.tokens_in||0) + ' ↓' + (d.tokens_out||0) + ' tokens';
+    }).catch(console.error);
+  }
   if (name === 'models') { loadOllamaStatus(); pmoLoad(); }
   if (name === 'plugins') loadPlugins();
   if (name === 'thinking') {
@@ -3463,6 +3638,62 @@ try {
 </html>"""
         return web.Response(text=html, content_type='text/html')
 
+    async def handle_aliases(self, request):
+        """GET /api/aliases — return config.yaml -> aliases mapping.
+
+        Output format:
+          { aliases: [ {alias, target, provider, model, is_nitro} ], count }
+
+        Notes:
+        - If an alias value is "provider/model", we honor it.
+        - If it's just "org/model" (OpenRouter style), we default provider to openrouter.
+        - If it's a plain model id (no slash), we default provider to current gateway provider.
+        """
+        aliases = self.core.config.get('aliases', {}) or {}
+
+        known_providers = set((self.core.config.get('providers', {}) or {}).keys())
+        known_providers |= {
+            'google','anthropic','openai','xai','groq','mistral','cerebras','openrouter',
+            'huggingface','kimi','zai','minimax','nvidia','ollama','deepseek'
+        }
+
+        current_provider = (self.core.config.get('gateway', {}) or {}).get('provider', '') or 'openrouter'
+
+        out = []
+        for alias_name, target in aliases.items():
+            t = str(target).strip()
+            provider = None
+            model = None
+
+            # Explicit separator: provider|model
+            if '|' in t:
+                provider, model = t.split('|', 1)
+                provider = provider.strip()
+                model = model.strip()
+            else:
+                # If first segment matches a provider, treat as provider/model
+                pfx = t.split('/', 1)
+                if len(pfx) == 2 and pfx[0] in known_providers:
+                    provider = pfx[0]
+                    model = pfx[1]
+                else:
+                    # Heuristic: OpenRouter models are typically org/model (contain '/').
+                    provider = 'openrouter' if '/' in t else current_provider
+                    model = t
+
+            s = (alias_name + ' ' + t).lower()
+            out.append({
+                'alias': alias_name,
+                'target': t,
+                'provider': provider,
+                'model': model,
+                'is_nitro': ('nitro' in s),
+            })
+
+        # Sort Nitro to top, then alpha
+        out.sort(key=lambda a: (0 if a.get('is_nitro') else 1, str(a.get('alias','')).lower()))
+        return web.json_response({'aliases': out, 'count': len(out)})
+
     async def handle_ollama_models(self, request):
         """Return live discovered Ollama model list from OllamaManager."""
         models = []
@@ -3569,7 +3800,19 @@ try {
                             pass
                     elif part.name == 'files':
                         filename = part.filename or 'unnamed'
-                        raw = await part.read(20 * 1024 * 1024)
+                        # aiohttp BodyPartReader.read() often does NOT accept a size argument.
+                        # Read in chunks and enforce a max upload size (20MB) ourselves.
+                        max_bytes = 20 * 1024 * 1024
+                        buf = bytearray()
+                        while True:
+                            chunk = await part.read_chunk(size=256 * 1024)
+                            if not chunk:
+                                break
+                            buf.extend(chunk)
+                            if len(buf) > max_bytes:
+                                buf = buf[:max_bytes]
+                                break
+                        raw = bytes(buf)
                         try:
                             text = raw.decode('utf-8', errors='replace')
                         except Exception:

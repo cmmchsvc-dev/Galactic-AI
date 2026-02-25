@@ -1,3 +1,52 @@
 {
-  "installed": []
+  "installed": [
+    {
+      "module": "conversation_auto_recall",
+      "class": "ConversationAutoRecallSkill",
+      "file": "conversation_auto_recall.py",
+      "installed_at": "2026-02-24T02:28:49.661112",
+      "source": "ai_authored",
+      "description": "Automatically recalls relevant snippets from archived conversations when the user asks memory-related questions, injecting them into context before the model answers."
+    },
+    {
+      "module": "conversation_archiver",
+      "class": "ConversationArchiverSkill",
+      "file": "conversation_archiver.py",
+      "installed_at": "2026-02-24T04:46:31.446317",
+      "source": "ai_authored",
+      "description": "Archives full chat transcripts to logs/conversations and keeps a rolling hot buffer (robust patch that survives restarts)."
+    },
+    {
+      "module": "boot_recall_banner",
+      "class": "BootRecallBannerSkill",
+      "file": "boot_recall_banner.py",
+      "installed_at": "2026-02-24T05:18:28.745355",
+      "source": "ai_authored",
+      "description": ""
+    },
+    {
+      "module": "recent_context_auto_inject",
+      "class": "RecentContextAutoInjectSkill",
+      "file": "recent_context_auto_inject.py",
+      "installed_at": "2026-02-24T06:09:47.564239",
+      "source": "ai_authored",
+      "description": ""
+    },
+    {
+      "module": "gemini_coder",
+      "class": "GeminiCoder",
+      "file": "gemini_coder.py",
+      "installed_at": "2026-02-25T12:00:00.000000",
+      "source": "user_authored",
+      "description": "Senior Coding Engine powered by Google Gemini (google-genai SDK)."
+    },
+    {
+      "module": "memory_manager",
+      "class": "MemoryManagerSkill",
+      "file": "memory_manager.py",
+      "installed_at": "2026-02-25T14:00:00.000000",
+      "source": "ai_authored",
+      "description": "Vector database long-term memory using ChromaDB."
+    }
+  ]
 }

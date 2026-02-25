@@ -176,6 +176,7 @@ async function handleCommand(id, command, args) {
     case 'navigate':      return await cmdNavigate(args);
     case 'read_page':     return await cmdReadPage(args);
     case 'find_element':  return await cmdFindElement(args);
+    case 'wait_for':      return await cmdWaitFor(args);
     case 'click':         return await cmdClick(args);
     case 'type':          return await cmdType(args);
     case 'scroll':        return await cmdScroll(args);
@@ -279,6 +280,12 @@ async function cmdFindElement(args) {
   const tabId = await getTargetTabId(args);
   if (!tabId) return { error: 'No active tab' };
   return await sendToContent(tabId, 'find', args);
+}
+
+async function cmdWaitFor(args) {
+  const tabId = await getTargetTabId(args);
+  if (!tabId) return { error: 'No active tab' };
+  return await sendToContent(tabId, 'wait_for', args);
 }
 
 async function cmdClick(args) {

@@ -33,7 +33,7 @@ class ChromeBridgeSkill(GalacticSkill):
     """
 
     skill_name  = "chrome_bridge"
-    version     = "1.1.3"
+    version     = "1.1.6"
     author      = "Galactic AI"
     description = "Chrome extension WebSocket bridge for real browser control."
     category    = "browser"
@@ -264,6 +264,15 @@ class ChromeBridgeSkill(GalacticSkill):
                 }, "required": []},
                 "fn": self._tool_chrome_resize
             },
+            "chrome_wait_for": {
+                "description": "Wait for a specific element (CSS selector) or text content to appear on the current page in the user's Chrome browser.",
+                "parameters": {"type": "object", "properties": {
+                    "selector": {"type": "string", "description": "CSS selector to wait for"},
+                    "text": {"type": "string", "description": "Text content to wait for"},
+                    "timeout": {"type": "number", "description": "Max wait time in milliseconds (default: 10000)"},
+                }},
+                "fn": self._tool_chrome_wait_for
+            },
             "chrome_wait": {
                 "description": "Wait for N seconds. Use to let pages load, animations settle, or rate-limit between actions.",
                 "parameters": {
@@ -461,6 +470,18 @@ class ChromeBridgeSkill(GalacticSkill):
         if result.get('status') == 'success':
             return f"[CHROME] New tab created: {result.get('url', 'new tab')}"
         return f"[ERROR] Chrome tabs_create: {result.get('error') or result.get('message') or 'unknown error'}"
+
+    async def _tool_chrome_wait_for(self, args):
+        if not self.ws_connection: return "[ERROR] Chrome extension not connected."
+        result = await self.wait_for(
+            selector=args.get('selector'),
+            text=args.get('text'),
+            timeout=args.get('timeout', 10000)
+        )
+        if result.get('status') == 'success':
+            target = args.get('selector') or args.get('text')
+            return f"[CHROME] Wait for '{target}' succeeded"
+        return f"[ERROR] Chrome wait_for: {result.get('error') or result.get('message') or 'unknown error'}"
 
     async def _tool_chrome_key_press(self, args):
         if not self.ws_connection: return "[ERROR] Chrome extension not connected."
@@ -855,6 +876,15 @@ class ChromeBridgeSkill(GalacticSkill):
     async def find_element(self, query: str, tab_id=None):
         """Find elements on the page using natural-language search."""
         return await self.send_command("find_element", {"query": query, "tab_id": tab_id})
+
+    async def wait_for(self, selector=None, text=None, timeout=10000, tab_id=None):
+        """Wait for a CSS selector or text to appear on the page."""
+        return await self.send_command("wait_for", {
+            "selector": selector,
+            "text": text,
+            "timeout": timeout,
+            "tab_id": tab_id,
+        })
 
     async def click(self, selector=None, ref=None, coordinate=None, x=None, y=None, tab_id=None, double_click=False):
         """Click an element by CSS selector, ref ID, or viewport coordinate."""

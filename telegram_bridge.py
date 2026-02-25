@@ -1,4 +1,12 @@
-# Galactic AI - Telegram Bridge
+# Galactic AI - Telegram Bridge (Status Plus)
+# Drop-in alternative to telegram_bridge.py with enhanced /status telemetry.
+#
+# Usage:
+#   1) Stop Galactic AI / Telegram bridge.
+#   2) Rename your current telegram_bridge.py -> telegram_bridge.py.bak
+#   3) Copy this file to telegram_bridge.py (or adjust your loader to import this module).
+#   4) Start Galactic AI and run /status in Telegram.
+
 import asyncio
 import httpx
 import json
@@ -7,8 +15,10 @@ import traceback
 import tempfile
 import time
 
+
 class TelegramBridge:
     """The high-frequency command deck for Galactic AI."""
+
     def __init__(self, core):
         self.core = core
         self.config = core.config.get('telegram', {})
@@ -20,8 +30,14 @@ class TelegramBridge:
         self.thinking_level = "LOW"
         self.verbose = False
         self.pending_api_key = {}  # {chat_id: {"provider": str, "model": str}}
-        self._active_tasks = []    # Track spawned asyncio tasks for /stop
+        self._active_tasks = []  # Track spawned asyncio tasks for /stop
         self._component = "Telegram"
+
+        # Track model-call telemetry (best-effort)
+        self._last_model_call_ts = None
+        self._last_model_ok_ts = None
+        self._last_model_error_ts = None
+        self._last_model_error = None
 
     def _track_task(self, task):
         """Track an asyncio task so /stop can cancel it."""
@@ -36,24 +52,26 @@ class TelegramBridge:
     async def set_commands(self):
         commands = [
             {"command": "stop", "description": "🛑 Kill All Running Tasks"},
-            {"command": "status", "description": "🛰️ System Telemetry"},
+            {"command": "status", "description": "🛰️ System Telemetry (lite/full)"},
             {"command": "model", "description": "🧠 Shift Brain"},
             {"command": "models", "description": "⚙️ Model Config (Primary/Fallback)"},
             {"command": "browser", "description": "📺 Launch Optics"},
             {"command": "screenshot", "description": "📸 Snap Optics"},
             {"command": "cli", "description": "🦾 Shell Command"},
             {"command": "compact", "description": "🧹 Compact Context"},
+            {"command": "clear", "description": "🗑️ Wipe History"},
+            {"command": "reset", "description": "🗑️ Wipe History (Alias)"},
             {"command": "leads", "description": "🎯 New Leads"},
-            {"command": "help", "description": "📖 Interactive Menu"}
+            {"command": "help", "description": "📖 Interactive Menu"},
         ]
         try:
             await self.client.post(f"{self.api_url}/setMyCommands", json={"commands": commands})
-        except: pass
+        except Exception:
+            pass
 
     async def send_message(self, chat_id, text, reply_markup=None):
         if not text:
             return
-        # Telegram has a 4096 character limit per message — split if needed
         chunks = self._split_message(text, limit=4096)
         for chunk in chunks:
             await self._send_single_message(chat_id, chunk, reply_markup)
@@ -68,24 +86,17 @@ class TelegramBridge:
             result = resp.json()
             if not result.get("ok"):
                 desc = str(result.get("description", ""))
-                # Markdown parse failure — retry as plain text
                 if "can't parse" in desc.lower() or "parse" in desc.lower():
                     payload.pop("parse_mode", None)
-                    resp2 = await self.client.post(
-                        f"{self.api_url}/sendMessage", json=payload
-                    )
+                    resp2 = await self.client.post(f"{self.api_url}/sendMessage", json=payload)
                     result2 = resp2.json()
                     if not result2.get("ok"):
                         await self._log(
-                            f"Telegram API error (plain fallback): "
-                            f"{result2.get('description', 'unknown')}",
+                            f"Telegram API error (plain fallback): {result2.get('description', 'unknown')}",
                             priority=1,
                         )
                 else:
-                    await self._log(
-                        f"Telegram API error: {desc}",
-                        priority=1,
-                    )
+                    await self._log(f"Telegram API error: {desc}", priority=1)
         except Exception as e:
             await self._log(f"Send message error: {e}", priority=1)
 
@@ -99,16 +110,15 @@ class TelegramBridge:
             if len(text) <= limit:
                 chunks.append(text)
                 break
-            # Find a good split point: prefer double-newline, then newline, then space
-            split_at = text.rfind('\n\n', 0, limit)
+            split_at = text.rfind("\n\n", 0, limit)
             if split_at == -1:
-                split_at = text.rfind('\n', 0, limit)
+                split_at = text.rfind("\n", 0, limit)
             if split_at == -1:
-                split_at = text.rfind(' ', 0, limit)
+                split_at = text.rfind(" ", 0, limit)
             if split_at <= 0:
                 split_at = limit
             chunks.append(text[:split_at])
-            text = text[split_at:].lstrip('\n')
+            text = text[split_at:].lstrip("\n")
         return chunks
 
     async def send_photo(self, chat_id, photo_path, caption=None):
@@ -117,7 +127,8 @@ class TelegramBridge:
             with open(photo_path, "rb") as photo:
                 files = {"photo": photo}
                 data = {"chat_id": chat_id}
-                if caption: data["caption"] = caption
+                if caption:
+                    data["caption"] = caption
                 await self.client.post(url, data=data, files=files)
         except Exception as e:
             await self._log(f"Telegram Photo Error: {e}", priority=1)
@@ -128,26 +139,27 @@ class TelegramBridge:
             with open(audio_path, "rb") as audio:
                 files = {"audio": audio}
                 data = {"chat_id": chat_id}
-                if caption: data["caption"] = caption[:1024]  # Telegram caption limit
+                if caption:
+                    data["caption"] = caption[:1024]
                 await self.client.post(url, data=data, files=files)
         except Exception as e:
             await self._log(f"Telegram Audio Error: {e}", priority=1)
 
     async def send_voice(self, chat_id, voice_path, caption=None):
-        """Send an OGG voice message to Telegram (shows as voice note with waveform)."""
+        """Send an OGG voice message to Telegram."""
         try:
             url = f"{self.api_url}/sendVoice"
             with open(voice_path, "rb") as voice:
                 files = {"voice": voice}
                 data = {"chat_id": chat_id}
-                if caption: data["caption"] = caption[:1024]
+                if caption:
+                    data["caption"] = caption[:1024]
                 await self.client.post(url, data=data, files=files)
         except Exception as e:
             await self._log(f"Telegram Voice Error: {e}", priority=1)
 
     async def _transcribe_audio(self, audio_path):
         """Transcribe audio using OpenAI Whisper API (preferred) or return None."""
-        # Try OpenAI Whisper API
         openai_key = self.core.config.get('providers', {}).get('openai', {}).get('apiKey', '')
         if openai_key:
             try:
@@ -157,7 +169,7 @@ class TelegramBridge:
                             'https://api.openai.com/v1/audio/transcriptions',
                             headers={'Authorization': f'Bearer {openai_key}'},
                             files={'file': (os.path.basename(audio_path), f, 'audio/ogg')},
-                            data={'model': 'whisper-1'}
+                            data={'model': 'whisper-1'},
                         )
                     if r.status_code == 200:
                         text = r.json().get('text', '').strip()
@@ -167,7 +179,6 @@ class TelegramBridge:
             except Exception as e:
                 await self._log(f"Whisper STT error: {e}", priority=2)
 
-        # Try Groq Whisper (free, fast) — same OpenAI-compatible endpoint
         groq_key = self.core.config.get('providers', {}).get('groq', {}).get('apiKey', '')
         if groq_key:
             try:
@@ -177,7 +188,7 @@ class TelegramBridge:
                             'https://api.groq.com/openai/v1/audio/transcriptions',
                             headers={'Authorization': f'Bearer {groq_key}'},
                             files={'file': (os.path.basename(audio_path), f, 'audio/ogg')},
-                            data={'model': 'whisper-large-v3'}
+                            data={'model': 'whisper-large-v3'},
                         )
                     if r.status_code == 200:
                         text = r.json().get('text', '').strip()
@@ -187,16 +198,19 @@ class TelegramBridge:
             except Exception as e:
                 await self._log(f"Groq STT error: {e}", priority=2)
 
-        return None  # No transcription available
+        return None
 
     async def send_typing(self, chat_id):
         try:
-            await self.client.post(f"{self.api_url}/sendChatAction", json={"chat_id": chat_id, "action": "typing"})
-        except: pass
+            await self.client.post(
+                f"{self.api_url}/sendChatAction", json={"chat_id": chat_id, "action": "typing"}
+            )
+        except Exception:
+            pass
 
     async def get_help_page(self, page):
         if page == "1":
-            text = "🌌 **Commands (1/5) - System** 🛰️\n• `/status` - Vitals\n• `/model` - Brain\n• `/uptime` - Engine"
+            text = "🌌 **Commands (1/5) - System** 🛰️\n• `/status` - System Telemetry (lite)\n• `/status full` - System Telemetry (full)\n• `/model` - Brain\n• `/uptime` - Engine"
             buttons = [[{"text": "Next ➡️", "callback_data": "help_2"}]]
         elif page == "2":
             text = "🌌 **Commands (2/5) - Session** 🧹\n• `/reset` - Clear\n• `/compact` - Aura Imprint\n• `/stop` - Shutdown"
@@ -213,12 +227,7 @@ class TelegramBridge:
         return text, {"inline_keyboard": buttons}
 
     def _get_live_ollama_menu_entries(self):
-        """Return live Ollama model list from OllamaManager, falling back to static defaults."""
-        defaults = [
-            ("Qwen3 30B 🤖", "qwen3:30b"),
-            ("Qwen3 8B ⚡️", "qwen3:8b"),
-            ("Qwen3 Coder 30B 🦾", "qwen3-coder:30b")
-        ]
+        defaults = [("Qwen3 30B 🤖", "qwen3:30b"), ("Qwen3 8B ⚡️", "qwen3:8b"), ("Qwen3 Coder 30B 🦾", "qwen3-coder:30b")]
         try:
             mgr = getattr(self.core, 'ollama_manager', None)
             if mgr and mgr.discovered_models:
@@ -236,6 +245,11 @@ class TelegramBridge:
         if not provider:
             text = "🧠 **Brain Matrix: Select Provider**\nChoose a core cluster to explore:"
             buttons = []
+
+            # Separate Aliases category (config.yaml -> aliases:)
+            if self.core.config.get('aliases'):
+                buttons.append([{ "text": "Aliases 🧷", "callback_data": "prov_aliases" }])
+
             row = []
             providers = self.core.config.get('providers', {})
             for p_name in providers:
@@ -243,9 +257,59 @@ class TelegramBridge:
                 if len(row) == 2:
                     buttons.append(row)
                     row = []
-            if row: buttons.append(row)
+            if row:
+                buttons.append(row)
             return text, {"inline_keyboard": buttons}
-        
+
+        # Aliases submenu
+        if provider == 'aliases':
+            aliases = self.core.config.get('aliases', {}) or {}
+
+            # Interpret alias targets.
+            # We treat values like "openai/gpt-..." as OpenRouter model IDs by default.
+            explicit_prefixes = {
+                'openrouter',
+                'ollama', 'nvidia', 'xai', 'groq', 'mistral', 'cerebras',
+                'deepseek', 'huggingface', 'kimi', 'zai', 'minimax'
+            }
+
+            def _sort_key(item):
+                k, v = item
+                s = f"{k} {v}".lower()
+                return (0 if 'nitro' in s else 1, k.lower())
+
+            items = sorted(list(aliases.items()), key=_sort_key)
+
+            text = "🧷 **Aliases**\nQuick-switch shortcuts from `config.yaml` → `aliases:`"
+            buttons = []
+            row = []
+
+            for alias_name, target in items[:40]:
+                t = str(target).strip()
+
+                # Explicit provider form: provider/model...
+                if '/' in t:
+                    first, rest = t.split('/', 1)
+                    if first in explicit_prefixes:
+                        prov, mod = first, rest
+                    else:
+                        # Default: treat as OpenRouter model namespace
+                        prov, mod = 'openrouter', t
+                else:
+                    # Model-only alias: default to OpenRouter
+                    prov, mod = 'openrouter', t
+
+                row.append({"text": str(alias_name), "callback_data": f"mod_{prov}|{mod}"})
+                if len(row) == 2:
+                    buttons.append(row)
+                    row = []
+
+            if row:
+                buttons.append(row)
+
+            buttons.append([{"text": "⬅️ Back to Providers", "callback_data": "mod_back"}])
+            return text, {"inline_keyboard": buttons}
+
         text = f"🧠 **{provider.capitalize()} Cluster**\nSelect a specific brain to activate:"
         buttons = []
         model_map = {
@@ -292,10 +356,7 @@ class TelegramBridge:
                 ("Grok 3 🌌", "grok-3"),
                 ("Grok 3 Mini 🎯", "grok-3-mini"),
             ],
-            "deepseek": [
-                ("DeepSeek V3 🧠 [LATEST]", "deepseek-chat"),
-                ("DeepSeek R1 (Reasoning) 🧮", "deepseek-reasoner"),
-            ],
+            "deepseek": [("DeepSeek V3 🧠 [LATEST]", "deepseek-chat"), ("DeepSeek R1 (Reasoning) 🧮", "deepseek-reasoner")],
             "groq": [
                 ("Llama 4 Scout 17B ⚡️ [FAST]", "llama-4-scout-17b-16e-instruct"),
                 ("Llama 4 Maverick 17B 🦾", "llama-4-maverick-17b-128e-instruct"),
@@ -310,11 +371,7 @@ class TelegramBridge:
                 ("Mistral Large 2 🏛️", "mistral-large-latest"),
                 ("Magistral Medium 🧠", "magistral-medium-latest"),
             ],
-            "cerebras": [
-                ("Llama 3.3 70B ⚡️ [FAST]", "llama3.3-70b"),
-                ("Llama 3.1 8B 🏎️", "llama3.1-8b"),
-                ("Qwen 3 32B 🧠", "qwen-3-32b"),
-            ],
+            "cerebras": [("Llama 3.3 70B ⚡️ [FAST]", "llama3.3-70b"), ("Llama 3.1 8B 🏎️", "llama3.1-8b"), ("Qwen 3 32B 🧠", "qwen-3-32b")],
             "openrouter": [
                 ("Gemini 3.1 Pro 👑", "google/gemini-3.1-pro-preview"),
                 ("Claude Opus 4.6 👑", "anthropic/claude-opus-4.6"),
@@ -327,23 +384,12 @@ class TelegramBridge:
                 ("Gemini 3 Flash ⚡", "google/gemini-3-flash-preview"),
                 ("Mistral Large 🌟", "mistralai/mistral-large-2512"),
             ],
-            "huggingface": [
-                ("Qwen3 235B 🧠", "Qwen/Qwen3-235B-A22B"),
-                ("Llama 4 Scout ⚡️", "meta-llama/Llama-4-Scout-17B-16E-Instruct"),
-                ("DeepSeek V3 🚀", "deepseek-ai/DeepSeek-V3-0324"),
-            ],
-            "kimi": [
-                ("Kimi K2.5 🌙", "moonshot-v1-auto"),
-            ],
-            "zai": [
-                ("GLM-4 Plus 🧠", "glm-4-plus"),
-            ],
-            "minimax": [
-                ("MiniMax Text-01 🎯", "MiniMax-Text-01"),
-            ],
-            "ollama": self._get_live_ollama_menu_entries()
+            "huggingface": [("Qwen3 235B 🧠", "Qwen/Qwen3-235B-A22B"), ("Llama 4 Scout ⚡️", "meta-llama/Llama-4-Scout-17B-16E-Instruct"), ("DeepSeek V3 🚀", "deepseek-ai/DeepSeek-V3-0324")],
+            "kimi": [("Kimi K2.5 🌙", "moonshot-v1-auto")],
+            "zai": [("GLM-4 Plus 🧠", "glm-4-plus")],
+            "minimax": [("MiniMax Text-01 🎯", "MiniMax-Text-01")],
+            "ollama": self._get_live_ollama_menu_entries(),
         }
-
         models = model_map.get(provider, [])
         row = []
         for label, m_id in models:
@@ -351,18 +397,16 @@ class TelegramBridge:
             if len(row) == 2:
                 buttons.append(row)
                 row = []
-        if row: buttons.append(row)
+        if row:
+            buttons.append(row)
         buttons.append([{"text": "⬅️ Back to Providers", "callback_data": "mod_back"}])
         return text, {"inline_keyboard": buttons}
 
     async def get_models_config_menu(self, config_type=None, provider=None):
-        """Model configuration menu with primary/fallback settings."""
         if not config_type:
-            # Main menu - show current config
             mm = self.core.model_manager
             current = mm.get_current_model()
             mode_indicator = "🟢" if current['mode'] == 'primary' else "🟡"
-            
             text = (
                 f"⚙️ **Model Configuration**\n\n"
                 f"{mode_indicator} **Active:** {current['provider']}/{current['model']} ({current['mode']})\n\n"
@@ -373,18 +417,16 @@ class TelegramBridge:
                 f"**Recovery Time:** {mm.recovery_time}s\n\n"
                 f"Choose what to configure:"
             )
-            
             buttons = [
                 [{"text": "🎯 Set Primary Model", "callback_data": "cfg_primary"}],
                 [{"text": "🔄 Set Fallback Model", "callback_data": "cfg_fallback"}],
                 [{"text": "🔄 Switch to Primary", "callback_data": "cfg_switch_primary"}],
                 [{"text": "🟡 Switch to Fallback", "callback_data": "cfg_switch_fallback"}],
-                [{"text": "⚙️ Toggle Auto-Fallback", "callback_data": "cfg_toggle_auto"}]
+                [{"text": "⚙️ Toggle Auto-Fallback", "callback_data": "cfg_toggle_auto"}],
             ]
             return text, {"inline_keyboard": buttons}
-        
+
         elif config_type == "provider":
-            # Select provider for primary/fallback
             text = f"⚙️ **Select Provider for {provider.upper()}**"
             buttons = []
             row = []
@@ -394,87 +436,32 @@ class TelegramBridge:
                 if len(row) == 2:
                     buttons.append(row)
                     row = []
-            if row: buttons.append(row)
+            if row:
+                buttons.append(row)
             buttons.append([{"text": "⬅️ Back", "callback_data": "cfg_back"}])
             return text, {"inline_keyboard": buttons}
-        
+
         elif config_type == "model":
-            # Select specific model for primary/fallback
-            setting_type = provider.split("_")[0]  # 'primary' or 'fallback'
+            setting_type = provider.split("_")[0]
             provider_name = provider.split("_")[-1]
-            
             text = f"⚙️ **Select Model from {provider_name.capitalize()}**\nSetting as **{setting_type.upper()}** model"
-            
             model_map = {
-                "anthropic": [
-                    ("Opus 4.6 👑", "claude-opus-4-6"),
-                    ("Sonnet 4.6 🌟", "claude-sonnet-4-6"),
-                    ("Haiku 4.5 ⚡️", "claude-haiku-4-5"),
-                    ("Sonnet 4.5 🚀", "claude-sonnet-4-5"),
-                ],
-                "google": [
-                    ("Gemini 3.1 Pro 🧠", "gemini-3.1-pro-preview"),
-                    ("Gemini 3 Flash ⚡️", "gemini-3-flash-preview"),
-                    ("Gemini 3 Pro 🧠", "gemini-3-pro-preview"),
-                    ("Gemini 2.5 Flash 🏎️", "gemini-2.5-flash"),
-                    ("Gemini 2.5 Pro 🦾", "gemini-2.5-pro"),
-                ],
-                "openai": [
-                    ("GPT-4o 🧠", "gpt-4o"),
-                    ("GPT-4.1 🌟", "gpt-4.1"),
-                    ("GPT-4o Mini ⚡️", "gpt-4o-mini"),
-                    ("o3 Mini 🧮", "o3-mini"),
-                ],
-                "nvidia": [
-                    ("GLM-5 Thinking 🧠", "z-ai/glm5"),
-                    ("Kimi K2.5 Thinking 🌙", "moonshotai/kimi-k2.5"),
-                    ("Qwen 3.5 397B 🦾", "qwen/qwen3.5-397b-a17b"),
-                    ("Nemotron 30B ⚛️", "nvidia/nemotron-3-nano-30b-a3b"),
-                    ("StepFun 3.5 Flash ⚡️", "stepfun-ai/step-3.5-flash"),
-                    ("DeepSeek V3.2 🚀", "deepseek-ai/deepseek-v3.2"),
-                    ("Llama 405B 🏛️", "meta/llama-3.1-405b-instruct"),
-                    ("Phi-3.5 Vision 👁️", "microsoft/phi-3.5-vision-instruct"),
-                    ("Qwen 480B Coder 🦾", "qwen/qwen3-coder-480b-a35b-instruct"),
-                ],
-                "xai": [
-                    ("Grok 4 🧠", "grok-4"),
-                    ("Grok 4 Fast ⚡️", "grok-4-fast"),
-                ],
-                "deepseek": [
-                    ("DeepSeek V3 🧠", "deepseek-chat"),
-                    ("DeepSeek R1 🧮", "deepseek-reasoner"),
-                ],
-                "groq": [
-                    ("Llama 4 Scout ⚡️", "llama-4-scout-17b-16e-instruct"),
-                    ("Llama 3.3 70B 🏛️", "llama-3.3-70b-versatile"),
-                    ("DeepSeek R1 70B 🧮", "deepseek-r1-distill-llama-70b"),
-                ],
-                "mistral": [
-                    ("Mistral Small 3.1 ⚡️", "mistral-small-latest"),
-                    ("Mistral Large 2 🏛️", "mistral-large-latest"),
-                    ("Codestral 🦾", "codestral-latest"),
-                ],
-                "cerebras": [
-                    ("Llama 3.3 70B ⚡️", "llama3.3-70b"),
-                    ("Qwen 3 32B 🧠", "qwen-3-32b"),
-                ],
-                "openrouter": [
-                    ("Gemini 3.1 Pro 👑", "google/gemini-3.1-pro-preview"),
-                    ("Claude Opus 4.6 👑", "anthropic/claude-opus-4.6"),
-                    ("GPT-5.2 👑", "openai/gpt-5.2"),
-                    ("DeepSeek V3.2 🚀", "deepseek/deepseek-v3.2"),
-                    ("Grok 4.1 Fast ⚡", "x-ai/grok-4.1-fast"),
-                ],
-                "huggingface": [
-                    ("Qwen3 235B 🧠", "Qwen/Qwen3-235B-A22B"),
-                    ("Llama 4 Scout ⚡️", "meta-llama/Llama-4-Scout-17B-16E-Instruct"),
-                ],
+                "anthropic": [("Opus 4.6 👑", "claude-opus-4-6"), ("Sonnet 4.6 🌟", "claude-sonnet-4-6"), ("Haiku 4.5 ⚡️", "claude-haiku-4-5"), ("Sonnet 4.5 🚀", "claude-sonnet-4-5")],
+                "google": [("Gemini 3.1 Pro 🧠", "gemini-3.1-pro-preview"), ("Gemini 3 Flash ⚡️", "gemini-3-flash-preview"), ("Gemini 2.5 Flash 🏎️", "gemini-2.5-flash"), ("Gemini 2.5 Pro 🦾", "gemini-2.5-pro")],
+                "openai": [("GPT-4o 🧠", "gpt-4o"), ("GPT-4.1 🌟", "gpt-4.1"), ("GPT-4o Mini ⚡️", "gpt-4o-mini"), ("o3 Mini 🧮", "o3-mini")],
+                "nvidia": [("GLM-5 Thinking 🧠", "z-ai/glm5"), ("Kimi K2.5 🌙", "moonshotai/kimi-k2.5"), ("Qwen 3.5 397B 🦾", "qwen/qwen3.5-397b-a17b"), ("Nemotron 30B ⚛️", "nvidia/nemotron-3-nano-30b-a3b"), ("DeepSeek V3.2 🚀", "deepseek-ai/deepseek-v3.2"), ("Llama 405B 🏛️", "meta/llama-3.1-405b-instruct"), ("Phi-3.5 Vision 👁️", "microsoft/phi-3.5-vision-instruct"), ("Qwen 480B Coder 🦾", "qwen/qwen3-coder-480b-a35b-instruct")],
+                "xai": [("Grok 4 🧠", "grok-4"), ("Grok 4 Fast ⚡️", "grok-4-fast")],
+                "deepseek": [("DeepSeek V3 🧠", "deepseek-chat"), ("DeepSeek R1 🧮", "deepseek-reasoner")],
+                "groq": [("Llama 4 Scout ⚡️", "llama-4-scout-17b-16e-instruct"), ("Llama 3.3 70B 🏛️", "llama-3.3-70b-versatile"), ("DeepSeek R1 70B 🧮", "deepseek-r1-distill-llama-70b")],
+                "mistral": [("Mistral Small 3.1 ⚡️", "mistral-small-latest"), ("Mistral Large 2 🏛️", "mistral-large-latest"), ("Codestral 🦾", "codestral-latest")],
+                "cerebras": [("Llama 3.3 70B ⚡️", "llama3.3-70b"), ("Qwen 3 32B 🧠", "qwen-3-32b")],
+                "openrouter": [("Gemini 3.1 Pro 👑", "google/gemini-3.1-pro-preview"), ("Claude Opus 4.6 👑", "anthropic/claude-opus-4.6"), ("GPT-5.2 👑", "openai/gpt-5.2"), ("DeepSeek V3.2 🚀", "deepseek/deepseek-v3.2"), ("Grok 4.1 Fast ⚡", "x-ai/grok-4.1-fast")],
+                "huggingface": [("Qwen3 235B 🧠", "Qwen/Qwen3-235B-A22B"), ("Llama 4 Scout ⚡️", "meta-llama/Llama-4-Scout-17B-16E-Instruct")],
                 "kimi": [("Kimi K2.5 🌙", "moonshot-v1-auto")],
                 "zai": [("GLM-4 Plus 🧠", "glm-4-plus")],
                 "minimax": [("MiniMax Text-01 🎯", "MiniMax-Text-01")],
-                "ollama": self._get_live_ollama_menu_entries()
+                "ollama": self._get_live_ollama_menu_entries(),
             }
-            
             models = model_map.get(provider_name, [])
             buttons = []
             row = []
@@ -483,7 +470,8 @@ class TelegramBridge:
                 if len(row) == 2:
                     buttons.append(row)
                     row = []
-            if row: buttons.append(row)
+            if row:
+                buttons.append(row)
             buttons.append([{"text": "⬅️ Back", "callback_data": f"cfg_{setting_type}"}])
             return text, {"inline_keyboard": buttons}
 
@@ -491,98 +479,486 @@ class TelegramBridge:
         data = callback_query.get("data", "")
         await self.client.post(f"{self.api_url}/answerCallbackQuery", json={"callback_query_id": callback_query["id"]})
         message_id = callback_query["message"]["message_id"]
-
         if data.startswith("help_"):
             page = data.split("_")[1]
             text, markup = await self.get_help_page(page)
-            await self.client.post(f"{self.api_url}/editMessageText", json={"chat_id": chat_id, "message_id": message_id, "text": text, "reply_markup": markup, "parse_mode": "Markdown"})
+            await self.client.post(
+                f"{self.api_url}/editMessageText",
+                json={"chat_id": chat_id, "message_id": message_id, "text": text, "reply_markup": markup, "parse_mode": "Markdown"},
+            )
         elif data.startswith("prov_"):
             provider = data.split("_")[1]
             text, markup = await self.get_model_menu(provider=provider)
-            await self.client.post(f"{self.api_url}/editMessageText", json={"chat_id": chat_id, "message_id": message_id, "text": text, "reply_markup": markup, "parse_mode": "Markdown"})
+            await self.client.post(
+                f"{self.api_url}/editMessageText",
+                json={"chat_id": chat_id, "message_id": message_id, "text": text, "reply_markup": markup, "parse_mode": "Markdown"},
+            )
         elif data == "mod_back":
             text, markup = await self.get_model_menu()
-            await self.client.post(f"{self.api_url}/editMessageText", json={"chat_id": chat_id, "message_id": message_id, "text": text, "reply_markup": markup, "parse_mode": "Markdown"})
+            await self.client.post(
+                f"{self.api_url}/editMessageText",
+                json={"chat_id": chat_id, "message_id": message_id, "text": text, "reply_markup": markup, "parse_mode": "Markdown"},
+            )
         elif data.startswith("think_"):
             level = data.split("_")[1].upper()
             self.thinking_level = level
             text, markup = await self.get_think_menu()
-            await self.client.post(f"{self.api_url}/editMessageText", json={"chat_id": chat_id, "message_id": message_id, "text": f"✅ Thinking: `{level}`\n\n{text}", "reply_markup": markup, "parse_mode": "Markdown"})
+            await self.client.post(
+                f"{self.api_url}/editMessageText",
+                json={"chat_id": chat_id, "message_id": message_id, "text": f"✅ Thinking: `{level}`\n\n{text}", "reply_markup": markup, "parse_mode": "Markdown"},
+            )
         elif data.startswith("mod_"):
             provider, model = data.split("_")[1].split("|")
             self.core.gateway.llm.provider = provider
             self.core.gateway.llm.model = model
-            # Use centralized key setter (handles all providers including nvidia sub-keys)
             if hasattr(self.core, 'model_manager'):
                 self.core.model_manager._set_api_key(provider)
-            # Check if API key is actually configured
             current_key = getattr(self.core.gateway.llm, 'api_key', '')
             if provider != 'ollama' and (not current_key or current_key == 'NONE'):
-                # No API key — prompt user to enter one
                 self.pending_api_key[chat_id] = {"provider": provider, "model": model}
                 await self.send_message(
                     chat_id,
-                    f"🔑 **API Key Required**\n\n"
-                    f"No API key configured for **{provider.capitalize()}**.\n"
-                    f"Please paste your API key now and I'll save it:"
+                    f"🔑 **API Key Required**\n\nNo API key configured for **{provider.capitalize()}**.\nPlease paste your API key now and I'll save it:",
                 )
-                await self.client.post(f"{self.api_url}/editMessageText", json={
-                    "chat_id": chat_id, "message_id": message_id,
-                    "text": f"⏳ Waiting for {provider.capitalize()} API key...",
-                    "parse_mode": "Markdown"
-                })
+                await self.client.post(
+                    f"{self.api_url}/editMessageText",
+                    json={"chat_id": chat_id, "message_id": message_id, "text": f"⏳ Waiting for {provider.capitalize()} API key...", "parse_mode": "Markdown"},
+                )
             else:
                 await self.send_message(chat_id, f"✅ **Shifted to {provider.capitalize()}:** `{model}`")
                 text, markup = await self.get_model_menu()
-                await self.client.post(f"{self.api_url}/editMessageText", json={"chat_id": chat_id, "message_id": message_id, "text": text, "reply_markup": markup, "parse_mode": "Markdown"})
+                await self.client.post(
+                    f"{self.api_url}/editMessageText",
+                    json={"chat_id": chat_id, "message_id": message_id, "text": text, "reply_markup": markup, "parse_mode": "Markdown"},
+                )
         elif data.startswith("cfg_"):
-            # Model configuration callbacks
             if data == "cfg_primary":
                 text, markup = await self.get_models_config_menu(config_type="provider", provider="primary")
-                await self.client.post(f"{self.api_url}/editMessageText", json={"chat_id": chat_id, "message_id": message_id, "text": text, "reply_markup": markup, "parse_mode": "Markdown"})
+                await self.client.post(
+                    f"{self.api_url}/editMessageText",
+                    json={"chat_id": chat_id, "message_id": message_id, "text": text, "reply_markup": markup, "parse_mode": "Markdown"},
+                )
             elif data == "cfg_fallback":
                 text, markup = await self.get_models_config_menu(config_type="provider", provider="fallback")
-                await self.client.post(f"{self.api_url}/editMessageText", json={"chat_id": chat_id, "message_id": message_id, "text": text, "reply_markup": markup, "parse_mode": "Markdown"})
+                await self.client.post(
+                    f"{self.api_url}/editMessageText",
+                    json={"chat_id": chat_id, "message_id": message_id, "text": text, "reply_markup": markup, "parse_mode": "Markdown"},
+                )
             elif data.startswith("cfg_primary_prov_") or data.startswith("cfg_fallback_prov_"):
                 parts = data.split("_")
-                setting_type = parts[1]  # 'primary' or 'fallback'
+                setting_type = parts[1]
                 provider_name = parts[3]
                 text, markup = await self.get_models_config_menu(config_type="model", provider=f"{setting_type}_prov_{provider_name}")
-                await self.client.post(f"{self.api_url}/editMessageText", json={"chat_id": chat_id, "message_id": message_id, "text": text, "reply_markup": markup, "parse_mode": "Markdown"})
+                await self.client.post(
+                    f"{self.api_url}/editMessageText",
+                    json={"chat_id": chat_id, "message_id": message_id, "text": text, "reply_markup": markup, "parse_mode": "Markdown"},
+                )
             elif data.startswith("cfg_primary_set_") or data.startswith("cfg_fallback_set_"):
                 parts = data.split("_")
-                setting_type = parts[1]  # 'primary' or 'fallback'
-                provider_and_model = parts[3]  # 'provider|model'
+                setting_type = parts[1]
+                provider_and_model = parts[3]
                 provider_name, model_id = provider_and_model.split("|")
-                
                 if setting_type == "primary":
                     await self.core.model_manager.set_primary(provider_name, model_id)
                     await self.send_message(chat_id, f"✅ **Primary model set:** {provider_name}/{model_id}\nNow active!")
                 else:
                     await self.core.model_manager.set_fallback(provider_name, model_id)
                     await self.send_message(chat_id, f"✅ **Fallback model set:** {provider_name}/{model_id}")
-                
                 text, markup = await self.get_models_config_menu()
-                await self.client.post(f"{self.api_url}/editMessageText", json={"chat_id": chat_id, "message_id": message_id, "text": text, "reply_markup": markup, "parse_mode": "Markdown"})
+                await self.client.post(
+                    f"{self.api_url}/editMessageText",
+                    json={"chat_id": chat_id, "message_id": message_id, "text": text, "reply_markup": markup, "parse_mode": "Markdown"},
+                )
             elif data == "cfg_switch_primary":
                 await self.core.model_manager.switch_to_primary()
                 await self.send_message(chat_id, "✅ **Switched to PRIMARY model**")
                 text, markup = await self.get_models_config_menu()
-                await self.client.post(f"{self.api_url}/editMessageText", json={"chat_id": chat_id, "message_id": message_id, "text": text, "reply_markup": markup, "parse_mode": "Markdown"})
+                await self.client.post(
+                    f"{self.api_url}/editMessageText",
+                    json={"chat_id": chat_id, "message_id": message_id, "text": text, "reply_markup": markup, "parse_mode": "Markdown"},
+                )
             elif data == "cfg_switch_fallback":
                 await self.core.model_manager.switch_to_fallback(reason="Manual switch")
                 await self.send_message(chat_id, "✅ **Switched to FALLBACK model**")
                 text, markup = await self.get_models_config_menu()
-                await self.client.post(f"{self.api_url}/editMessageText", json={"chat_id": chat_id, "message_id": message_id, "text": text, "reply_markup": markup, "parse_mode": "Markdown"})
+                await self.client.post(
+                    f"{self.api_url}/editMessageText",
+                    json={"chat_id": chat_id, "message_id": message_id, "text": text, "reply_markup": markup, "parse_mode": "Markdown"},
+                )
             elif data == "cfg_toggle_auto":
                 self.core.model_manager.auto_fallback_enabled = not self.core.model_manager.auto_fallback_enabled
                 status = "enabled" if self.core.model_manager.auto_fallback_enabled else "disabled"
                 await self.send_message(chat_id, f"✅ **Auto-fallback {status}**")
                 text, markup = await self.get_models_config_menu()
-                await self.client.post(f"{self.api_url}/editMessageText", json={"chat_id": chat_id, "message_id": message_id, "text": text, "reply_markup": markup, "parse_mode": "Markdown"})
+                await self.client.post(
+                    f"{self.api_url}/editMessageText",
+                    json={"chat_id": chat_id, "message_id": message_id, "text": text, "reply_markup": markup, "parse_mode": "Markdown"},
+                )
             elif data == "cfg_back":
                 text, markup = await self.get_models_config_menu()
-                await self.client.post(f"{self.api_url}/editMessageText", json={"chat_id": chat_id, "message_id": message_id, "text": text, "reply_markup": markup, "parse_mode": "Markdown"})
+                await self.client.post(
+                    f"{self.api_url}/editMessageText",
+                    json={"chat_id": chat_id, "message_id": message_id, "text": text, "reply_markup": markup, "parse_mode": "Markdown"},
+                )
+
+    # -------------------------
+    # /status helpers (safe)
+    # -------------------------
+
+    @staticmethod
+    def _fmt_age(ts):
+        if not ts:
+            return "never"
+        try:
+            delta = max(0, int(time.time() - float(ts)))
+            if delta < 60:
+                return f"{delta}s ago"
+            if delta < 3600:
+                return f"{delta // 60}m {delta % 60}s ago"
+            return f"{delta // 3600}h {(delta % 3600) // 60}m ago"
+        except Exception:
+            return "unknown"
+
+    @staticmethod
+    def _safe_len_text(obj):
+        if obj is None:
+            return 0
+        if isinstance(obj, str):
+            return len(obj)
+        try:
+            return len(str(obj))
+        except Exception:
+            return 0
+
+    @staticmethod
+    def _segment_value_is_unknown(seg: str) -> bool:
+        """Return True if a status line/segment's value is 'unknown' (best-effort).
+
+        Works for:
+          - "🧾 System Prompt: unknown"
+          - "🧾 **System Prompt:** `unknown`"
+          - pipe segments: "🧾 X: unknown" inside "A: unknown | B: 123"
+        """
+        try:
+            if seg is None:
+                return False
+            s = str(seg).strip()
+            if not s:
+                return False
+
+            # Strip common Markdown wrappers
+            s = s.replace('`', '')
+            s = s.replace('**', '')
+            s = s.replace('*', '')
+            s = s.strip()
+
+            # Compare value portion if it's a key/value line
+            if ':' in s:
+                v = s.split(':', 1)[1].strip()
+            else:
+                v = s.strip()
+
+            return v.lower() == 'unknown'
+        except Exception:
+            return False
+
+    def _filter_unknown_from_status_report(self, text: str) -> str:
+        """Remove any lines (or pipe segments) whose value is 'unknown'.
+
+        Also removes now-empty section headers and collapses duplicate separators.
+        """
+        if not text:
+            return text
+
+        lines = str(text).splitlines()
+        out = []
+
+        # Pass 1: drop unknown lines; prune unknown segments inside pipe-delimited lines
+        for line in lines:
+            raw = line
+            s = raw.strip()
+
+            if not s:
+                out.append(raw)
+                continue
+
+            # Keep separators always (we'll collapse duplicates later)
+            if '━━━━━━━━' in s:
+                out.append(raw)
+                continue
+
+            if '|' in raw:
+                parts = [p.strip() for p in raw.split('|')]
+                kept = [p for p in parts if not self._segment_value_is_unknown(p)]
+                if not kept:
+                    continue
+                out.append(' | '.join(kept))
+                continue
+
+            if self._segment_value_is_unknown(raw):
+                continue
+
+            out.append(raw)
+
+        # Pass 2: remove empty "Enhanced Telemetry" header (or similar) if it became empty
+        cleaned = []
+        i = 0
+        while i < len(out):
+            line = out[i]
+            s = line.strip()
+            headerish = s.replace('*', '').strip().lower() in (
+                'enhanced telemetry',
+                'telemetry',
+            )
+            if headerish:
+                # Find next meaningful line
+                j = i + 1
+                while j < len(out) and not out[j].strip():
+                    j += 1
+                if j >= len(out) or '━━━━━━━━' in out[j]:
+                    i += 1
+                    continue
+            cleaned.append(line)
+            i += 1
+
+        # Pass 3: collapse duplicate separators and trim leading/trailing blank lines
+        final = []
+        last_sep = False
+        for line in cleaned:
+            s = line.strip()
+            is_sep = bool(s) and ('━━━━━━━━' in s)
+            if is_sep and last_sep:
+                continue
+            final.append(line)
+            last_sep = is_sep
+
+        # Trim
+        while final and not final[0].strip():
+            final.pop(0)
+        while final and not final[-1].strip():
+            final.pop()
+
+        return '\n'.join(final)
+
+    def _get_hot_buffer_stats_from_file(self):
+        """Best-effort read of hot buffer JSON file to compute raw + injected context sizes.
+
+        Returns:
+            dict: {
+              raw_msg_count, raw_chars,
+              injected_msg_count, injected_chars,
+              path
+            }
+        """
+        out = {
+            "raw_msg_count": 0,
+            "raw_chars": 0,
+            "injected_msg_count": 0,
+            "injected_chars": 0,
+            "path": None,
+        }
+        try:
+            cfg = self.core.config
+            hb_path = (
+                cfg.get('memory', {}).get('hot_buffer_file')
+                or cfg.get('paths', {}).get('hot_buffer')
+                or cfg.get('paths', {}).get('hot_buffer_file')
+            )
+            if not hb_path or not os.path.exists(hb_path):
+                return out
+            out["path"] = hb_path
+
+            # The file is usually small-ish; still: load it safely.
+            with open(hb_path, 'r', encoding='utf-8') as f:
+                data = json.load(f)
+
+            # Common formats:
+            #  - list[ {role, content, ...}, ... ]
+            #  - dict{ messages: [...], ... }
+            if isinstance(data, dict) and isinstance(data.get('messages'), list):
+                msgs = data.get('messages')
+            elif isinstance(data, list):
+                msgs = data
+            else:
+                msgs = []
+
+            out["raw_msg_count"] = len(msgs)
+            raw_chars = 0
+            for m in msgs:
+                if isinstance(m, dict):
+                    raw_chars += len(str(m.get('content', '')))
+                else:
+                    raw_chars += len(str(m))
+            out["raw_chars"] = raw_chars
+
+            # Injected context = last N messages pushed into the prompt
+            max_recent = (
+                int(cfg.get('telemetry', {}).get('max_recent_messages', 100) or 100)
+                or int(cfg.get('llm', {}).get('max_context_messages', 100) or 100)
+            )
+            tail = msgs[-max_recent:] if max_recent > 0 else msgs
+            out["injected_msg_count"] = len(tail)
+            injected_chars = 0
+            for m in tail:
+                if isinstance(m, dict):
+                    injected_chars += len(str(m.get('content', '')))
+                else:
+                    injected_chars += len(str(m))
+            out["injected_chars"] = injected_chars
+        except Exception:
+            # Stay silent; /status must never crash.
+            return out
+        return out
+
+    def _get_system_prompt_chars(self):
+        """Best-effort estimate of the system prompt size (chars)."""
+        candidates = []
+        try:
+            gw = getattr(self.core, 'gateway', None)
+            if gw is not None:
+                for attr in (
+                    'system_prompt',
+                    'system_prompt_text',
+                    'base_system_prompt',
+                    'system_message',
+                    'SYSTEM_PROMPT',
+                ):
+                    if hasattr(gw, attr):
+                        candidates.append(getattr(gw, attr))
+                # Sometimes it's on the LLM object
+                llm = getattr(gw, 'llm', None)
+                if llm is not None:
+                    for attr in ('system_prompt', 'system_message'):
+                        if hasattr(llm, attr):
+                            candidates.append(getattr(llm, attr))
+        except Exception:
+            pass
+
+        # Config fallback
+        try:
+            sys_cfg = self.core.config.get('system', {})
+            for k in ('prompt', 'system_prompt'):
+                if k in sys_cfg:
+                    candidates.append(sys_cfg.get(k))
+        except Exception:
+            pass
+
+        for c in candidates:
+            if isinstance(c, str) and c.strip():
+                return len(c)
+        return None
+
+    def _get_tools_schema_chars(self):
+        """Best-effort size of the tools schema as JSON (chars). Returns None if not available."""
+        try:
+            # Try common registry/manager shapes
+            for obj_name in ('tool_manager', 'tools', 'tool_registry', 'registry'):
+                obj = getattr(self.core, obj_name, None)
+                if not obj:
+                    continue
+
+                # Method candidates
+                for meth in (
+                    'get_tools_schema',
+                    'get_openai_tools',
+                    'get_tools',
+                    'schema',
+                    'export_schema',
+                ):
+                    if hasattr(obj, meth) and callable(getattr(obj, meth)):
+                        try:
+                            schema = getattr(obj, meth)()
+                            s = json.dumps(schema, ensure_ascii=False)
+                            return len(s)
+                        except TypeError:
+                            # Some methods require args; skip
+                            continue
+                        except Exception:
+                            continue
+
+                # Attribute candidates
+                for attr in ('schema', 'tools', 'tool_definitions'):
+                    if hasattr(obj, attr):
+                        try:
+                            schema = getattr(obj, attr)
+                            s = json.dumps(schema, ensure_ascii=False)
+                            return len(s)
+                        except Exception:
+                            continue
+
+        except Exception:
+            pass
+        return None
+
+    def _get_context_limit_tokens(self, provider: str, model: str):
+        """Best-effort model context window (tokens). Returns None if unknown.
+
+        We prefer any project-provided mapping. If not available, we avoid guessing wildly.
+        """
+        try:
+            mm = getattr(self.core, 'model_manager', None)
+            if mm:
+                for meth in ('get_context_limit', 'get_model_context_limit', 'context_limit_for'):
+                    if hasattr(mm, meth) and callable(getattr(mm, meth)):
+                        try:
+                            v = getattr(mm, meth)(provider, model)
+                            if isinstance(v, (int, float)) and v > 0:
+                                return int(v)
+                        except Exception:
+                            pass
+                # Mapping attributes
+                for attr in ('context_limits', 'context_windows', 'model_context_limits'):
+                    m = getattr(mm, attr, None)
+                    if isinstance(m, dict):
+                        v = m.get(f"{provider}/{model}") or m.get(model)
+                        if isinstance(v, (int, float)) and v > 0:
+                            return int(v)
+        except Exception:
+            pass
+
+        # Config fallback if present
+        try:
+            llm_cfg = self.core.config.get('llm', {})
+            for k in ('context_window_tokens', 'context_limit_tokens', 'max_context_tokens'):
+                v = llm_cfg.get(k)
+                if isinstance(v, (int, float)) and v > 0:
+                    return int(v)
+        except Exception:
+            pass
+
+        return None
+
+    def _pluck_gateway_last_error(self):
+        gw = getattr(self.core, 'gateway', None)
+        if not gw:
+            return None
+        for attr in ('last_error', 'last_exception', 'error', 'last_fail_reason'):
+            try:
+                v = getattr(gw, attr, None)
+                if v:
+                    return str(v)
+            except Exception:
+                pass
+        return None
+
+    def _pluck_gateway_last_call_ts(self):
+        gw = getattr(self.core, 'gateway', None)
+        if not gw:
+            return None
+        for attr in (
+            'last_call_ts',
+            'last_request_ts',
+            'last_request_time',
+            'last_model_call_ts',
+            'last_llm_call_ts',
+        ):
+            try:
+                v = getattr(gw, attr, None)
+                if isinstance(v, (int, float)) and v > 0:
+                    return float(v)
+            except Exception:
+                pass
+        return None
 
     async def process_command(self, chat_id, cmd_text):
         parts = cmd_text.split()
@@ -595,60 +971,285 @@ class TelegramBridge:
                     task.cancel()
                     cancelled += 1
             self._active_tasks.clear()
-            # Also cancel any active speak() in the gateway
             if hasattr(self.core, 'gateway') and hasattr(self.core.gateway, '_cancel_active'):
                 try:
                     self.core.gateway._cancel_active()
                 except Exception:
                     pass
-            await self.send_message(
-                chat_id,
-                f"🛑 **All Stop.** Killed {cancelled} running task(s).\n"
-                f"Standing by in neutral."
-            )
+            await self.send_message(chat_id, f"🛑 **All Stop.** Killed {cancelled} running task(s).\nStanding by in neutral.")
             await self._log(f"[Telegram] /stop: cancelled {cancelled} tasks", priority=1)
             return
 
         if cmd == '/status':
-            from datetime import datetime
-            uptime = int(time.time() - self.start_time)
-            plugins = ", ".join([p.name for p in self.core.plugins])
-            mems = len(self.core.memory.index.get('memories', []))
-            
-            # Get current timestamp with seconds
-            now = datetime.now().strftime("%H:%M:%S")
-            
-            # Get ACTUAL active model (what's really being used RIGHT NOW)
-            active_provider = self.core.gateway.llm.provider
-            active_model = self.core.gateway.llm.model
-            
-            # Get configured model info for comparison
-            configured_model = self.core.model_manager.get_current_model()
-            mode_indicator = "🟢" if configured_model['mode'] == 'primary' else "🟡"
-            
-            # Show if active model differs from configured
-            model_display = f"{active_provider}/{active_model}"
-            if (active_provider != configured_model['provider'] or 
-                active_model != configured_model['model']):
-                model_display += f" (Shifted from {configured_model['provider']}/{configured_model['model']})"
-            
-            report = (
-                f"🌌 **GALACTIC AI SYSTEM STATUS** 🚀\n"
-                f"⏰ **Time:** `{now}` | 🛸 **Version:** `v{self.core.config.get('system', {}).get('version', '?')}`\n"
-                f"━━━━━━━━━━━━━━━━━━━━━━━━\n"
-                f"{mode_indicator} **Model:** `{model_display}`\n"
-                f"🔄 **Configured Mode:** `{configured_model['mode'].upper()}`\n"
-                f"━━━━━━━━━━━━━━━━━━━━━━━━\n"
-                f"🧮 **Tokens:** `{self.core.gateway.total_tokens_in/1000:.1f}k in` / `{self.core.gateway.total_tokens_out/1000:.1f}k out`\n"
-                f"📚 **Context:** `{mems} imprints` | 🧵 **Session:** `galactic:main`\n"
-                f"━━━━━━━━━━━━━━━━━━━━━━━━\n"
-                f"🛰️ **Uptime:** `{uptime}s` | **PID:** `{os.getpid()}`\n"
-                f"⚙️ **Runtime:** `Direct AsyncIO` | **Think:** `{self.thinking_level}`\n"
-                f"🧩 **Plugins:** `{plugins}`\n"
-                f"━━━━━━━━━━━━━━━━━━━━━━━━\n"
-                f"✨ **Condition:** `Nominal` ⚡️"
-            )
-            await self.send_message(chat_id, report)
+            # /status args: default lite; add 'full' / '--full' / '-f' for expanded telemetry
+            args = [a.strip().lower() for a in parts[1:]]
+            full_mode = any(a in ('--full', 'full', '-f') for a in args)
+
+            try:
+                from datetime import datetime
+
+                uptime = int(time.time() - self.start_time)
+                now = datetime.now().strftime("%H:%M:%S")
+
+                # System/config fields (safe)
+                try:
+                    sys_cfg = self.core.config.get('system', {})
+                    version = str(sys_cfg.get('version', '?'))
+                    mode = str(sys_cfg.get('mode', 'PRIMARY')).upper()
+                    tz = str(sys_cfg.get('timezone', 'local'))
+                except Exception:
+                    version, mode, tz = '?', 'PRIMARY', 'local'
+
+                # Plugins list (safe)
+                plugins_list = []
+                try:
+                    plugins_obj = getattr(self.core, 'plugins', []) or []
+                    for p in plugins_obj:
+                        name = getattr(p, 'name', None) or getattr(p, '__class__', type('x', (), {})).__name__
+                        plugins_list.append(str(name))
+                except Exception:
+                    plugins_list = []
+                plugins_display = ", ".join(plugins_list) if plugins_list else "unknown"
+
+                # Skills list (safe)
+                skills_list = []
+                try:
+                    skills_obj = getattr(self.core, 'skills', []) or []
+                    for s in skills_obj:
+                        nm = getattr(s, 'skill_name', None) or getattr(s, 'name', None) or getattr(s, '__class__', type('x', (), {})).__name__
+                        skills_list.append(str(nm))
+                except Exception:
+                    skills_list = []
+                skills_display = ", ".join(skills_list) if skills_list else "unknown"
+
+                # Memory (imprints) count (safe — handles any memory structure)
+                try:
+                    mem = getattr(self.core, 'memory', None)
+                    if mem is None:
+                        mems = 0
+                    elif hasattr(mem, 'index') and isinstance(mem.index, dict):
+                        mems = len(mem.index.get('memories', []))
+                    elif hasattr(mem, 'search'):
+                        mems = len(mem.search('', top_k=9999) or [])
+                    elif hasattr(mem, '__len__'):
+                        mems = len(mem)
+                    else:
+                        mems = 0
+                except Exception:
+                    mems = 0
+
+                # Session name (safe)
+                try:
+                    session_name = self.core.config.get('telemetry', {}).get('session_name', 'galactic:main')
+                except Exception:
+                    session_name = 'galactic:main'
+
+                # Gateway history count (safe)
+                try:
+                    gw_hist = len(getattr(self.core.gateway, 'history', []) or [])
+                except Exception:
+                    gw_hist = 0
+
+                # Model info (safe)
+                try:
+                    active_provider = self.core.gateway.llm.provider
+                    active_model = self.core.gateway.llm.model
+                except Exception:
+                    active_provider = "unknown"
+                    active_model = "unknown"
+
+                # Configured primary/fallback mode indicator (safe)
+                try:
+                    configured_model = self.core.model_manager.get_current_model()
+                    mode_indicator = "🟢" if configured_model['mode'] == 'primary' else "🟡"
+                    configured_mode = configured_model['mode'].upper()
+                    model_display = f"{active_provider}/{active_model}"
+                    if (active_provider != configured_model['provider'] or active_model != configured_model['model']):
+                        model_display += f" (Shifted from {configured_model['provider']}/{configured_model['model']})"
+                except Exception:
+                    mode_indicator = "🟢"
+                    configured_mode = mode
+                    model_display = f"{active_provider}/{active_model}"
+
+                # Token counts (safe)
+                try:
+                    tok_in = self.core.gateway.total_tokens_in / 1000
+                    tok_out = self.core.gateway.total_tokens_out / 1000
+                except Exception:
+                    tok_in = 0.0
+                    tok_out = 0.0
+
+                # Cost tracking (safe)
+                cost_info = ""
+                try:
+                    if hasattr(self.core, 'cost_tracker'):
+                        stats = self.core.cost_tracker.get_stats()
+                        today = stats.get('today_cost', 0.0)
+                        month = stats.get('month_cost', 0.0)
+                        cost_info = f"💰 **Cost:** `${today:.2f} today` / `${month:.2f} month`\n"
+                except Exception:
+                    pass
+
+                # Live context (archiver tool if available + file stats)
+                live_ctx_msgs = None
+                live_ctx_chars = None
+                hot_path = None
+                try:
+                    arch = None
+                    try:
+                        arch = next(
+                            (s for s in getattr(self.core, 'skills', []) if getattr(s, 'skill_name', '') == 'conversation_archiver'),
+                            None,
+                        )
+                    except Exception:
+                        arch = None
+
+                    if arch and hasattr(arch, 'tool_conversation_get_hot'):
+                        hot = await arch.tool_conversation_get_hot({"limit": 1})
+                        live_ctx_msgs = int(hot.get('message_count', 0) or 0)
+                        live_ctx_chars = int(hot.get('total_chars', 0) or 0)
+                        hot_path = str(hot.get('hot_buffer', '') or '')
+                except Exception:
+                    pass
+
+                file_ctx = self._get_hot_buffer_stats_from_file()
+                # Prefer archiver-reported path; otherwise file path
+                hot_path = hot_path or file_ctx.get('path')
+
+                # Split context: injected vs raw
+                injected_msgs = file_ctx.get('injected_msg_count') or None
+                injected_chars = file_ctx.get('injected_chars') or None
+                raw_msgs = file_ctx.get('raw_msg_count') or None
+                raw_chars = file_ctx.get('raw_chars') or None
+
+                # If archiver gave us totals, treat those as raw totals.
+                if live_ctx_msgs is not None:
+                    raw_msgs = live_ctx_msgs
+                if live_ctx_chars is not None:
+                    raw_chars = live_ctx_chars
+
+                # Prompt + tools sizing
+                system_prompt_chars = self._get_system_prompt_chars()
+                tools_schema_chars = self._get_tools_schema_chars()
+
+                # Context window + % used
+                context_limit_tokens = self._get_context_limit_tokens(active_provider, active_model)
+                # Estimate tokens used from injected chars (most relevant to prompt) if present, else raw
+                basis_chars = injected_chars if isinstance(injected_chars, int) and injected_chars > 0 else (raw_chars or 0)
+                est_tokens_used = int(basis_chars / 4) if basis_chars else 0
+                pct_used = None
+                if context_limit_tokens and context_limit_tokens > 0:
+                    pct_used = (est_tokens_used / context_limit_tokens) * 100
+
+                # Last model call + last error
+                gw_last_call = self._pluck_gateway_last_call_ts()
+                if gw_last_call:
+                    self._last_model_call_ts = gw_last_call
+
+                gw_last_error = self._pluck_gateway_last_error()
+                if gw_last_error:
+                    self._last_model_error = gw_last_error
+
+                last_call_age = self._fmt_age(self._last_model_call_ts)
+                last_ok_age = self._fmt_age(self._last_model_ok_ts)
+                last_err_age = self._fmt_age(self._last_model_error_ts)
+
+                # Condition
+                condition = "Nominal"
+                if self._last_model_error and (self._last_model_error_ts and time.time() - self._last_model_error_ts < 600):
+                    condition = "Degraded"
+
+                if not full_mode:
+                    lite = (
+                        f"🌌 **GALACTIC AI STATUS**\n"
+                        f"⏰ **Time:** `{now}` ({tz}) | 🛸 **Version:** `{version}`\n"
+                        f"━━━━━━━━━━━━━━━━━━━━━━━━\n"
+                        f"{mode_indicator} **Model:** `{model_display}`\n"
+                        f"🔄 **Configured Mode:** `{configured_mode}` | ⚙️ **System Mode:** `{mode}`\n"
+                        f"━━━━━━━━━━━━━━━━━━━━━━━━\n"
+                        f"🧮 **Tokens:** `{tok_in:.1f}k in` / `{tok_out:.1f}k out`\n"
+                        f"{cost_info}"
+                        f"━━━━━━━━━━━━━━━━━━━━━━━━\n"
+                        f"🛰️ **Uptime:** `{uptime}s` | **PID:** `{os.getpid()}`\n"
+                        f"✨ **Condition:** `{condition}`\n"
+                        f"\nUse `/status full` for the expanded telemetry dump."
+                    )
+                    lite = self._filter_unknown_from_status_report(lite)
+                    await self.send_message(chat_id, lite)
+                    return
+
+                # Build report
+                ctx_lines = ""
+                if raw_msgs is not None and raw_chars is not None:
+                    ctx_lines += f"🧠 **Live Context (raw):** `{raw_msgs} msgs` | `{int(raw_chars):,} chars`\n"
+                if injected_msgs is not None and injected_chars is not None:
+                    ctx_lines += f"🧬 **Injected Recent Context:** `{injected_msgs} msgs` | `{int(injected_chars):,} chars`\n"
+                if hot_path:
+                    ctx_lines += f"🗃️ **Hot Buffer:** `{hot_path}`\n"
+
+                prompt_lines = ""
+                if system_prompt_chars is not None:
+                    prompt_lines += f"🧾 **System Prompt:** `{system_prompt_chars:,} chars`\n"
+                else:
+                    prompt_lines += f"🧾 **System Prompt:** `unknown`\n"
+
+                if tools_schema_chars is not None:
+                    prompt_lines += f"🧰 **Tools Schema:** `{tools_schema_chars:,} chars`\n"
+                else:
+                    prompt_lines += f"🧰 **Tools Schema:** `unknown`\n"
+
+                window_lines = ""
+                if context_limit_tokens:
+                    if pct_used is not None:
+                        window_lines += f"📏 **Context Window:** `{context_limit_tokens:,} tok` | **Est Used:** `{est_tokens_used:,} tok` (`{pct_used:.1f}%`)\n"
+                    else:
+                        window_lines += f"📏 **Context Window:** `{context_limit_tokens:,} tok` | **Est Used:** `{est_tokens_used:,} tok`\n"
+                else:
+                    window_lines += f"📏 **Context Window:** `unknown` | **Est Used:** `{est_tokens_used:,} tok`\n"
+
+                last_lines = (
+                    f"🕒 **Last Model Call:** `{last_call_age}`\n"
+                    f"✅ **Last OK:** `{last_ok_age}`\n"
+                    f"❌ **Last Error:** `{last_err_age}`\n"
+                )
+                if self._last_model_error:
+                    # Keep it short; no stack dumps
+                    err = str(self._last_model_error)
+                    if len(err) > 240:
+                        err = err[:240] + "…"
+                    last_lines += f"🧯 **Error Detail:** `{err}`\n"
+
+                report = (
+                    f"🌌 **GALACTIC AI SYSTEM STATUS** 🚀\n"
+                    f"⏰ **Time:** `{now}` ({tz}) | 🛸 **Version:** `{version}`\n"
+                    f"━━━━━━━━━━━━━━━━━━━━━━━━\n"
+                    f"{mode_indicator} **Model:** `{model_display}`\n"
+                    f"🔄 **Configured Mode:** `{configured_mode}` | ⚙️ **System Mode:** `{mode}`\n"
+                    f"━━━━━━━━━━━━━━━━━━━━━━━━\n"
+                    f"🧮 **Tokens:** `{tok_in:.1f}k in` / `{tok_out:.1f}k out`\n"
+                    f"{cost_info}"
+                    f"📚 **Imprints:** `{mems}` | 🧵 **Session:** `{session_name}`\n"
+                    f"🧾 **Gateway History:** `{gw_hist} msgs`\n"
+                    f"━━━━━━━━━━━━━━━━━━━━━━━━\n"
+                    f"**Enhanced Telemetry**\n"
+                    f"{ctx_lines}"
+                    f"{prompt_lines}"
+                    f"{window_lines}"
+                    f"{last_lines}"
+                    f"━━━━━━━━━━━━━━━━━━━━━━━━\n"
+                    f"🛰️ **Uptime:** `{uptime}s` | **PID:** `{os.getpid()}`\n"
+                    f"⚙️ **Runtime:** `Direct AsyncIO` | **Think:** `{self.thinking_level}`\n"
+                    f"🧩 **Plugins:** `{plugins_display}`\n"
+                    f"🧠 **Skills:** `{skills_display}`\n"
+                    f"━━━━━━━━━━━━━━━━━━━━━━━━\n"
+                    f"✨ **Condition:** `{condition}` ⚡️"
+                )
+
+                report = self._filter_unknown_from_status_report(report)
+                await self.send_message(chat_id, report)
+            except Exception as e:
+                await self._log(f"/status error: {e}", priority=1)
+                await self.send_message(chat_id, f"🛰️ Status check failed: `{e}`")
 
         elif cmd == '/screenshot':
             browser = next((p for p in self.core.plugins if p.name == "BrowserExecutor"), None)
@@ -672,14 +1273,77 @@ class TelegramBridge:
 
         elif cmd == '/compact':
             await self.send_message(chat_id, "🧹 **Compacting Session...** Imprinting summary to Aura.")
-            history_file = self.core.gateway.history_file
-            if os.path.exists(history_file):
-                with open(history_file, 'r') as f:
-                    lines = f.readlines()[-20:]
-                summary = f"Recent Session Summary: {len(lines)} messages compacted."
-                await self.core.memory.imprint(summary, {"type": "session_summary"})
-                os.remove(history_file)
-                await self.send_message(chat_id, "✅ **Compact Complete.** Local memory indexed and chat history cleared.")
+            try:
+                # Determine history file path safely
+                history_file = getattr(self.core.gateway, 'history_file', None)
+                if not history_file or not os.path.exists(history_file):
+                    # Fallback: try to find it in config
+                    history_file = self.core.config.get('paths', {}).get('history', 
+                                   os.path.join(self.core.config.get('paths', {}).get('logs', './logs'), 'conversation_history.json'))
+                
+                if os.path.exists(history_file):
+                    with open(history_file, 'r', encoding='utf-8') as f:
+                        lines = f.readlines()
+                    
+                    # Keep last 20 messages for summary context
+                    recent_lines = lines[-20:] if len(lines) > 20 else lines
+                    recent_text = "".join(recent_lines)
+                    
+                    # Create summary
+                    summary_text = f"[Session Compact {time.strftime('%Y-%m-%d %H:%M')}] Previous conversation summarized: {recent_text[:500]}..."
+                    
+                    # Save to long-term memory
+                    if hasattr(self.core, 'memory') and hasattr(self.core.memory, 'imprint'):
+                        await self.core.memory.imprint(summary_text, {"type": "session_summary"})
+                    
+                    # Rewrite history file with ONLY the summary (preserves file, clears context)
+                    summary_line = json.dumps({"role": "system", "content": f"Session compacted. Summary: {summary_text}"}) + "\n"
+                    with open(history_file, 'w', encoding='utf-8') as f:
+                        f.write(summary_line)
+                    
+                    # Reset gateway history if possible
+                    if hasattr(self.core.gateway, 'history'):
+                        self.core.gateway.history = []
+                    
+                    await self.send_message(chat_id, f"✅ **Compact Complete.** Summarized {len(lines)} messages into Aura. History reset.")
+                else:
+                    await self.send_message(chat_id, "ℹ️ No history file found. Nothing to compact.")
+            except Exception as e:
+                await self._log(f"/compact error: {e}", priority=1)
+                await self.send_message(chat_id, f"❌ **Compact Failed:** `{e}`")
+
+        elif cmd == '/clear' or cmd == '/reset':
+            await self.send_message(chat_id, "🧹 **Clearing Session...**")
+            try:
+                # Determine history file path safely
+                history_file = getattr(self.core.gateway, 'history_file', None)
+                if not history_file:
+                    # Fallback: try to find it in config
+                    history_file = self.core.config.get('paths', {}).get('history', 
+                                   os.path.join(self.core.config.get('paths', {}).get('logs', './logs'), 'conversation_history.json'))
+                
+                # Truncate history file
+                if os.path.exists(history_file):
+                    with open(history_file, 'w', encoding='utf-8') as f:
+                        f.write("")  # Empty the file
+                    await self._log(f"/clear: Truncated {history_file}", priority=2)
+                
+                # Reset gateway history
+                if hasattr(self.core.gateway, 'history'):
+                    self.core.gateway.history = []
+                
+                # Also clear any conversation archiver hot buffer if present
+                try:
+                    arch = next((s for s in getattr(self.core, 'skills', []) if getattr(s, 'skill_name', '') == 'conversation_archiver'), None)
+                    if arch and hasattr(arch, 'tool_conversation_clear'):
+                        await arch.tool_conversation_clear({})
+                except Exception:
+                    pass  # Non-fatal
+                
+                await self.send_message(chat_id, "✅ **Session Cleared.** History wiped. Fresh start.")
+            except Exception as e:
+                await self._log(f"/clear error: {e}", priority=1)
+                await self.send_message(chat_id, f"❌ **Clear Failed:** `{e}`")
 
         elif cmd == '/leads':
             log_path = os.path.join(self.core.config['paths']['logs'], 'processed_emails.json')
@@ -687,7 +1351,10 @@ class TelegramBridge:
             if os.path.exists(log_path):
                 with open(log_path, 'r') as f:
                     lead_count = len(json.load(f))
-            await self.send_message(chat_id, f"🎯 **Galactic Lead Recap**\n\n• **Email Leads:** `{lead_count}`\n• **Reddit Gigs:** `Scanning...`\n\nCheck `/status` for plugin health.")
+            await self.send_message(
+                chat_id,
+                f"🎯 **Galactic Lead Recap**\n\n• **Email Leads:** `{lead_count}`\n• **Reddit Gigs:** `Scanning...`\n\nCheck `/status` for plugin health.",
+            )
 
         elif cmd == '/think':
             text, markup = await self.get_think_menu()
@@ -716,23 +1383,21 @@ class TelegramBridge:
                     if "callback_query" in update:
                         await self.process_callback(update["callback_query"]["message"]["chat"]["id"], update["callback_query"])
                     elif "message" in update:
-                        msg = update["message"]; chat_id = msg["chat"]["id"]; text = msg.get("text", "")
-                        # Handle document/file attachments
+                        msg = update["message"]
+                        chat_id = msg["chat"]["id"]
+                        text = msg.get("text", "")
                         if "document" in msg and hasattr(self.core, 'gateway'):
                             await self.send_typing(chat_id)
                             self._track_task(asyncio.create_task(self._handle_document(chat_id, msg)))
                             continue
-                        # Handle photo attachments
                         if "photo" in msg and hasattr(self.core, 'gateway'):
                             await self.send_typing(chat_id)
                             self._track_task(asyncio.create_task(self._handle_photo(chat_id, msg)))
                             continue
-                        # Handle audio/voice attachments
                         if ("voice" in msg or "audio" in msg) and hasattr(self.core, 'gateway'):
                             await self.send_typing(chat_id)
                             self._track_task(asyncio.create_task(self._handle_audio(chat_id, msg)))
                             continue
-                        # Intercept API key text if we're waiting for one
                         if chat_id in self.pending_api_key and text and not text.startswith('/'):
                             pending = self.pending_api_key.pop(chat_id)
                             api_key = text.strip()
@@ -740,16 +1405,11 @@ class TelegramBridge:
                             self.core.gateway.llm.api_key = api_key
                             self.core.gateway.llm.provider = pending["provider"]
                             self.core.gateway.llm.model = pending["model"]
-                            await self.send_message(
-                                chat_id,
-                                f"✅ API key saved for **{pending['provider'].capitalize()}**! "
-                                f"Switched to: `{pending['model']}`"
-                            )
+                            await self.send_message(chat_id, f"✅ API key saved for **{pending['provider'].capitalize()}**! Switched to: `{pending['model']}`")
                             continue
                         if text.startswith('/'):
                             await self.process_command(chat_id, text)
                             continue
-                        # Treat plain "stop" as an emergency stop (same as /stop)
                         if text.strip().lower() == 'stop':
                             await self.process_command(chat_id, '/stop')
                             continue
@@ -764,48 +1424,23 @@ class TelegramBridge:
         try:
             r = await self.client.get(f"{self.api_url}/getUpdates", params={"offset": self.offset, "timeout": 30})
             return r.json().get("result", []) if r.json().get("ok") else []
-        except: return []
+        except Exception:
+            return []
 
     def _get_speak_timeout(self) -> float:
-        """Return the speak() timeout for Telegram calls.
-
-        Uses the global speak_timeout from config.models as the authoritative
-        ceiling.  The gateway's own asyncio.wait_for() already enforces this
-        limit, but Telegram wraps the call in its own wait_for too — if the
-        Telegram timeout is shorter than the gateway timeout, the task gets
-        killed early even though the agent is still working.
-
-        Priority:
-          1. config.models.speak_timeout  (global ceiling — default 600s)
-          2. Telegram-specific overrides (only if they are LARGER):
-             - ollama_timeout_seconds for local models
-             - timeout_seconds for cloud models
-        """
-        global_timeout = float(
-            self.core.config.get('models', {}).get('speak_timeout', 600)
-        )
+        global_timeout = float(self.core.config.get('models', {}).get('speak_timeout', 600))
         tg_cfg = self.core.config.get('telegram', {})
-        is_ollama = (
-            hasattr(self.core, 'gateway') and
-            self.core.gateway.llm.provider == 'ollama'
-        )
-        if is_ollama:
-            tg_timeout = float(tg_cfg.get('ollama_timeout_seconds', 600))
-        else:
-            tg_timeout = float(tg_cfg.get('timeout_seconds', 120))
-
-        # Use whichever is larger — never cut off a task that the gateway
-        # is still allowed to work on
+        is_ollama = hasattr(self.core, 'gateway') and self.core.gateway.llm.provider == 'ollama'
+        tg_timeout = float(tg_cfg.get('ollama_timeout_seconds', 600)) if is_ollama else float(tg_cfg.get('timeout_seconds', 120))
         return max(global_timeout, tg_timeout)
 
     async def _save_provider_key(self, provider: str, api_key: str):
-        """Persist an API key for a provider to config.yaml and update in-memory config."""
         try:
             import yaml
+
             config_path = getattr(self.core, 'config_path', 'config.yaml')
             with open(config_path, 'r', encoding='utf-8') as f:
                 cfg = yaml.safe_load(f) or {}
-            # Ensure providers section exists
             if 'providers' not in cfg:
                 cfg['providers'] = {}
             if provider not in cfg['providers']:
@@ -813,7 +1448,6 @@ class TelegramBridge:
             cfg['providers'][provider]['apiKey'] = api_key
             with open(config_path, 'w', encoding='utf-8') as f:
                 yaml.dump(cfg, f, default_flow_style=False, allow_unicode=True)
-            # Update in-memory config
             if 'providers' not in self.core.config:
                 self.core.config['providers'] = {}
             if provider not in self.core.config['providers']:
@@ -825,54 +1459,42 @@ class TelegramBridge:
 
     async def process_and_respond(self, chat_id, text):
         typing_task = None
-        response = None  # Initialize BEFORE try — prevents UnboundLocalError on CancelledError
+        response = None
         try:
             typing_task = asyncio.create_task(self.keep_typing(chat_id))
-            response = await asyncio.wait_for(
-                self.core.gateway.speak(text, chat_id=chat_id),
-                timeout=self._get_speak_timeout()
-            )
+            self._last_model_call_ts = time.time()
+            response = await asyncio.wait_for(self.core.gateway.speak(text, chat_id=chat_id), timeout=self._get_speak_timeout())
+            self._last_model_ok_ts = time.time()
         except asyncio.CancelledError:
             response = "🛑 Task was cancelled."
-            raise  # Re-raise so the task framework knows it was cancelled
+            raise
         except asyncio.TimeoutError:
             provider = getattr(self.core.gateway.llm, 'provider', 'unknown')
             model = getattr(self.core.gateway.llm, 'model', 'unknown')
             t = self._get_speak_timeout()
-            await self._log(
-                f"[Telegram] speak() timed out after {t:.0f}s for chat {chat_id} "
-                f"(provider={provider}, model={model})",
-                priority=1
-            )
-            response = (
-                f"⏱ Timed out after {t:.0f}s using `{provider}/{model}`.\n\n"
-                f"The model or a browser tool is running very slowly. "
-                f"Try a simpler task, or switch to a faster model with /model."
-            )
+            msg = f"speak() timed out after {t:.0f}s (provider={provider}, model={model})"
+            self._last_model_error_ts = time.time()
+            self._last_model_error = msg
+            await self._log(f"[Telegram] {msg}", priority=1)
+            response = f"⏱ Timed out after {t:.0f}s using `{provider}/{model}`.\n\nTry a simpler task or switch models with /model."
         except Exception as e:
+            self._last_model_error_ts = time.time()
+            self._last_model_error = str(e)
             await self._log(f"Processing Error: {e}", priority=1)
             response = f"🌌 **Byte Interference:** `{str(e)}`"
         finally:
-            # ALWAYS cancel typing, even on errors
             if typing_task and not typing_task.done():
                 typing_task.cancel()
                 try:
                     await typing_task
                 except (asyncio.CancelledError, Exception):
                     pass
-            # Guard against "[No response]" or empty responses
             if not response or not response.strip() or response == "[No response]":
                 response = "🤔 I couldn't generate a response for that. Try rephrasing or sending again."
-            # Relay to Web UI so Telegram conversations show up in the web chat log
             try:
-                await self.core.relay.emit(2, "chat_from_telegram", {
-                    "user": str(chat_id),
-                    "data": text,
-                    "response": response,
-                })
+                await self.core.relay.emit(2, "chat_from_telegram", {"user": str(chat_id), "data": text, "response": response})
             except Exception:
-                pass  # Non-fatal — web UI might not be connected
-            # Check if the AI used TTS tool — deliver the audio file
+                pass
             voice_file = getattr(self.core.gateway, 'last_voice_file', None)
             if voice_file and os.path.exists(voice_file):
                 try:
@@ -880,7 +1502,6 @@ class TelegramBridge:
                     self.core.gateway.last_voice_file = None
                 except Exception as e:
                     await self._log(f"TTS Delivery Error: {e}", priority=1)
-            # Check if the AI generated an image — deliver it via send_photo
             image_file = getattr(self.core.gateway, 'last_image_file', None)
             if image_file and os.path.exists(image_file):
                 try:
@@ -888,16 +1509,14 @@ class TelegramBridge:
                     self.core.gateway.last_image_file = None
                 except Exception as e:
                     await self._log(f"Image Delivery Error: {e}", priority=1)
-            # Send text response (always — user sees text alongside any audio/image)
             try:
                 await self.send_message(chat_id, response)
             except Exception as e:
                 await self._log(f"Send Error: {e}", priority=1)
 
     async def _handle_document(self, chat_id, msg):
-        """Download a Telegram document attachment, read its text, and send to the AI."""
         typing_task = None
-        response = None  # Initialize BEFORE try — prevents UnboundLocalError on CancelledError
+        response = None
         try:
             typing_task = asyncio.create_task(self.keep_typing(chat_id))
             doc = msg["document"]
@@ -905,55 +1524,42 @@ class TelegramBridge:
             file_size = doc.get("file_size", 0)
             file_id = doc["file_id"]
             caption = msg.get("caption", "")
-
-            # Reject large files (5 MB max)
             if file_size > 5 * 1024 * 1024:
                 await self.send_message(chat_id, f"📎 **{file_name}** is too large ({file_size // 1024}KB). Max 5 MB.")
                 return
-
-            # Get file path from Telegram
             r = await self.client.get(f"{self.api_url}/getFile", params={"file_id": file_id})
             file_data = r.json()
             if not file_data.get("ok"):
                 await self.send_message(chat_id, "❌ Couldn't retrieve file from Telegram.")
                 return
             file_path = file_data["result"]["file_path"]
-
-            # Download file content
-            download_url = f"https://api.telegram.org/file/bot{self.bot_token}/{file_path}"
-            r = await self.client.get(download_url)
+            r = await self.client.get(f"https://api.telegram.org/file/bot{self.bot_token}/{file_path}")
             raw = r.content
-
-            # Decode as text
             try:
                 text_content = raw.decode('utf-8', errors='replace')
             except Exception:
                 text_content = '[Binary file — could not decode as text]'
-
-            # Truncate if huge
             if len(text_content) > 100000:
-                text_content = text_content[:100000] + '\n\n... [truncated — file exceeds 100K characters]'
-
-            # Build message for the AI
+                text_content = text_content[:100000] + '\n\n... [truncated]'
             full_msg = f"[Attached file: {file_name}]\n---\n{text_content}\n---"
             if caption:
                 full_msg += f"\n\n{caption}"
-
             await self._log(f"[Telegram] User sent file: {file_name} ({file_size} bytes)", priority=2)
-
-            response = await asyncio.wait_for(
-                self.core.gateway.speak(full_msg, chat_id=chat_id),
-                timeout=self._get_speak_timeout()
-            )
+            self._last_model_call_ts = time.time()
+            response = await asyncio.wait_for(self.core.gateway.speak(full_msg, chat_id=chat_id), timeout=self._get_speak_timeout())
+            self._last_model_ok_ts = time.time()
         except asyncio.CancelledError:
             response = "🛑 Task was cancelled."
             raise
         except asyncio.TimeoutError:
-            await self._log(f"[Telegram] Document speak() timed out for chat {chat_id}", priority=1)
             response = "⏱ Took too long processing that file. Please try again."
+            self._last_model_error_ts = time.time()
+            self._last_model_error = "document timeout"
         except Exception as e:
             await self._log(f"Document Error: {e}", priority=1)
             response = f"🌌 **Byte Interference:** `{str(e)}`"
+            self._last_model_error_ts = time.time()
+            self._last_model_error = str(e)
         finally:
             if typing_task and not typing_task.done():
                 typing_task.cancel()
@@ -961,16 +1567,14 @@ class TelegramBridge:
                     await typing_task
                 except (asyncio.CancelledError, Exception):
                     pass
-            # Guard against "[No response]" or empty
             if not response or not response.strip() or response == "[No response]":
                 response = "🤔 I couldn't generate a response for that file. Try sending again."
-            # Relay to Web UI
             try:
-                await self.core.relay.emit(2, "chat_from_telegram", {
-                    "user": str(chat_id),
-                    "data": f"📎 {msg.get('document', {}).get('file_name', 'file')}",
-                    "response": response,
-                })
+                await self.core.relay.emit(
+                    2,
+                    "chat_from_telegram",
+                    {"user": str(chat_id), "data": f"📎 {msg.get('document', {}).get('file_name', 'file')}", "response": response},
+                )
             except Exception:
                 pass
             try:
@@ -979,65 +1583,47 @@ class TelegramBridge:
                 await self._log(f"Send Error: {e}", priority=1)
 
     async def _handle_photo(self, chat_id, msg):
-        """Download a Telegram photo, analyze it directly with vision, then relay to AI."""
         typing_task = None
         response = None
         try:
             typing_task = asyncio.create_task(self.keep_typing(chat_id))
-            photo_array = msg["photo"]
-            photo = photo_array[-1]  # largest resolution
+            photo = msg["photo"][-1]
             file_size = photo.get("file_size", 0)
             file_id = photo["file_id"]
             caption = msg.get("caption", "")
-
-            # Get file path from Telegram
             r = await self.client.get(f"{self.api_url}/getFile", params={"file_id": file_id})
             file_data = r.json()
             if not file_data.get("ok"):
                 await self.send_message(chat_id, "❌ Couldn't retrieve photo from Telegram.")
                 return
             file_path = file_data["result"]["file_path"]
-
-            # Download raw bytes (no temp file needed)
-            download_url = f"https://api.telegram.org/file/bot{self.bot_token}/{file_path}"
-            r = await self.client.get(download_url)
+            r = await self.client.get(f"https://api.telegram.org/file/bot{self.bot_token}/{file_path}")
             raw = r.content
-
             await self._log(f"[Telegram] User sent photo: {os.path.basename(file_path)} ({file_size} bytes)", priority=2)
-
-            # Analyze image immediately — no temp file, no race condition
             import base64
+
             image_b64 = base64.b64encode(raw).decode('utf-8')
             ext = os.path.splitext(file_path)[1].lower() or '.jpg'
-            mime_map = {'.jpg': 'image/jpeg', '.jpeg': 'image/jpeg',
-                        '.png': 'image/png', '.gif': 'image/gif', '.webp': 'image/webp'}
+            mime_map = {'.jpg': 'image/jpeg', '.jpeg': 'image/jpeg', '.png': 'image/png', '.gif': 'image/gif', '.webp': 'image/webp'}
             mime_type = mime_map.get(ext, 'image/jpeg')
-
             vision_prompt = caption if caption else "Describe this image in detail. Include any text you see."
             vision_result = await self.core.gateway._analyze_image_b64(image_b64, mime_type, vision_prompt)
-
-            # Pass vision result to speak() as rich context
-            if caption:
-                speak_msg = (
-                    f"[Image Analysis Result]\n{vision_result}\n\n"
-                    f"User's caption/question: {caption}"
-                )
-            else:
-                speak_msg = f"[Image Analysis Result]\n{vision_result}"
-
-            response = await asyncio.wait_for(
-                self.core.gateway.speak(speak_msg, chat_id=chat_id),
-                timeout=self._get_speak_timeout()
-            )
+            speak_msg = f"[Image Analysis Result]\n{vision_result}\n\nUser's caption/question: {caption}" if caption else f"[Image Analysis Result]\n{vision_result}"
+            self._last_model_call_ts = time.time()
+            response = await asyncio.wait_for(self.core.gateway.speak(speak_msg, chat_id=chat_id), timeout=self._get_speak_timeout())
+            self._last_model_ok_ts = time.time()
         except asyncio.CancelledError:
             response = "🛑 Task was cancelled."
             raise
         except asyncio.TimeoutError:
-            await self._log(f"[Telegram] Photo speak() timed out for chat {chat_id}", priority=1)
             response = "⏱ Took too long analyzing that image. Please try again."
+            self._last_model_error_ts = time.time()
+            self._last_model_error = "photo timeout"
         except Exception as e:
             await self._log(f"Photo Error: {e}", priority=1)
             response = f"🌌 **Byte Interference (Photo):** `{str(e)}`"
+            self._last_model_error_ts = time.time()
+            self._last_model_error = str(e)
         finally:
             if typing_task and not typing_task.done():
                 typing_task.cancel()
@@ -1045,15 +1631,10 @@ class TelegramBridge:
                     await typing_task
                 except (asyncio.CancelledError, Exception):
                     pass
-            # Guard against "[No response]" or empty
             if not response or not response.strip() or response == "[No response]":
                 response = "🤔 I couldn't generate a response for that image. Try sending again."
             try:
-                await self.core.relay.emit(2, "chat_from_telegram", {
-                    "user": str(chat_id),
-                    "data": f"📸 {msg.get('caption', 'image')}",
-                    "response": response,
-                })
+                await self.core.relay.emit(2, "chat_from_telegram", {"user": str(chat_id), "data": f"📸 {msg.get('caption', 'image')}", "response": response})
             except Exception:
                 pass
             try:
@@ -1062,52 +1643,35 @@ class TelegramBridge:
                 await self._log(f"Send Error: {e}", priority=1)
 
     async def _handle_audio(self, chat_id, msg):
-        """Download a Telegram audio/voice attachment, transcribe it, process, and reply with voice."""
         typing_task = None
         temp_file_path = None
         response = ""
         voice_reply_sent = False
         try:
             typing_task = asyncio.create_task(self.keep_typing(chat_id))
-
-            # Determine if it's a voice or audio message
             audio_data = msg.get("voice") or msg.get("audio")
             if not audio_data:
                 await self.send_message(chat_id, "❌ No audio data found.")
                 return
-
-            file_size = audio_data.get("file_size", 0)
             file_id = audio_data["file_id"]
+            file_size = audio_data.get("file_size", 0)
             mime_type = audio_data.get("mime_type", "audio/ogg")
             caption = msg.get("caption", "")
-
             file_extension = ".ogg" if "ogg" in mime_type else ".mp3"
-
-            # Get file path from Telegram
             r = await self.client.get(f"{self.api_url}/getFile", params={"file_id": file_id})
             file_data = r.json()
             if not file_data.get("ok"):
                 await self.send_message(chat_id, "❌ Couldn't retrieve audio from Telegram.")
                 return
             file_path = file_data["result"]["file_path"]
-
-            # Download file content
-            download_url = f"https://api.telegram.org/file/bot{self.bot_token}/{file_path}"
-            r = await self.client.get(download_url)
+            r = await self.client.get(f"https://api.telegram.org/file/bot{self.bot_token}/{file_path}")
             raw = r.content
-
-            # Save to a temporary file
-            with tempfile.NamedTemporaryFile(delete=False, suffix=file_extension) as temp_file:
-                temp_file.write(raw)
-                temp_file_path = temp_file.name
-
+            with tempfile.NamedTemporaryFile(delete=False, suffix=file_extension) as tmp:
+                tmp.write(raw)
+                temp_file_path = tmp.name
             await self._log(f"[Telegram] User sent audio: {os.path.basename(temp_file_path)} ({file_size} bytes, {mime_type})", priority=2)
-
-            # ─── Step 1: Transcribe using STT (Whisper/Groq) ───
             transcription = await self._transcribe_audio(temp_file_path)
-
             if not transcription:
-                # Tell the user directly — don't run this through the AI
                 has_openai = bool(self.core.config.get('providers', {}).get('openai', {}).get('apiKey', ''))
                 has_groq = bool(self.core.config.get('providers', {}).get('groq', {}).get('apiKey', ''))
                 if not has_openai and not has_groq:
@@ -1118,47 +1682,40 @@ class TelegramBridge:
                     )
                 else:
                     no_key_msg = "🎤 Got your voice message, but transcription failed. Please try again."
-                voice_reply_sent = True  # prevents double-send in finally block
+                voice_reply_sent = True
                 await self.send_message(chat_id, no_key_msg)
                 return
-
             full_msg = f"[Voice message from user]: {transcription}"
             if caption:
                 full_msg += f"\n{caption}"
+            self._last_model_call_ts = time.time()
+            response = await asyncio.wait_for(self.core.gateway.speak(full_msg, chat_id=chat_id), timeout=self._get_speak_timeout())
+            self._last_model_ok_ts = time.time()
+            try:
+                tts_result = await self.core.gateway.tool_text_to_speech({'text': response, 'voice': 'Byte'})
+                if '[VOICE]' in str(tts_result):
+                    import re
 
-            # ─── Step 2: Get AI response ───
-            response = await asyncio.wait_for(
-                self.core.gateway.speak(full_msg, chat_id=chat_id),
-                timeout=self._get_speak_timeout()
-            )
-
-            # ─── Step 3: Voice in → Voice out (auto-TTS with male Byte voice) ───
-            if transcription and hasattr(self.core, 'gateway'):
-                try:
-                    tts_result = await self.core.gateway.tool_text_to_speech({
-                        'text': response,
-                        'voice': 'Byte'  # Male voice (Adam) for voice replies
-                    })
-                    if '[VOICE]' in str(tts_result):
-                        import re
-                        m = re.search(r'Generated speech.*?:\s*(.+\.mp3)', str(tts_result))
-                        if m:
-                            voice_path = m.group(1).strip()
-                            if os.path.exists(voice_path):
-                                await self.send_audio(chat_id, voice_path, caption=response[:200])
-                                voice_reply_sent = True
-                except Exception as e:
-                    await self._log(f"Auto-TTS voice reply error: {e}", priority=2)
-
+                    m = re.search(r'Generated speech.*?:\s*(.+\.mp3)', str(tts_result))
+                    if m:
+                        voice_path = m.group(1).strip()
+                        if os.path.exists(voice_path):
+                            await self.send_audio(chat_id, voice_path, caption=response[:200])
+                            voice_reply_sent = True
+            except Exception as e:
+                await self._log(f"Auto-TTS voice reply error: {e}", priority=2)
         except asyncio.CancelledError:
             response = "🛑 Task was cancelled."
             raise
         except asyncio.TimeoutError:
-            await self._log(f"[Telegram] Audio speak() timed out for chat {chat_id}", priority=1)
             response = "⏱ Took too long processing that voice message. Please try again."
+            self._last_model_error_ts = time.time()
+            self._last_model_error = "audio timeout"
         except Exception as e:
             await self._log(f"Audio Error: {e}", priority=1)
             response = f"🌌 **Byte Interference (Audio):** `{str(e)}`"
+            self._last_model_error_ts = time.time()
+            self._last_model_error = str(e)
         finally:
             if typing_task and not typing_task.done():
                 typing_task.cancel()
@@ -1168,19 +1725,12 @@ class TelegramBridge:
                     pass
             if temp_file_path and os.path.exists(temp_file_path):
                 os.remove(temp_file_path)
-            # Guard against "[No response]" or empty
             if not response or not response.strip() or response == "[No response]":
                 response = "🤔 I couldn't generate a response for that voice message. Try again."
             try:
-                await self.core.relay.emit(2, "chat_from_telegram", {
-                    "user": str(chat_id),
-                    "data": f"🎤 {msg.get('caption', 'voice message')}",
-                    "response": response,
-                })
+                await self.core.relay.emit(2, "chat_from_telegram", {"user": str(chat_id), "data": f"🎤 {msg.get('caption', 'voice message')}", "response": response})
             except Exception:
                 pass
-
-            # Send text response only if voice reply wasn't already sent
             if not voice_reply_sent:
                 try:
                     await self.send_message(chat_id, response)
@@ -1188,20 +1738,15 @@ class TelegramBridge:
                     await self._log(f"Send Error: {e}", priority=1)
 
     async def keep_typing(self, chat_id):
-        """Keep sending typing indicator every 4 seconds, scaled to the active model's timeout."""
-        max_duration = int(self._get_speak_timeout()) + 30  # always outlasts speak()
+        max_duration = int(self._get_speak_timeout()) + 30
         start_time = time.time()
         try:
             while True:
-                # Safety timeout check
                 if time.time() - start_time > max_duration:
-                    await self._log(f"Typing indicator timeout after {max_duration}s", priority=1)
                     break
                 await self.send_typing(chat_id)
                 await asyncio.sleep(4)
         except asyncio.CancelledError:
-            # Clean exit when cancelled (expected)
             pass
         except Exception as e:
-            # Log any unexpected errors but don't crash
             await self._log(f"Typing indicator error: {e}", priority=1)

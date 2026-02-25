@@ -4,6 +4,41 @@ All notable changes to Galactic AI are documented here.
 
 ---
 
+## v1.1.5 — Strategic Planning & Deep Memory (2026-02-25)
+
+### Added
+- **Strategic Planner:** Integrated a pre-planning phase into the ReAct loop (`gateway_v2.py`). For complex queries, the AI automatically uses Gemini to generate a step-by-step plan, stores it in memory, and follows it during execution.
+- **Long-Term Vector Memory:** Added `memory_manager` community skill. Integrates ChromaDB for semantic search and permanent storage of facts, preferences, and plans. Tools: `store_memory`, `recall_memories`.
+- **Gemini Coder Skill:** Added `gemini_coder` community skill. Uses the new `google-genai` SDK to provide a dedicated "Senior Dev" coding expert tool (`gemini_code`) for generating and debugging code.
+- **Desktop Window Awareness:** Added `desktop_list_windows` and `desktop_focus_window` to `desktop_tool.py` (using `pygetwindow`), allowing the AI to reliably find and focus applications instead of relying solely on screenshots.
+- **Browser Wait Tool:** Added `chrome_wait_for` to `chrome_bridge.py` and the extension, enabling the AI to wait for specific DOM elements or text to appear before interacting.
+
+### Fixed
+- **Browser Stable Identifiers:** Replaced sequential `ref_` IDs in the Chrome extension (`content.js`) with stable, hash-based signatures. Element IDs no longer change when the DOM updates, drastically improving click reliability on dynamic pages.
+- **SPA Typing Support:** Fixed `contentEditable` typing in the Chrome extension. Now explicitly dispatches `beforeinput`, `insertText`, and `keyup` events to trigger React/Vue state updates on complex SPAs (e.g., activating the "Post" button on X.com).
+- **Gateway LLM Guardrails:** Enhanced the `is_ollama` system prompt with strict retry and failure guardrails, matching the cloud models.
+- **Circuit Breaker:** Modified the ReAct loop to force a hard `break` when the 3-failure circuit breaker trips, preventing infinite tool hallucination loops.
+- **Skill Creator Imports:** Fixed the `create_skill` tool prompt to enforce the correct `from skills.base import GalacticSkill` import.
+
+---
+
+## v1.1.4 — Telegram UX + Telemetry Modes (2026-02-24)
+
+### Added
+- Memory/restarts: **Conversation Auto-Recall** injection (community skill) for remember/earlier/last time questions. Tool: `conversation_auto_recall_status`.
+- Memory/restarts: **Boot Recall Banner** (community skill) prints last N hot-buffer messages and writes `logs/conversations/boot_recall_banner.txt`. Tool: `boot_recall_show`.
+
+### Changed
+- Telegram `/status` now supports **lite vs full** output:
+  - `/status` → lite telemetry
+  - `/status full` (also `--full` / `-f`) → full telemetry
+
+### Updated
+- Telegram command menu description updated to reflect lite/full.
+- `/help` updated to show both status modes.
+
+---
+
 ## v1.1.3 — Chrome Extension Parity (2026-02-23)
 
 ### Bug Fixes
