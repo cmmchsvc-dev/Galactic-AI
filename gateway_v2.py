@@ -2887,9 +2887,18 @@ class GalacticGateway:
             try:
                 # Apply overrides if provided
                 if override_provider and override_model and model_mgr:
-                    self.llm = model_mgr.get_llm(override_provider)
-                    self.llm.model = override_model
-                    self.llm.provider = override_provider
+                    # Find the correct provider instance from the manager's registry
+                    if override_provider in model_mgr.providers:
+                        self.llm = model_mgr.providers[override_provider]
+                        self.llm.model = override_model
+                        self.llm.provider = override_provider
+                    else:
+                        # This case should be rare, but handles if a planner model is set for a provider not in the main cycle
+                        await self.core.log(f"[Planner] Warning: Could not find provider instance for '{override_provider}'. A new instance may be created.", priority=1)
+                        # Fallback to re-init logic (might not be perfect)
+                        self.llm.provider = override_provider
+                        self.llm.model = override_model
+                        self.llm.init_provider()
 
                 # Use isolated history (sub-agent has no prior conversation)
                 self.history = []
