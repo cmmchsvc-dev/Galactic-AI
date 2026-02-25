@@ -4,7 +4,7 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Galactic AI — Sovereign. Universal. Fast.</title>
-  <meta name="description" content="A local-first AI automation platform with 147 built-in tools, an AI-extensible Skills ecosystem, true persistent memory, voice I/O, Chrome browser extension, social media integration, 14 providers, and a real-time control deck. Runs on your machine. No subscriptions." />
+  <meta name="description" content="A local-first AI automation platform with 147+ built-in tools, an AI-extensible Skills ecosystem, true persistent memory (ChromaDB + MEMORY.md), voice I/O, Chrome browser extension, Sub-Agents, computer vision control, 14 providers, and a real-time deck. Runs locally. No subscriptions." />
   <style>
     :root {
       --bg: #0a0a0f;
@@ -485,14 +485,15 @@
   <h2>Everything you need. Nothing you don't.</h2>
   <p class="section-sub">Built for people who want their AI to actually do things.</p>
 
-  <!-- What's New in v1.1.3 -->
+  <!-- What's New in v1.1.8 -->
   <div class="whats-new">
-    <div class="whats-new-label">✦ NEW IN v1.1.8 — STRATEGIC PLANNING & CHROMA MEMORY</div>
+    <div class="whats-new-label">✦ NEW IN v1.1.8 — CHROMA MEMORY, SUB-AGENTS & VISION</div>
     <ul>
-      <li>11 new Chrome tools (16 → 27 total): zoom, drag, right-click, triple-click, upload, resize, network body, wait, GIF recorder</li>
-      <li>contenteditable typing fixed — X.com, Notion, Reddit compose now work correctly</li>
-      <li>Screenshots now return real images to the LLM (not text descriptions)</li>
-      <li>GIF recorder — capture browser sessions as animated GIFs with Pillow assembly</li>
+      <li><strong>ChromaDB Vector Memory:</strong> True semantic search for long-term recall (store_memory, recall_memories).</li>
+      <li><strong>Sub-Agents:</strong> Spawn isolated background AI workers for deep research and coding (spawn_subagent).</li>
+      <li><strong>Computer Vision Control:</strong> AI can look at your screen and click visual elements directly (computer_vision_click).</li>
+      <li><strong>Test-Driven Coder & Workspace Search:</strong> AI writes code, executes it locally, and debugs in autonomous loops. Plus semantic codebase search.</li>
+      <li><strong>Chrome Upgrades:</strong> 11 new Chrome tools (27 total), contenteditable typing fixes, and inline GIF recording.</li>
     </ul>
   </div>
 
@@ -501,6 +502,21 @@
       <span class="feature-icon">🧠</span>
       <h3>Persistent Memory + VAULT</h3>
       <p>MEMORY.md, IDENTITY.md, SOUL.md, USER.md, and VAULT.md are loaded into every prompt. The AI always knows who it is, who you are, and how to log into your services.</p>
+    </div>
+    <div class="feature-card">
+      <span class="feature-icon">🕵️‍♂️</span>
+      <h3>Sub-Agents</h3>
+      <p>Spawn isolated AI background workers for deep research, coding, or data processing. Check their progress while keeping the main chat free.</p>
+    </div>
+    <div class="feature-card">
+      <span class="feature-icon">👁️</span>
+      <h3>Computer Vision Control</h3>
+      <p>Ask the AI to look at your screen and directly click UI elements. Bypasses the DOM entirely for unscrapable apps, interacting just like a human.</p>
+    </div>
+    <div class="feature-card">
+      <span class="feature-icon">💻</span>
+      <h3>Test-Driven Coder</h3>
+      <p>Galactic AI can write Python scripts, execute them locally, read the error output, and autonomously loop until the code runs flawlessly.</p>
     </div>
     <div class="feature-card">
       <span class="feature-icon">⚙️</span>
@@ -633,7 +649,11 @@
     </div>
     <div class="tool-cat">
       <h4>Memory</h4>
-      <ul><li>memory_imprint → MEMORY.md</li><li>memory_search</li></ul>
+      <ul><li>store_memory (ChromaDB)</li><li>recall_memories</li><li>memory_search</li><li>memory_imprint → MEMORY.md</li></ul>
+    </div>
+    <div class="tool-cat">
+      <h4>Dev &amp; Sub-Agents</h4>
+      <ul><li>spawn_subagent / check</li><li>test_driven_coder</li><li>gemini_code (Dev Expert)</li><li>search_workspace</li><li>git_status / diff / commit / log</li></ul>
     </div>
     <div class="tool-cat">
       <h4>Vision, Audio, Image &amp; Video</h4>
