@@ -141,9 +141,7 @@ class WorkspaceIndexerSkill(GalacticSkill):
                                 continue
                                 
                             # Simple chunking (e.g., split by paragraphs or double newlines)
-                            chunks = [c.strip() for c in content.split('
-
-') if len(c.strip()) > 50]
+                            chunks = [c.strip() for c in content.split('\n\n') if len(c.strip()) > 50]
                             
                             # If no natural breaks, chunk by length
                             if not chunks:
