@@ -405,20 +405,23 @@ class TelegramBridge:
     async def get_models_config_menu(self, config_type=None, provider=None):
         if not config_type:
             mm = self.core.model_manager
+            models_cfg = self.core.config.get('models', {})
             current = mm.get_current_model()
             mode_indicator = "🟢" if current['mode'] == 'primary' else "🟡"
             text = (
                 f"⚙️ **Model Configuration**\n\n"
                 f"{mode_indicator} **Active:** {current['provider']}/{current['model']} ({current['mode']})\n\n"
-                f"🎯 **Primary:** {mm.primary_provider}/{mm.primary_model}\n"
-                f"🔄 **Fallback:** {mm.fallback_provider}/{mm.fallback_model}\n\n"
+                f"🎯 **Primary (Builder):** {mm.primary_provider}/{mm.primary_model}\n"
+                f"🔄 **Fallback:** {mm.fallback_provider}/{mm.fallback_model}\n"
+                f"🧠 **Planner:** {models_cfg.get('planner_provider', 'openrouter')}/{models_cfg.get('planner_model', 'google/gemini-3.1-pro-preview')}\n\n"
                 f"**Auto-Fallback:** {'✅ Enabled' if mm.auto_fallback_enabled else '❌ Disabled'}\n"
                 f"**Error Threshold:** {mm.error_threshold}\n"
                 f"**Recovery Time:** {mm.recovery_time}s\n\n"
                 f"Choose what to configure:"
             )
             buttons = [
-                [{"text": "🎯 Set Primary Model", "callback_data": "cfg_primary"}],
+                [{"text": "🎯 Set Primary (Builder)", "callback_data": "cfg_primary"}],
+                [{"text": "🧠 Set Planner (Big Brain)", "callback_data": "cfg_planner"}],
                 [{"text": "🔄 Set Fallback Model", "callback_data": "cfg_fallback"}],
                 [{"text": "🔄 Switch to Primary", "callback_data": "cfg_switch_primary"}],
                 [{"text": "🟡 Switch to Fallback", "callback_data": "cfg_switch_fallback"}],
@@ -544,7 +547,13 @@ class TelegramBridge:
                     f"{self.api_url}/editMessageText",
                     json={"chat_id": chat_id, "message_id": message_id, "text": text, "reply_markup": markup, "parse_mode": "Markdown"},
                 )
-            elif data.startswith("cfg_primary_prov_") or data.startswith("cfg_fallback_prov_"):
+            elif data == "cfg_planner":
+                text, markup = await self.get_models_config_menu(config_type="provider", provider="planner")
+                await self.client.post(
+                    f"{self.api_url}/editMessageText",
+                    json={"chat_id": chat_id, "message_id": message_id, "text": text, "reply_markup": markup, "parse_mode": "Markdown"},
+                )
+            elif data.startswith("cfg_primary_prov_") or data.startswith("cfg_fallback_prov_") or data.startswith("cfg_planner_prov_"):
                 parts = data.split("_")
                 setting_type = parts[1]
                 provider_name = parts[3]
@@ -553,7 +562,7 @@ class TelegramBridge:
                     f"{self.api_url}/editMessageText",
                     json={"chat_id": chat_id, "message_id": message_id, "text": text, "reply_markup": markup, "parse_mode": "Markdown"},
                 )
-            elif data.startswith("cfg_primary_set_") or data.startswith("cfg_fallback_set_"):
+            elif data.startswith("cfg_primary_set_") or data.startswith("cfg_fallback_set_") or data.startswith("cfg_planner_set_"):
                 parts = data.split("_")
                 setting_type = parts[1]
                 provider_and_model = parts[3]
@@ -561,9 +570,20 @@ class TelegramBridge:
                 if setting_type == "primary":
                     await self.core.model_manager.set_primary(provider_name, model_id)
                     await self.send_message(chat_id, f"✅ **Primary model set:** {provider_name}/{model_id}\nNow active!")
-                else:
+                elif setting_type == "fallback":
                     await self.core.model_manager.set_fallback(provider_name, model_id)
                     await self.send_message(chat_id, f"✅ **Fallback model set:** {provider_name}/{model_id}")
+                elif setting_type == "planner":
+                    cfg = self.core.config
+                    cfg.setdefault('models', {})
+                    cfg['models']['planner_provider'] = provider_name
+                    cfg['models']['planner_model'] = model_id
+                    # We need to trigger a save, best way here is via ModelManager logic or just rewrite
+                    if hasattr(self.core.gateway, '_save_config'):
+                        self.core.gateway._save_config(cfg)
+                    elif hasattr(self.core, 'web_deck'):
+                        self.core.web_deck._save_config(cfg)
+                    await self.send_message(chat_id, f"✅ **Planner model set:** {provider_name}/{model_id}")
                 text, markup = await self.get_models_config_menu()
                 await self.client.post(
                     f"{self.api_url}/editMessageText",
