@@ -55,6 +55,14 @@
       "installed_at": "2026-02-25T16:00:00.000000",
       "source": "ai_authored",
       "description": "Vision-based GUI automation: find and click elements on screen using Gemini."
+    },
+    {
+      "module": "workspace_indexer",
+      "class": "WorkspaceIndexerSkill",
+      "file": "workspace_indexer.py",
+      "installed_at": "2026-02-25T18:00:00.000000",
+      "source": "ai_authored",
+      "description": "Automatically indexes files in workspace/ for fast semantic search (RAG)."
     }
   ]
 }

@@ -4,6 +4,14 @@ All notable changes to Galactic AI are documented here.
 
 ---
 
+## v1.1.8 — Self-Healing Code & Workspace RAG (2026-02-25)
+
+### Added
+- **Self-Healing Code Execution (TDD):** Added `test_driven_coder` tool to the Gemini Coder skill. The AI can now write a Python script, automatically run it in a sandboxed subprocess, catch any traceback errors, and autonomously loop with Gemini to fix the code until it executes successfully.
+- **Workspace Context Awareness (RAG):** Added `workspace_indexer` community skill. A background thread now continuously hashes, chunks, and embeds your `workspace/` files into ChromaDB. The AI can now use the `search_workspace` tool to semantically search your local codebase instantly.
+
+---
+
 ## v1.1.7 — Computer Use & Live Voice (2026-02-25)
 
 ### Added

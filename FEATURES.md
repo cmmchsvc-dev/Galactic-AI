@@ -158,6 +158,23 @@ Enable `smart_routing: true` in config to auto-select the best model for each ta
 ### Auto-Fallback & Resilient Fallback Chain
 If the primary provider fails, the system falls back to a secondary provider automatically with error-type-specific cooldowns (rate limit: 60s, server error: 30s, timeout: 10s, auth error: 24h, quota exhausted: 1h). Recovery is automatic — the system periodically retests failed providers and restores them when healthy. Toggle auto-fallback on/off from the Settings tab in the Control Deck.
 
+### Self-Healing Code Execution (Test-Driven Development)
+Galactic AI now writes robust code. The `test_driven_coder` tool (part of the `gemini_coder` skill) allows the AI to:
+1.  **Generate a Python script** for a given task.
+2.  **Execute the script** in a sandboxed subprocess.
+3.  **Catch any execution errors** (e.g., tracebacks, timeouts).
+4.  **Autonomously send the error back to Gemini** to request a fix.
+5.  **Rewrite the code** and re-execute, looping until the script runs successfully or `max_retries` is reached.
+
+This ensures the AI delivers working code, significantly boosting reliability for programming tasks.
+
+### Workspace Context Awareness (RAG for Local Codebase)
+Beyond semantic search of chat history, Galactic AI maintains a live, searchable index of your local codebase. The `workspace_indexer` community skill operates a background thread that:
+1.  Continuously monitors your `workspace/` folder and its subdirectories.
+2.  Hashes and chunks relevant code files (`.py`, `.js`, `.md`, `.txt`, `.json`, `.yaml`, `.ps1`, `.sh`).
+3.  Embeds these chunks into a dedicated ChromaDB collection.
+4.  The AI can then use the `search_workspace` tool to instantly find semantically relevant code snippets, functions, or documentation for any query, acting as an expert on your project's internals.
+
 ### Streaming Responses
 Token-by-token streaming from all providers, broadcast to the web UI via WebSocket in real-time.
 
