@@ -2,16 +2,18 @@ import os
 import sys
 import shutil
 import zipfile
+import tarfile
 import re
 import yaml
 import argparse
 import glob
+import hashlib
 from datetime import datetime
 
 # Configure paths
 ROOT_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-RELEASE_DIR = os.path.join(ROOT_DIR, "releases")
-BUILD_DIR = os.path.join(RELEASE_DIR, "build")
+RELEASE_BASE_DIR = os.path.join(ROOT_DIR, "releases")
+BUILD_DIR = os.path.join(RELEASE_BASE_DIR, "build")
 
 # Files and directories to explicitly INCLUDE in the release
 INCLUDE_LIST = [
@@ -198,22 +200,96 @@ def get_version():
         pass
     return datetime.now().strftime("%Y%m%d")
 
-def build_zip(version):
-    """Zip the build directory."""
-    zip_filename = f"Galactic_AI_v{version}.zip"
-    zip_path = os.path.join(RELEASE_DIR, zip_filename)
+def generate_release_notes(version, release_target_dir):
+    """Extract latest release notes from CHANGELOG.md."""
+    changelog_path = os.path.join(ROOT_DIR, "CHANGELOG.md")
+    if not os.path.exists(changelog_path):
+        return
     
-    print(f"Creating release archive: {zip_filename}...")
+    print("Generating RELEASE_NOTES.md...")
+    try:
+        with open(changelog_path, 'r', encoding='utf-8') as f:
+            lines = f.readlines()
+        
+        notes_lines = []
+        found_version = False
+        
+        for line in lines:
+            if f"## v{version}" in line:
+                found_version = True
+                notes_lines.append(line)
+                continue
+            
+            if found_version:
+                if line.startswith("## v"):
+                    break
+                notes_lines.append(line)
+            
+        if notes_lines:
+            notes = "".join(notes_lines).strip()
+            # Remove trailing horizontal rules
+            notes = re.sub(r'\n---\s*$', '', notes)
+        else:
+            notes = f"Release notes for v{version} not found in CHANGELOG.md"
+            
+        with open(os.path.join(release_target_dir, "RELEASE_NOTES.md"), 'w', encoding='utf-8') as f:
+            f.write(f"# Galactic AI v{version} Release Notes\n\n{notes}")
+    except Exception as e:
+        print(f"  Error generating release notes: {e}")
+
+def get_file_sha256(filepath):
+    """Calculate SHA256 hash of a file."""
+    sha256_hash = hashlib.sha256()
+    with open(filepath, "rb") as f:
+        for byte_block in iter(lambda: f.read(4096), b""):
+            sha256_hash.update(byte_block)
+    return sha256_hash.hexdigest()
+
+def build_packages(version, release_target_dir):
+    """Build zip and tar.gz packages for different platforms."""
+    packages = []
+    
+    # Base filenames
+    zip_base = f"Galactic-AI-v{version}"
+    
+    # 1. Universal Zip
+    zip_path = os.path.join(release_target_dir, f"{zip_base}.zip")
+    print(f"Creating universal archive: {os.path.basename(zip_path)}...")
     with zipfile.ZipFile(zip_path, 'w', zipfile.ZIP_DEFLATED) as zipf:
         for root, _, files in os.walk(BUILD_DIR):
             for file in files:
                 file_path = os.path.join(root, file)
-                # Ensure the files are at the root of the zip
                 arcname = os.path.relpath(file_path, BUILD_DIR)
                 zipf.write(file_path, arcname)
+    packages.append(zip_path)
     
-    print(f"Release built successfully at: {zip_path}")
-    return zip_path
+    # 2. Windows Zip (Copy of universal)
+    win_zip = os.path.join(release_target_dir, f"{zip_base}-windows.zip")
+    shutil.copy2(zip_path, win_zip)
+    packages.append(win_zip)
+    
+    # 3. macOS Zip (Copy of universal)
+    mac_zip = os.path.join(release_target_dir, f"{zip_base}-macos.zip")
+    shutil.copy2(zip_path, mac_zip)
+    packages.append(mac_zip)
+    
+    # 4. Linux Tarball
+    linux_tar = os.path.join(release_target_dir, f"{zip_base}-linux.tar.gz")
+    print(f"Creating linux tarball: {os.path.basename(linux_tar)}...")
+    with tarfile.open(linux_tar, "w:gz") as tar:
+        tar.add(BUILD_DIR, arcname="")
+    packages.append(linux_tar)
+    
+    # Generate SHA256SUMS.txt
+    print("Generating SHA256SUMS.txt...")
+    sums_path = os.path.join(release_target_dir, "SHA256SUMS.txt")
+    with open(sums_path, 'w', encoding='utf-8') as f:
+        for pkg in packages:
+            fname = os.path.basename(pkg)
+            sha = get_file_sha256(pkg)
+            f.write(f"{sha}  {fname}\n")
+    
+    print(f"All packages built in: {release_target_dir}")
 
 def main():
     parser = argparse.ArgumentParser(description="Build Galactic AI release")
@@ -221,18 +297,21 @@ def main():
     args = parser.parse_args()
 
     print(f"--- Galactic AI Release Builder ---")
-    os.makedirs(RELEASE_DIR, exist_ok=True)
     
     if args.set_version:
         sync_versions(args.set_version)
         
+    version = get_version()
+    release_target_dir = os.path.join(RELEASE_BASE_DIR, f"v{version}")
+    os.makedirs(release_target_dir, exist_ok=True)
+    
     clean_build_dir()
     copy_files()
     scrub_config()
     create_workspace_templates()
     
-    version = get_version()
-    zip_path = build_zip(version)
+    build_packages(version, release_target_dir)
+    generate_release_notes(version, release_target_dir)
     
     # Cleanup build dir
     shutil.rmtree(BUILD_DIR)
