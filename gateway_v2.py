@@ -29,6 +29,12 @@ _NVIDIA_NO_STREAM = {
     "qwen/qwen3.5-397b-a17b",
 }
 
+# OpenRouter models/routes where SSE streaming is unreliable (finish_reason=error,
+# empty chunks). Force these to non-streaming to avoid noisy fallback warnings.
+_OPENROUTER_NO_STREAM = {
+    "google/gemini-3.1-pro-preview:nitro",
+}
+
 # NVIDIA models that require extra body params for thinking/reasoning.
 # These are injected into the payload when the active model is on this list.
 _NVIDIA_THINKING_MODELS = {
@@ -41,17 +47,36 @@ _NVIDIA_THINKING_MODELS = {
         "chat_template_kwargs": {"enable_thinking": True},
     },
     "nvidia/nvidia-nemotron-nano-9b-v2": {
-        "min_thinking_tokens": 1024,
-        "max_thinking_tokens": 2048,
-    },
-}
+                "min_thinking_tokens": 1024,
+                "max_thinking_tokens": 2048,
+            },
+        }
+        
+_PLANNING_PROMPT_TEMPLATE = """
+Act as an expert Project Manager and Planner. Your goal is to break down a complex user request into a sequence of small, concrete, and actionable steps. Each step should be a specific instruction or a question to resolve before moving to the next. Focus on identifying information gaps, research needs, and logical progression.
 
+Output a numbered list of steps, clearly outlining the plan. DO NOT execute anything yet; just provide the plan.
+
+Example Complex Request:
+"Research the best ways to train a dog for agility competitions and then write an email to a local dog trainer asking for a consultation, including some of the research findings."
+
+Example Plan:
+1. Research "best dog breeds for agility competitions" and "agility training techniques for beginners."
+2. Summarize key findings regarding training methods and recommended breeds.
+3. Find contact information for local dog trainers specializing in agility.
+4. Draft an email to a chosen trainer, introducing the user, mentioning their dog's breed (if known), incorporating summarized research findings, and asking about consultation availability and costs.
+5. Review and send the email.
+
+User Request: {user_input}
+
+Your Plan:
+"""
+        
 # ── Token pricing (USD per 1M tokens) ────────────────────────────────
 MODEL_PRICING = {
     # OpenRouter — Frontier
     "google/gemini-3.1-pro-preview":   {"input": 1.25,  "output": 10.00},
-    "anthropic/claude-opus-4.6":       {"input": 15.00, "output": 75.00},
-    "openai/gpt-5.2":                  {"input": 2.50,  "output": 10.00},
+    "anthropic/claude-opus-4.6":       {"input": 15.00, "output": 75.00},    "openai/gpt-5.2":                  {"input": 2.50,  "output": 10.00},
     "openai/gpt-5.2-codex":            {"input": 2.50,  "output": 10.00},
     "x-ai/grok-4.1-fast":              {"input": 3.00,  "output": 15.00},
     "deepseek/deepseek-v3.2":          {"input": 0.27,  "output": 1.10},
@@ -328,7 +353,7 @@ class GalacticGateway:
         os.makedirs(os.path.dirname(self.history_file), exist_ok=True)
 
     def _log_chat(self, role, content, source="web"):
-        """Append a chat entry to the persistent JSONL log (survives page refresh)."""
+        """Append a chat entry to the persistent JSONL log and update the 30-min hot buffer."""
         entry = {
             "ts": datetime.now().isoformat(),
             "role": role,
@@ -338,6 +363,13 @@ class GalacticGateway:
         try:
             with open(self.history_file, 'a', encoding='utf-8') as f:
                 f.write(json.dumps(entry) + '\n')
+            
+            # Update the Hot Buffer (last 30 mins)
+            try:
+                from hot_memory_buffer import update_hot_buffer
+                update_hot_buffer()
+            except ImportError:
+                pass
         except Exception:
             pass
 
@@ -1004,13 +1036,14 @@ class GalacticGateway:
                 "description": (
                     "Create a new Galactic AI skill. Writes a .py file to skills/community/ "
                     "and loads it immediately. The skill must subclass GalacticSkill and "
-                    "implement get_tools(). Use list_skills first to check what already exists."
+                    "implement get_tools(). Use list_skills first to check what already exists. "
+                    "CRITICAL: You MUST use 'from skills.base import GalacticSkill' at the top of the file."
                 ),
                 "parameters": {
                     "type": "object",
                     "properties": {
                         "name":        {"type": "string", "description": "Skill name in snake_case (e.g. 'weather_lookup'). Used as the filename."},
-                        "code":        {"type": "string", "description": "Full Python source code. Must import from skills.base and subclass GalacticSkill."},
+                        "code":        {"type": "string", "description": "Full Python source code. MUST import from skills.base (NOT tools.base) and subclass GalacticSkill."},
                         "description": {"type": "string", "description": "One-line description of what this skill does."}
                     },
                     "required": ["name", "code", "description"]
@@ -2193,6 +2226,17 @@ class GalacticGateway:
 
         return None, None
 
+    def format_plan(self, plan: dict) -> str:
+        """Formats the active plan into a readable string for the AI."""
+        if not plan or not plan.get('steps'):
+            return "No active plan."
+
+        formatted_steps = []
+        for i, step in enumerate(plan['steps']):
+            prefix = "-> " if i == plan['current_step'] else "   "
+            formatted_steps.append(f"{prefix}{i+1}. {step}")
+        return "\n".join(formatted_steps)
+
     def _build_system_prompt(self, context="", is_ollama=False):
         """
         Build the system prompt.  For Ollama/local models we inject:
@@ -2238,9 +2282,11 @@ class GalacticGateway:
                 "4. For complex tasks: chain up to 10 tool calls, then answer.\n"
                 "5. NEVER repeat a tool call with the same args — trust the output.\n"
                 "6. If you don't need a tool, just answer in plain text — no JSON.\n"
-                "7. BEFORE writing scripts: read config.yaml for real credentials. NEVER use placeholder values.\n"
-                "8. NEVER overwrite requirements.txt, config.yaml, or core .py files. Create NEW files with unique names.\n"
-                "9. NEVER run scripts with while True loops or sleep() via exec_shell — they timeout. Tell the user how to launch them.\n"
+                "7. If a tool fails or times out: do NOT retry the same approach. Explain the failure and try a different strategy.\n"
+                "8. If stuck after 3+ failed attempts: STOP. Tell the user what you tried, what went wrong, and ask for guidance.\n"
+                "9. BEFORE writing scripts: read config.yaml for real credentials. NEVER use placeholder values.\n"
+                "10. NEVER overwrite requirements.txt, config.yaml, or core .py files. Create NEW files with unique names.\n"
+                "11. NEVER run scripts with while True loops or sleep() via exec_shell — they timeout. Tell the user how to launch them.\n"
             )
 
             system_prompt = (
@@ -2294,6 +2340,43 @@ class GalacticGateway:
         payload.update(kwargs)
         await self.core.relay.emit(3, "agent_trace", payload)
 
+    async def _generate_plan(self, user_input):
+        """Generates a step-by-step plan using a powerful LLM (e.g., Gemini) via the gemini_code tool."""
+        if "gemini_code" not in self.tools:
+            await self.core.log("[Planner] Gemini Coder tool not available for planning.", priority=1)
+            return None
+
+        planning_prompt = _PLANNING_PROMPT_TEMPLATE.format(user_input=user_input)
+        await self.core.log(f"[Planner] Generating plan for: {user_input[:80]}...")
+        await self._emit_trace("planning_start", 0, session_id="planner", query=user_input[:500])
+
+        try:
+            # Use the gemini_code tool for planning
+            plan_raw_output = await self.tools["gemini_code"]["fn"]({"prompt": planning_prompt, "model": "gemini-3-flash-preview"})
+            
+            # Extract the numbered list
+            plan_steps = re.findall(r'^\\s*\\d\\.\\s*(.*)', plan_raw_output, re.MULTILINE)
+            
+            if plan_steps:
+                plan = { "steps": plan_steps, "current_step": 0, "original_query": user_input }
+                await self.core.log(f"[Planner] Generated plan with {len(plan_steps)} steps.", priority=2)
+                await self._emit_trace("plan_generated", 0, session_id="planner", plan=plan_steps)
+                
+                # Store the plan in long-term memory
+                if "store_memory" in self.tools:
+                    plan_text = "\n".join([f"{i+1}. {step}" for i, step in enumerate(plan_steps)])
+                    await self.tools["store_memory"]["fn"]({
+                        "text": f"User request: {user_input}\nGenerated Plan:\n{plan_text}",
+                        "metadata": { "type": "plan", "original_query": user_input[:200] }
+                    })
+                return plan
+            else:
+                await self.core.log("[Planner] Failed to extract plan steps from LLM response.", priority=1)
+                return None
+        except Exception as e:
+            await self.core.log(f"[Planner] Error generating plan: {e}", priority=1)
+            return None
+
     async def speak(self, user_input, context="", chat_id=None, images=None):
         """
         Main entry point for user interaction.
@@ -2312,6 +2395,10 @@ class GalacticGateway:
         # Track input tokens (rough estimate: 1 token ~= 4 chars)
         self._estimated_input_tokens = len(user_input) // 4
         self.total_tokens_in += self._estimated_input_tokens
+
+        # Initialize active_plan if not present
+        if not hasattr(self, 'active_plan'):
+            self.active_plan = None # { 'steps': [], 'current_step': 0, 'original_query_id': None }
 
         # Reset per-turn state
         self.last_voice_file = None
@@ -2343,6 +2430,18 @@ class GalacticGateway:
 
         # Determine if we're on a local/Ollama model
         is_ollama = (self.llm.provider == "ollama")
+
+        # ── Planning Phase (for complex tasks) ──────────────────────────
+        # Decide if a plan is needed. For now, any multi-word input triggers planning.
+        if len(user_input.split()) > 3 and not self.active_plan:
+            plan = await self._generate_plan(user_input)
+            if plan:
+                self.active_plan = plan
+                # Add the plan to the context for the next turn
+                context = f"You are currently executing a plan. Here is the plan:\n" \
+                          f"{self.format_plan(self.active_plan)}\n\n" \
+                          f"Focus on completing the current step before moving to the next.\n\n{context}"
+                await self.core.log(f"[Planner] Activated plan for: {user_input[:80]}...")
 
         # 1. Build system prompt (Ollama gets full schemas + few-shot examples)
         system_prompt = self._build_system_prompt(context=context, is_ollama=is_ollama)
@@ -2544,6 +2643,7 @@ class GalacticGateway:
                                 )
                             })
                             consecutive_failures = 0  # Reset after intervention
+                            break  # Hard break out of the ReAct loop
 
                         # ── Tool-type repetition guard ──
                         if len(recent_tools) >= 5:
@@ -3457,6 +3557,7 @@ class GalacticGateway:
             provider in ("ollama", "openai", "groq", "mistral", "cerebras", "openrouter", "nvidia")
             and self.core.config.get('models', {}).get('streaming', True)
             and not (provider == "nvidia" and self.llm.model in _NVIDIA_NO_STREAM)
+            and not (provider == "openrouter" and self.llm.model in _OPENROUTER_NO_STREAM)
         )
 
         max_tokens = self._get_max_tokens()

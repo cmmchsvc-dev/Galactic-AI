@@ -1,6 +1,6 @@
 # Galactic AI — Feature Reference
 
-Complete feature reference for Galactic AI Automation Suite **v1.1.3**.
+Complete feature reference for Galactic AI Automation Suite **v1.1.4**.
 
 ---
 
@@ -8,6 +8,9 @@ Complete feature reference for Galactic AI Automation Suite **v1.1.3**.
 
 ### AsyncIO Runtime
 The entire system runs on Python's `asyncio` event loop. Every subsystem — LLM gateway, web server, Telegram bridge, Discord bridge, WhatsApp bridge, Gmail bridge, plugin engine, Ollama manager, task scheduler — is fully non-blocking. Nothing stalls the core.
+
+### Strategic Planning Phase
+Before diving into the execution loop for complex queries, the gateway initiates a pre-planning phase. It utilizes a highly capable LLM (like Gemini via the `gemini_code` tool) to break down the task into concrete steps, stores this plan in long-term memory, and guides the ReAct loop step-by-step.
 
 ### ReAct Agentic Loop
 The AI operates in a **Think → Act → Observe → Answer** loop. It chains multiple tool calls in sequence, observes results, reasons about what to do next, and keeps going until the task is complete. Each tool call has a configurable timeout (default 60 seconds) — no single operation can block the loop indefinitely. The entire ReAct loop is capped by a speak() wall-clock timeout (default 600 seconds).
@@ -87,10 +90,29 @@ The result: the AI builds its own persistent knowledge file automatically. You c
 **Layer 3: memory_aura.json (searchable knowledge base)**
 A local JSON index for storing arbitrary facts, documents, and imprinted knowledge. Searchable via the `memory_search` tool using keyword matching. Survives restarts.
 
+**Layer 4: ChromaDB Vector Memory (Semantic Search)**
+Provided by the `memory_manager` community skill. This layer uses ChromaDB to store text and metadata as embeddings, allowing the AI to perform true semantic searches over its past experiences, research, and generated plans. This provides a massive, queryable long-term context that goes beyond simple keyword matching.
+
 ### Token Efficiency
 MEMORY.md is loaded once at startup. There is no per-message search, no embedding API call, no vector DB overhead. You only pay for what's actually in the file.
 
 ---
+
+### Restart Resilience (Conversation Recall)
+Two community skills reduce "amnesia" after restarts without running heavy retrieval on every message:
+
+- **Auto-Recall Injection** — `skills/community/conversation_auto_recall.py`
+  - Runtime-patches `GalacticGateway.speak()`.
+  - Triggers when the user asks remember/earlier/last time questions.
+  - Tool: `conversation_auto_recall_status`
+
+- **Boot Recall Banner** — `skills/community/boot_recall_banner.py`
+  - Prints the last N hot-buffer messages at boot and writes: `logs/conversations/boot_recall_banner.txt`
+  - Config: `conversation.boot_recall_messages: 10`
+  - Tool: `boot_recall_show`
+
+---
+
 
 ## 14 AI Providers
 
@@ -255,7 +277,7 @@ system:
 | `generate_video` | Generate a video clip from a text prompt using Google Veo (4s/6s/8s, up to 4K) |
 | `generate_video_from_image` | Animate a still image into a video clip using Google Veo |
 
-### Memory (2 tools)
+### Memory (4 tools)
 | Tool | Description |
 |---|---|
 | `memory_search` | Keyword search across persistent memory |
@@ -624,7 +646,8 @@ Full-featured bot with voice I/O, image delivery, inline keyboards, and admin-on
 **Commands:**
 | Command | Description |
 |---|---|
-| `/status` | System telemetry (provider, model, uptime, tokens) |
+| `/status` | System telemetry (lite) |
+| `/status full` | System telemetry (full) (`--full` / `-f` also supported) |
 | `/model` | Switch AI model or select image generation backend |
 | `/models` | Configure primary and fallback models |
 | `/browser` | Open a URL in the browser |
@@ -814,4 +837,4 @@ Set `web.remote_access: true` in `config.yaml`. On next startup, Galactic AI:
 
 ---
 
-**v1.1.3** — Galactic AI Automation Suite
+**v1.1.4** — Galactic AI Automation Suite
