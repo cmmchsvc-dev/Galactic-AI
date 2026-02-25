@@ -828,6 +828,7 @@ body.glow-max .status-dot{box-shadow:0 0 14px var(--green),0 0 28px rgba(0,255,1
             <input type="file" id="chat-file-input" multiple accept=".txt,.md,.py,.js,.ts,.json,.yaml,.yml,.xml,.html,.css,.csv,.log,.toml,.ini,.cfg,.sh,.ps1,.bat,.rs,.go,.java,.c,.cpp,.h,.hpp,.rb,.php,.sql,.r,.swift,.kt,.dart,.env,.conf,.properties,.jpg,.jpeg,.png,.gif,.webp,.bmp,.tiff,.tif,.heic,.heif,.avif,.svg,image/*" style="display:none" onchange="handleFileAttach(this)">
             <button id="attach-btn" onclick="document.getElementById('chat-file-input').click()" title="Attach files" style="padding:10px 12px;background:var(--bg3);border:1px solid var(--border);border-radius:10px;color:var(--dim);cursor:pointer;font-size:1.1em;transition:border .2s,color .2s" onmouseover="this.style.borderColor='var(--cyan)';this.style.color='var(--cyan)'" onmouseout="this.style.borderColor='var(--border)';this.style.color='var(--dim)'">📎</button>
             <textarea id="chat-input-main" placeholder="Message Byte... (Enter to send, Shift+Enter for newline)" style="flex:1;background:var(--bg3);border:1px solid var(--border);border-radius:10px;padding:10px 14px;color:var(--text);font-family:var(--font);font-size:0.9em;resize:none;height:44px;max-height:200px;overflow-y:auto;outline:none;transition:border .2s" onkeydown="handleKeyMain(event)" oninput="autoResize(this)"></textarea>
+            <button id="live-call-btn" onclick="toggleLiveCall()" title="Live Call Mode (auto-TTS & interruption)" style="padding:10px 12px;background:var(--bg3);border:1px solid var(--border);border-radius:10px;color:var(--dim);cursor:pointer;font-size:1.1em;transition:border .2s,color .2s,background .2s" onmouseover="if(!this.classList.contains('active'))this.style.borderColor='var(--green)',this.style.color='var(--green)'" onmouseout="if(!this.classList.contains('active'))this.style.borderColor='var(--border)',this.style.color='var(--dim)'">📞</button>
             <button id="voice-btn" onclick="toggleVoiceInput()" title="Voice input (hold or click to record)" style="padding:10px 12px;background:var(--bg3);border:1px solid var(--border);border-radius:10px;color:var(--dim);cursor:pointer;font-size:1.1em;transition:border .2s,color .2s,background .2s" onmouseover="if(!this.classList.contains('recording'))this.style.borderColor='var(--cyan)',this.style.color='var(--cyan)'" onmouseout="if(!this.classList.contains('recording'))this.style.borderColor='var(--border)',this.style.color='var(--dim)'">🎤</button>
             <button id="send-btn-main" onclick="sendChatMain()" style="padding:10px 22px;background:linear-gradient(135deg,var(--cyan),var(--pink));border:none;border-radius:10px;color:#000;font-weight:700;cursor:pointer;font-size:0.9em">Send ▶</button>
           </div>
@@ -1138,6 +1139,15 @@ body.glow-max .status-dot{box-shadow:0 0 14px var(--green),0 0 28px rgba(0,255,1
               <select id="set-fallback-provider" onchange="updateSettingsModelList('fallback')" style="flex:0.4;padding:7px 10px;background:var(--bg);border:1px solid var(--border);border-radius:7px;color:var(--text);font-size:0.88em">
               </select>
               <select id="set-fallback-model" style="flex:0.6;padding:7px 10px;background:var(--bg);border:1px solid var(--border);border-radius:7px;color:var(--text);font-size:0.88em">
+              </select>
+            </div>
+          </div>
+          <div class="model-config-row">
+            <label>Planner Model</label>
+            <div style="display:flex;gap:8px;flex:1">
+              <select id="set-planner-provider" onchange="updateSettingsModelList('planner')" style="flex:0.4;padding:7px 10px;background:var(--bg);border:1px solid var(--border);border-radius:7px;color:var(--text);font-size:0.88em">
+              </select>
+              <select id="set-planner-model" style="flex:0.6;padding:7px 10px;background:var(--bg);border:1px solid var(--border);border-radius:7px;color:var(--text);font-size:0.88em">
               </select>
             </div>
           </div>
@@ -2009,10 +2019,34 @@ async function sendChatMain() {
     }
     const d = await r.json();
     stream.style.display = 'none'; stream.textContent = ''; stream._rawText = '';
-    appendBotMsg(d.response || d.error || 'No response');
+    const aiResponse = d.response || d.error || 'No response';
+    appendBotMsg(aiResponse);
     console.log('[Image Delivery] response keys:', Object.keys(d), 'image_url:', d.image_url || 'NONE');
     if (d.image_url) appendBotImage(d.image_url);
     if (d.video_url) appendBotVideo(d.video_url);
+
+    // Live Call Auto-TTS
+    if (_liveCallMode && aiResponse && !d.error) {
+      // Strip markdown code blocks before speaking
+      const speakText = aiResponse.replace(/```[\s\S]*?```/g, '').replace(/\*\*/g, '').replace(/__/g, '').trim();
+      if (speakText) {
+        try {
+          const qs = document.getElementById('quick-voice-select');
+          const voice = qs ? qs.value : 'Nova';
+          const ttsRes = await authFetch('/api/tts', {
+            method: 'POST', headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({text: speakText, voice: voice})
+          });
+          const ttsBlob = await ttsRes.blob();
+          const ttsUrl = URL.createObjectURL(ttsBlob);
+          _currentLiveAudio = new Audio(ttsUrl);
+          _currentLiveAudio.onended = () => URL.revokeObjectURL(ttsUrl);
+          _currentLiveAudio.play();
+        } catch(e) {
+          console.error("Live Call TTS Error:", e);
+        }
+      }
+    }
   } catch(err) {
     stream.style.display = 'none';
     appendBotMsg('[ERROR] ' + err.message);
@@ -2864,7 +2898,7 @@ function populateSettingsProviders() {
     'openrouter','huggingface','kimi','zai','minimax','nvidia','ollama','deepseek'
   ];
 
-  ['primary', 'fallback'].forEach(role => {
+  ['primary', 'fallback', 'planner'].forEach(role => {
     const sel = document.getElementById(`set-${role}-provider`);
     if (!sel) return;
     sel.innerHTML = '';
@@ -2969,10 +3003,13 @@ async function loadSettingsValues() {
     // Model settings
     const prim = (d.primary_model || '/').split('/');
     const fb = (d.fallback_model || '/').split('/');
+    const pl = (d.planner_model || '/').split('/');
     const primProv = prim.length > 1 ? prim[0] : '';
     const primModel = prim.length > 1 ? prim.slice(1).join('/') : prim[0];
     const fbProv = fb.length > 1 ? fb[0] : '';
     const fbModel = fb.length > 1 ? fb.slice(1).join('/') : fb[0];
+    const plProv = pl.length > 1 ? pl[0] : '';
+    const plModel = pl.length > 1 ? pl.slice(1).join('/') : pl[0];
 
     const setProv = (role, val) => {
       const sel = document.getElementById(`set-${role}-provider`);
@@ -2984,6 +3021,7 @@ async function loadSettingsValues() {
     };
     setProv('primary', primProv); setModel('primary', primModel);
     setProv('fallback', fbProv); setModel('fallback', fbModel);
+    setProv('planner', plProv); setModel('planner', plModel);
 
     // Toggles
     const el = id => document.getElementById(id);
@@ -3008,6 +3046,8 @@ async function saveModelSettings() {
   const primModel = document.getElementById('set-primary-model').value;
   const fbProv = document.getElementById('set-fallback-provider').value;
   const fbModel = document.getElementById('set-fallback-model').value;
+  const plProv = document.getElementById('set-planner-provider').value;
+  const plModel = document.getElementById('set-planner-model').value;
   if (!primProv || !primModel) { showToast('Select a primary model', 'error', 3000); return; }
   if (!fbProv || !fbModel) { showToast('Select a fallback model', 'error', 3000); return; }
   try {
@@ -3016,6 +3056,7 @@ async function saveModelSettings() {
       body: JSON.stringify({
         primary_provider: primProv, primary_model: primModel,
         fallback_provider: fbProv, fallback_model: fbModel,
+        planner_provider: plProv, planner_model: plModel,
         auto_fallback: document.getElementById('set-auto-fallback').checked,
         smart_routing: document.getElementById('set-smart-routing').checked,
         streaming: document.getElementById('set-streaming').checked,
@@ -3086,7 +3127,33 @@ let _voiceRecorder = null;
 let _voiceChunks = [];
 let _voiceRecording = false;
 
+let _liveCallMode = false;
+let _currentLiveAudio = null;
+
+function toggleLiveCall() {
+  const btn = document.getElementById('live-call-btn');
+  _liveCallMode = !_liveCallMode;
+  if (_liveCallMode) {
+    btn.classList.add('active');
+    btn.style.background = 'var(--green)';
+    btn.style.color = '#fff';
+    btn.style.borderColor = 'var(--green)';
+    showToast('Live Call Mode active. Click mic to speak. Responses will auto-play.', 'success', 5000);
+  } else {
+    btn.classList.remove('active');
+    btn.style.background = 'var(--bg3)';
+    btn.style.color = 'var(--dim)';
+    btn.style.borderColor = 'var(--border)';
+    if (_currentLiveAudio) _currentLiveAudio.pause();
+    showToast('Live Call Mode deactivated.', 'info', 3000);
+  }
+}
+
 function toggleVoiceInput() {
+  if (_liveCallMode && _currentLiveAudio && !_currentLiveAudio.paused) {
+    _currentLiveAudio.pause();
+    showToast('AI interrupted. Listening...', 'info', 2000);
+  }
   if (_voiceRecording) { stopVoiceInput(); return; }
   startVoiceInput();
 }
@@ -3143,10 +3210,15 @@ async function sendVoiceForTranscription() {
     const d = await r.json();
     if (d.text) {
       const inp = document.getElementById('chat-input-main');
-      inp.value = inp.value ? inp.value + ' ' + d.text : d.text;
-      inp.focus();
-      autoResize(inp);
-      showToast('Transcribed!', 'success', 2000);
+      if (_liveCallMode) {
+        inp.value = d.text;
+        sendChatMain();
+      } else {
+        inp.value = inp.value ? inp.value + ' ' + d.text : d.text;
+        inp.focus();
+        autoResize(inp);
+        showToast('Transcribed!', 'success', 2000);
+      }
     } else {
       showToast(d.error || 'Transcription failed', 'error', 4000);
     }
@@ -3989,6 +4061,7 @@ try {
             'model': model_status,
             'primary_model': f"{mm.primary_provider}/{mm.primary_model}" if mm else '--',
             'fallback_model': f"{mm.fallback_provider}/{mm.fallback_model}" if mm else '--',
+            'planner_model': f"{models_cfg.get('planner_provider', 'openrouter')}/{models_cfg.get('planner_model', 'google/gemini-3.1-pro-preview')}",
             'auto_fallback': mm.auto_fallback_enabled if mm else False,
             'smart_routing': models_cfg.get('smart_routing', False),
             'streaming': models_cfg.get('streaming', True),
@@ -4185,16 +4258,25 @@ try {
             pm = data.get('primary_model', '').strip()
             fp = data.get('fallback_provider', '').strip()
             fm = data.get('fallback_model', '').strip()
+            plp = data.get('planner_provider', '').strip()
+            plm = data.get('planner_model', '').strip()
 
             if pp and pm:
                 await mm.set_primary(pp, pm)
             if fp and fm:
                 await mm.set_fallback(fp, fm)
 
-            # Toggles — update in-memory, then save ONCE (not 3x)
+            # Toggles & Planner — update in-memory, then save ONCE
             cfg = self.core.config
             cfg.setdefault('models', {})
             toggle_changed = False
+            
+            if plp and plm:
+                if cfg['models'].get('planner_provider') != plp or cfg['models'].get('planner_model') != plm:
+                    cfg['models']['planner_provider'] = plp
+                    cfg['models']['planner_model'] = plm
+                    toggle_changed = True
+                    
             if 'auto_fallback' in data:
                 mm.auto_fallback_enabled = bool(data['auto_fallback'])
                 cfg['models']['auto_fallback'] = mm.auto_fallback_enabled

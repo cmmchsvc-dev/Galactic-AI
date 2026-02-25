@@ -30,7 +30,7 @@ Galactic AI is a fully custom AI assistant platform built by Chesley McDaniel. I
 ---
 
 ## Milestones
-- [x] v1.1.6 Strategic Planning & Deep Memory updates completed
+- [x] v1.1.7 Strategic Planning & Deep Memory updates completed
 - [x] Restart resilience: conversation_auto_recall + boot_recall_banner community skills
 - [x] v1.1.2 release implementation plan completed
 - [x] v1.1.4 current version

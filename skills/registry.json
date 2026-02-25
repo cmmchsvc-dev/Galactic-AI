@@ -47,6 +47,14 @@
       "installed_at": "2026-02-25T14:00:00.000000",
       "source": "ai_authored",
       "description": "Vector database long-term memory using ChromaDB."
+    },
+    {
+      "module": "computer_use",
+      "class": "ComputerUseSkill",
+      "file": "computer_use.py",
+      "installed_at": "2026-02-25T16:00:00.000000",
+      "source": "ai_authored",
+      "description": "Vision-based GUI automation: find and click elements on screen using Gemini."
     }
   ]
 }
