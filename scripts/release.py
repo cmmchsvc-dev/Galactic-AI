@@ -44,13 +44,17 @@ INCLUDE_LIST = [
     "personality.py",
     "personality.yaml",
     "requirements.txt",
-    "subagent_worker.py",
     "web_deck.py",
     "telegram_bridge.py",
     "discord_bridge.py",
     "gmail_bridge.py",
     "whatsapp_bridge.py",
-    "flusher.py"
+    "flusher.py",
+    "hot_memory_buffer.py",
+    "imprint_engine.py",
+    "remote_access.py",
+    "ollama_manager.py",
+    "nvidia_gateway.py"
 ]
 
 def sync_versions(new_version):
