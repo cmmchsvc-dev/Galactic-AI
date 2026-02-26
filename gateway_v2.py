@@ -2291,12 +2291,16 @@ class GalacticGateway:
         )
 
         try:
-            # Run the isolated ReAct loop using the planner model
-            result = await self.speak_isolated(
-                user_input=f"Analyze and plan the following task:\n\n{user_input}",
-                context=planner_context,
-                override_provider=planner_provider,
-                override_model=planner_model
+            # Run the isolated ReAct loop using the planner model with a strict timeout
+            result = await asyncio.wait_for(
+                self.speak_isolated(
+                    user_input=f"Analyze and plan the following task:\n\n{user_input}",
+                    context=planner_context,
+                    override_provider=planner_provider,
+                    override_model=planner_model,
+                    use_lock=False # ALREADY LOCKED BY SPEAK()
+                ),
+                timeout=120
             )
 
             # Extract the <plan> from the result
@@ -2334,7 +2338,15 @@ class GalacticGateway:
     async def speak(self, user_input, context="", chat_id=None, images=None):
         """
         Main entry point for user interaction.
-        Implements a ReAct loop: Think -> Act -> Observe -> Answer.
+        Serialized via _speak_lock to prevent concurrent executions and duplicate planners.
+        """
+        async with self._speak_lock:
+            return await self._speak_logic(user_input, context=context, chat_id=chat_id, images=images)
+
+    async def _speak_logic(self, user_input, context="", chat_id=None, images=None):
+        """
+        Internal implementation of the ReAct loop.
+        Expects caller to handle locking and state snapshots.
 
         images: optional list of {name, mime, b64} dicts for vision-capable models.
           When provided, the user message is built as a multimodal content array
@@ -2757,55 +2769,59 @@ class GalacticGateway:
 
     # ── Isolated speak for sub-agents ─────────────────────────────────
 
-    async def speak_isolated(self, user_input, context="", chat_id=None, images=None, override_provider=None, override_model=None):
+    async def speak_isolated(self, user_input, context="", chat_id=None, images=None, override_provider=None, override_model=None, use_lock=True):
         """
         Run speak() with isolated state for sub-agents or planners.
         Saves and restores all mutable gateway state so concurrent calls
         don't corrupt the main agent's session.
-        Serialized via _speak_lock to prevent sub-agents from interfering
-        with each other.
         """
-        async with self._speak_lock:
-            # Snapshot current state
-            saved_speaking = self._speaking
-            saved_history = self.history
-            saved_llm_prov = self.llm.provider
-            saved_llm_model = self.llm.model
-            saved_llm_key = self.llm.api_key
-            saved_queued = self._queued_switch
+        if use_lock:
+            async with self._speak_lock:
+                return await self._speak_isolated_internal(user_input, context, chat_id, images, override_provider, override_model)
+        else:
+            return await self._speak_isolated_internal(user_input, context, chat_id, images, override_provider, override_model)
 
-            # Snapshot model_manager routing state
-            model_mgr = getattr(self.core, 'model_manager', None)
-            saved_routed = getattr(model_mgr, '_routed', False) if model_mgr else False
-            saved_pre_route = getattr(model_mgr, '_pre_route_state', None) if model_mgr else None
+    async def _speak_isolated_internal(self, user_input, context, chat_id, images, override_provider, override_model):
+        # Snapshot current state
+        saved_speaking = self._speaking
+        saved_history = self.history
+        saved_llm_prov = self.llm.provider
+        saved_llm_model = self.llm.model
+        saved_llm_key = self.llm.api_key
+        saved_queued = self._queued_switch
 
-            try:
-                # Apply overrides if provided
-                if override_provider and override_model and model_mgr:
-                    self.llm.provider = override_provider
-                    self.llm.model = override_model
-                    model_mgr._set_api_key(override_provider)
+        # Snapshot model_manager routing state
+        model_mgr = getattr(self.core, 'model_manager', None)
+        saved_routed = getattr(model_mgr, '_routed', False) if model_mgr else False
+        saved_pre_route = getattr(model_mgr, '_pre_route_state', None) if model_mgr else None
 
-                # Use isolated history (sub-agent has no prior conversation)
-                self.history = []
-                self._speaking = False
-                self._queued_switch = None
-                if model_mgr:
-                    model_mgr._routed = False
-                    model_mgr._pre_route_state = None
+        try:
+            # Apply overrides if provided
+            if override_provider and override_model and model_mgr:
+                self.llm.provider = override_provider
+                self.llm.model = override_model
+                model_mgr._set_api_key(override_provider)
 
-                return await self.speak(user_input, context=context, chat_id=chat_id, images=images)
-            finally:
-                # Restore all state
-                self._speaking = saved_speaking
-                self.history = saved_history
-                self.llm.provider = saved_llm_prov
-                self.llm.model = saved_llm_model
-                self.llm.api_key = saved_llm_key
-                self._queued_switch = saved_queued
-                if model_mgr:
-                    model_mgr._routed = saved_routed
-                    model_mgr._pre_route_state = saved_pre_route
+            # Use isolated history (sub-agent has no prior conversation)
+            self.history = []
+            self._speaking = False
+            self._queued_switch = None
+            if model_mgr:
+                model_mgr._routed = False
+                model_mgr._pre_route_state = None
+
+            return await self._speak_logic(user_input, context=context, chat_id=chat_id, images=images)
+        finally:
+            # Restore all state
+            self._speaking = saved_speaking
+            self.history = saved_history
+            self.llm.provider = saved_llm_prov
+            self.llm.model = saved_llm_model
+            self.llm.api_key = saved_llm_key
+            self._queued_switch = saved_queued
+            if model_mgr:
+                model_mgr._routed = saved_routed
+                model_mgr._pre_route_state = saved_pre_route
 
     # ── Tool timeout defaults ────────────────────────────────────────
     _TOOL_TIMEOUTS = {
