@@ -2298,7 +2298,8 @@ class GalacticGateway:
                     context=planner_context,
                     override_provider=planner_provider,
                     override_model=planner_model,
-                    use_lock=False # ALREADY LOCKED BY SPEAK()
+                    use_lock=False, # ALREADY LOCKED BY SPEAK()
+                    skip_planning=True # PREVENT RECURSION
                 ),
                 timeout=120
             )
@@ -2335,15 +2336,15 @@ class GalacticGateway:
             await self.core.log(f"[Planner] Error generating plan via agent: {e}", priority=1)
             return None
 
-    async def speak(self, user_input, context="", chat_id=None, images=None):
+    async def speak(self, user_input, context="", chat_id=None, images=None, skip_planning=False):
         """
         Main entry point for user interaction.
         Serialized via _speak_lock to prevent concurrent executions and duplicate planners.
         """
         async with self._speak_lock:
-            return await self._speak_logic(user_input, context=context, chat_id=chat_id, images=images)
+            return await self._speak_logic(user_input, context=context, chat_id=chat_id, images=images, skip_planning=skip_planning)
 
-    async def _speak_logic(self, user_input, context="", chat_id=None, images=None):
+    async def _speak_logic(self, user_input, context="", chat_id=None, images=None, skip_planning=False):
         """
         Internal implementation of the ReAct loop.
         Expects caller to handle locking and state snapshots.
@@ -2401,14 +2402,14 @@ class GalacticGateway:
         # Decide if a plan is needed. Trigger on explicit command or complex code tasks.
         needs_plan = False
         lower_input = user_input.lower()
-        if not self.active_plan:
+        if not self.active_plan and not skip_planning:
             if lower_input.startswith("/plan ") or "plan out" in lower_input or "scan the codebase" in lower_input:
                 needs_plan = True
                 user_input = user_input.replace("/plan ", "").strip()
             elif any(kw in lower_input for kw in ["refactor", "build a ", "create a ", "write a script", "complex task", "update", "add", "fix", "change", "implement"]):
                 needs_plan = True
 
-        if needs_plan and not self.active_plan:
+        if needs_plan and not self.active_plan and not skip_planning:
             plan = await self._generate_plan(user_input)
             if plan:
                 self.active_plan = plan
@@ -2769,7 +2770,7 @@ class GalacticGateway:
 
     # ── Isolated speak for sub-agents ─────────────────────────────────
 
-    async def speak_isolated(self, user_input, context="", chat_id=None, images=None, override_provider=None, override_model=None, use_lock=True):
+    async def speak_isolated(self, user_input, context="", chat_id=None, images=None, override_provider=None, override_model=None, use_lock=True, skip_planning=False):
         """
         Run speak() with isolated state for sub-agents or planners.
         Saves and restores all mutable gateway state so concurrent calls
@@ -2777,11 +2778,11 @@ class GalacticGateway:
         """
         if use_lock:
             async with self._speak_lock:
-                return await self._speak_isolated_internal(user_input, context, chat_id, images, override_provider, override_model)
+                return await self._speak_isolated_internal(user_input, context, chat_id, images, override_provider, override_model, skip_planning)
         else:
-            return await self._speak_isolated_internal(user_input, context, chat_id, images, override_provider, override_model)
+            return await self._speak_isolated_internal(user_input, context, chat_id, images, override_provider, override_model, skip_planning)
 
-    async def _speak_isolated_internal(self, user_input, context, chat_id, images, override_provider, override_model):
+    async def _speak_isolated_internal(self, user_input, context, chat_id, images, override_provider, override_model, skip_planning):
         # Snapshot current state
         saved_speaking = self._speaking
         saved_history = self.history
@@ -2810,7 +2811,7 @@ class GalacticGateway:
                 model_mgr._routed = False
                 model_mgr._pre_route_state = None
 
-            return await self._speak_logic(user_input, context=context, chat_id=chat_id, images=images)
+            return await self._speak_logic(user_input, context=context, chat_id=chat_id, images=images, skip_planning=skip_planning)
         finally:
             # Restore all state
             self._speaking = saved_speaking
