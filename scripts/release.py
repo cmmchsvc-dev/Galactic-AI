@@ -20,7 +20,6 @@ INCLUDE_LIST = [
     "docs",
     "chrome-extension",
     "skills",
-    "plugins",
     "CHANGELOG.md",
     "config.yaml",  # We will scrub this later
     "FEATURES.md",
