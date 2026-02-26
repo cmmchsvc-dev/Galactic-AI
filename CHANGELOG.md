@@ -4,6 +4,14 @@ All notable changes to Galactic AI are documented here.
 
 ---
 
+## v1.1.9 — Core Dependency Fix (2026-02-25)
+
+### Fixed
+- **Missing Dependencies:** Fixed `ModuleNotFoundError: No module named 'scheduler'` and other missing core file errors in the release packages. Added `scheduler.py`, `splash.py`, `autopatch.py`, and `fix_ollama.py` to the automated release pipeline.
+- **Version Sync:** Refined version syncing across all documentation and core files.
+
+---
+
 ## v1.1.8 — Self-Healing Code & Workspace RAG (2026-02-25)
 
 ### Added
