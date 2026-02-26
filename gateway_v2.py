@@ -3602,19 +3602,24 @@ class GalacticGateway:
                                         return f"[ERROR] {provider}: {err_msg}"
                                     continue
                                 choice = choices[0]
+                                if not choice:
+                                    continue
+                                    
                                 delta_obj = choice.get('delta', {})
+                                if not delta_obj:
+                                    continue
+                                    
                                 delta = delta_obj.get('content', '') or ''
                                 # NVIDIA thinking models may also stream reasoning_content
                                 if not delta:
                                     delta = delta_obj.get('reasoning_content', '') or ''
 
                                 # ── Accumulate native tool_calls from delta ──
-                                # Some models (Gemini via OpenRouter, GPT-4+) return tool
-                                # calls in the native `tool_calls` field instead of text.
-                                # Arguments arrive incrementally, so we accumulate them.
                                 tc_deltas = delta_obj.get('tool_calls', [])
                                 for tc in (tc_deltas or []):
+                                    if not tc: continue
                                     fn = tc.get('function', {})
+                                    if not fn: continue
                                     if fn.get('name'):
                                         _tc_name = fn['name']
                                     if fn.get('arguments'):
@@ -3637,9 +3642,10 @@ class GalacticGateway:
                                         await self.core.relay.emit(3, "stream_chunk", "".join(token_buf))
                                         token_buf = []
                                         await asyncio.sleep(0)  # yield to other tasks (typing, etc.)
+
                                 # Capture usage from final streaming chunk (OpenAI/OpenRouter)
-                                if 'usage' in chunk:
-                                    usage = chunk['usage']
+                                usage = chunk.get('usage')
+                                if usage:
                                     self._last_usage = {
                                         "prompt_tokens": usage.get('prompt_tokens', 0),
                                         "completion_tokens": usage.get('completion_tokens', 0),
