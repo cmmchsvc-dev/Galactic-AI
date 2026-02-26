@@ -214,6 +214,7 @@ class GalacticCore:
             ('skills.core.social_media',     'SocialMediaSkill'),    # Phase 3
             ('skills.core.subagent_manager', 'SubAgentSkill'),       # Phase 3
             ('skills.core.browser_pro',    'BrowserProSkill'),     # Phase 4
+            ('skills.core.system_tools',     'SystemSkill'),
         ]
         loaded_skill_names = []
         for module_path, class_name in CORE_SKILLS:
