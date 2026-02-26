@@ -2251,7 +2251,7 @@ class GalacticGateway:
                 plan_raw_output = await self.tools["gemini_code"]["fn"]({"prompt": planning_prompt, "model": "gemini-3-flash-preview"})
                 
                 # Extract the numbered list
-                plan_steps = re.findall(r'^\\s*\\d\\.\\s*(.*)', plan_raw_output, re.MULTILINE)
+                plan_steps = re.findall(r'^\s*\d\.\s*(.*)', plan_raw_output, re.MULTILINE)
                 
                 if plan_steps:
                     plan = { "steps": plan_steps, "current_step": 0, "original_query": user_input }
@@ -2267,7 +2267,11 @@ class GalacticGateway:
                         })
                     return plan
                 else:
-                    await self.core.log("[Planner] Failed to extract plan steps from LLM response.", priority=1)
+                    await self.core.log("[Planner] Failed to extract plan steps from LLM response. Using raw output.", priority=1)
+                    # Fallback: Treat the whole response as one big step if no numbers found
+                    plan_steps = [s.strip() for s in plan_raw_output.split('\n') if s.strip()]
+                    if plan_steps:
+                         return { "steps": plan_steps, "current_step": 0, "original_query": user_input }
                     return None
             except Exception as e:
                 await self.core.log(f"[Planner] Error generating plan: {e}", priority=1)
@@ -2300,11 +2304,11 @@ class GalacticGateway:
             plan_text = match.group(1).strip() if match else result
             
             # Extract the numbered list
-            plan_steps = re.findall(r'^\\s*\\d\\.\\s*(.*)', plan_text, re.MULTILINE)
+            plan_steps = re.findall(r'^\s*\d\.\s*(.*)', plan_text, re.MULTILINE)
             
-            if not plan_steps and "<plan>" in result:
-                # Fallback if no numbers were used but plan tag exists
-                plan_steps = [s.strip() for s in plan_text.split('\n') if s.strip()]
+            if not plan_steps:
+                # Fallback if no numbers were used (split by lines)
+                plan_steps = [s.strip() for s in plan_text.split('\n') if s.strip()][:10]
 
             if plan_steps:
                 plan = { "steps": plan_steps, "current_step": 0, "original_query": user_input }
