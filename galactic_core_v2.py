@@ -160,7 +160,7 @@ class GalacticCore:
             priority=2
         )
         
-        await self.log("Systems initialized. All capabilities running as skills.", priority=2)
+        await self.log("Systems initialized. Core capabilities running as Skills.", priority=2)
 
         # Load Skills (runs alongside plugins during migration)
         await self.load_skills()
