@@ -54,7 +54,11 @@ INCLUDE_LIST = [
     "imprint_engine.py",
     "remote_access.py",
     "ollama_manager.py",
-    "nvidia_gateway.py"
+    "nvidia_gateway.py",
+    "scheduler.py",
+    "splash.py",
+    "autopatch.py",
+    "fix_ollama.py"
 ]
 
 def sync_versions(new_version):
