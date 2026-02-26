@@ -431,27 +431,6 @@ class GalacticGateway:
                 },
                 "fn": self.tool_web_search
             },
-            "open_browser": {
-                "description": "Open a URL in the browser.",
-                "parameters": {
-                    "type": "object",
-                    "properties": {
-                        "url": {"type": "string", "description": "URL to open (e.g., https://youtube.com)."}
-                    },
-                    "required": ["url"]
-                },
-                "fn": self.tool_open_browser
-            },
-            "screenshot": {
-                "description": "Take a screenshot of the current browser page.",
-                "parameters": {
-                    "type": "object",
-                    "properties": {
-                        "path": {"type": "string", "description": "Path to save screenshot (optional)."}
-                    }
-                },
-                "fn": self.tool_screenshot
-            },
             "edit_file": {
                 "description": "Edit a file by replacing exact text (safer than write_file).",
                 "parameters": {
@@ -464,100 +443,6 @@ class GalacticGateway:
                     "required": ["path", "old_text", "new_text"]
                 },
                 "fn": self.tool_edit_file
-            },
-            "web_fetch": {
-                "description": "Fetch and extract readable content from a URL.",
-                "parameters": {
-                    "type": "object",
-                    "properties": {
-                        "url": {"type": "string", "description": "URL to fetch."},
-                        "mode": {"type": "string", "description": "Extract mode: markdown or text (default: markdown)."}
-                    },
-                    "required": ["url"]
-                },
-                "fn": self.tool_web_fetch
-            },
-            "process_start": {
-                "description": "Start a background process and track it.",
-                "parameters": {
-                    "type": "object",
-                    "properties": {
-                        "command": {"type": "string", "description": "Command to run."},
-                        "session_id": {"type": "string", "description": "Unique ID for this process (optional)."}
-                    },
-                    "required": ["command"]
-                },
-                "fn": self.tool_process_start
-            },
-            "process_status": {
-                "description": "Check status of a background process.",
-                "parameters": {
-                    "type": "object",
-                    "properties": {
-                        "session_id": {"type": "string", "description": "Process session ID."}
-                    },
-                    "required": ["session_id"]
-                },
-                "fn": self.tool_process_status
-            },
-            "process_kill": {
-                "description": "Kill a background process.",
-                "parameters": {
-                    "type": "object",
-                    "properties": {
-                        "session_id": {"type": "string", "description": "Process session ID."}
-                    },
-                    "required": ["session_id"]
-                },
-                "fn": self.tool_process_kill
-            },
-            "analyze_image": {
-                "description": "Analyze an image using vision models (OCR, description, etc).",
-                "parameters": {
-                    "type": "object",
-                    "properties": {
-                        "path": {"type": "string", "description": "Path to image file."},
-                        "prompt": {"type": "string", "description": "What to analyze (default: describe image)."}
-                    },
-                    "required": ["path"]
-                },
-                "fn": self.tool_analyze_image
-            },
-            "memory_search": {
-                "description": "Search memory for relevant context using semantic search.",
-                "parameters": {
-                    "type": "object",
-                    "properties": {
-                        "query": {"type": "string", "description": "What to search for in memory."},
-                        "top_k": {"type": "number", "description": "Number of results (default: 5)."}
-                    },
-                    "required": ["query"]
-                },
-                "fn": self.tool_memory_search
-            },
-            "memory_imprint": {
-                "description": "Save important information to long-term memory.",
-                "parameters": {
-                    "type": "object",
-                    "properties": {
-                        "content": {"type": "string", "description": "What to remember."},
-                        "tags": {"type": "string", "description": "Tags/category (optional)."}
-                    },
-                    "required": ["content"]
-                },
-                "fn": self.tool_memory_imprint
-            },
-            "text_to_speech": {
-                "description": "Convert text to speech using ElevenLabs. Returns path to audio file.",
-                "parameters": {
-                    "type": "object",
-                    "properties": {
-                        "text": {"type": "string", "description": "Text to convert to speech."},
-                        "voice": {"type": "string", "description": "Voice name (default: Nova)."}
-                    },
-                    "required": ["text"]
-                },
-                "fn": self.tool_text_to_speech
             },
             # ── NVIDIA FLUX image generation ──────────────────────────────
             "generate_image": {
@@ -1078,21 +963,25 @@ class GalacticGateway:
     def register_skill_tools(self, skills):
         """Merge tools from all loaded skills into self.tools.
         Called by GalacticCore.load_skills() after all skills are instantiated.
-        Tool names already in self.tools are skipped (core/gateway tools take priority).
+        Skill tools will OVERWRITE core gateway tools if names match, ensuring
+        upgraded skill versions take priority.
         """
         count = 0
+        overwritten = []
         for skill in skills:
             if not skill.enabled:
                 continue
             skill_tools = skill.get_tools()
             for tool_name, tool_def in skill_tools.items():
                 if tool_name in self.tools:
-                    print(f"[Skills] Tool conflict: {tool_name} already registered, skipping from {skill.skill_name}")
-                    continue
+                    overwritten.append(tool_name)
                 self.tools[tool_name] = tool_def
                 count += 1
+        
         if count:
-            print(f"[Skills] Registered {count} tool(s) from skills")
+            print(f"[Skills] Registered {count} tool(s) from skills.")
+        if overwritten:
+            print(f"[Skills] Upgraded core tools: {', '.join(set(overwritten))}")
 
     # --- Tool Implementations ---
     async def tool_read_file(self, args):
