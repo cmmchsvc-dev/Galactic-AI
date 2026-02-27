@@ -1,6 +1,6 @@
 # Galactic AI — Feature Reference
 
-Complete feature reference for Galactic AI Automation Suite **v1.1.4**.
+Complete feature reference for Galactic AI Automation Suite **v1.2.0**.
 
 ---
 
@@ -8,6 +8,18 @@ Complete feature reference for Galactic AI Automation Suite **v1.1.4**.
 
 ### AsyncIO Runtime
 The entire system runs on Python's `asyncio` event loop. Every subsystem — LLM gateway, web server, Telegram bridge, Discord bridge, WhatsApp bridge, Gmail bridge, plugin engine, Ollama manager, task scheduler — is fully non-blocking. Nothing stalls the core.
+
+### Resumable Workflows (Self-Healing)
+If a long-running automation is interrupted by a crash, timeout, or manual stop, you don't have to start over.
+- **Auto-Checkpointing:** The agent saves its full state (`history`, `messages`, `active_plan`, `turn_count`) to `logs/runs/<uuid>/checkpoint.json` every 5 tool calls or immediately on failure.
+- **`resume_workflow` Tool:** Allows Byte to reload a previous state and continue precisely where he left off.
+- **Dashboard UI:** The Thinking tab includes a "Resumable Workflows" list. Select any previous run and click **▶ Resume** to bring it back to life instantly.
+
+### Real-Time Status Orb
+Both the terminal and the Control Deck feature a live "Thinking Orb" (`⠋ Pondering the orb...`) that appears whenever Byte is processing.
+- **Live Timer:** Tracks exactly how long a task has been running.
+- **Dynamic Content:** Rotates through fun, trucker-vibe sayings every 15 seconds to keep the interface feeling "alive."
+- **Nuclear Cancel:** Pressing **Escape** in either the terminal or the Control Deck sends an immediate kill signal to all active agent threads, stopping work instantly.
 
 ### Strategic Planning Phase (Big Brain / Builder Architecture)
 Before diving into the execution loop for complex queries, the gateway initiates a pre-planning phase. It isolates a dedicated "Planner" model in its own ReAct loop. This Planner acts as a Lead Architect: it autonomously scans the necessary files and codebase to understand the context, then outputs a detailed, step-by-step implementation plan.
@@ -51,6 +63,19 @@ Every capability in Galactic AI is a `GalacticSkill` subclass. Skills declare st
 **Metadata fields:** `skill_name`, `version`, `author`, `description`, `category`, `icon`, `is_core`
 
 **Lifecycle hooks:** `on_load()`, `on_unload()`, `run()` (background loop)
+
+### Workspace Oracle (Intelligence)
+The `plan_optimizer` skill (Workspace Oracle) allows Byte to "simulate" a task before executing it. It performs a semantic search of your codebase, retrieves relevant tool schemas, and generates a structured preview of the optimal steps and estimated costs. This prevents "blind execution" on massive codebase changes.
+
+### Cognitive Superpowers
+Fully integrated Jesse Vincent's **Superpowers** cognitive workflows. Byte can now adopt specialized mental models for difficult tasks:
+- `test-driven-development`: Red-Green-Refactor logic for coding.
+- `brainstorming`: Creative exploration of user intent.
+- `systematic-debugging`: Focused root-cause analysis.
+- Use `list_superpowers` and `invoke_superpower` to activate them.
+
+### Native Gemini CLI Bridge
+The `gemini_cli_bridge` skill allows Galactic AI to delegate extremely heavy-duty codebase refactoring to the official Google Gemini CLI. It spawns the CLI in the background with `--yolo` mode for deep, autonomous file interventions while keeping Byte as the primary orchestrator.
 
 ### Core Skills
 Six built-in skills ship with Galactic AI:
@@ -156,7 +181,9 @@ NVIDIA hosts models from many vendors. Galactic AI routes to the correct API key
 Enable `smart_routing: true` in config to auto-select the best model for each task type (coding, reasoning, creative, vision, quick queries).
 
 ### Auto-Fallback & Resilient Fallback Chain
-If the primary provider fails, the system falls back to a secondary provider automatically with error-type-specific cooldowns (rate limit: 60s, server error: 30s, timeout: 10s, auth error: 24h, quota exhausted: 1h). Recovery is automatic — the system periodically retests failed providers and restores them when healthy. Toggle auto-fallback on/off from the Settings tab in the Control Deck.
+If the primary provider fails, the system falls back to a secondary provider automatically.
+- **Planner Redundancy:** You can now configure a `planner_fallback_model`. If your "Big Brain" model hangs or returns empty content, the system instantly re-spawns the lead architect using the fallback model, ensuring your project planning never stalls.
+- **Model Hardening:** Robust O(N) JSON extraction and metadata capture (refusals/reasoning) ensure fallback triggers are accurate and reliable.
 
 ### Self-Healing Code Execution (Test-Driven Development)
 Galactic AI now writes robust code. The `test_driven_coder` tool (part of the `gemini_coder` skill) allows the AI to:
@@ -865,4 +892,4 @@ Set `web.remote_access: true` in `config.yaml`. On next startup, Galactic AI:
 
 ---
 
-**v1.1.4** — Galactic AI Automation Suite
+**v1.2.0** — Galactic AI Automation Suite

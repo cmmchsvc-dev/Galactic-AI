@@ -93,6 +93,8 @@ class GalacticWebDeck:
         # Resumable Workflows
         self.app.router.add_get('/api/runs', self.handle_runs)
         self.app.router.add_post('/api/resume/{uuid}', self.handle_resume)
+        # Cancellation
+        self.app.router.add_post('/api/cancel_task', self.handle_cancel_task)
         # Chrome Bridge WebSocket — connects the Galactic Browser extension
         self.app.router.add_get('/ws/chrome_bridge', self.handle_chrome_bridge_ws)
         self.trace_buffer = []  # last 500 agent trace entries for persistence
@@ -143,6 +145,20 @@ class GalacticWebDeck:
         )
         return web.json_response({'ok': True, 'message': f'Resume triggered for {uuid_val}'})
 
+    async def handle_cancel_task(self, request):
+        """POST /api/cancel_task - Cancels ALL currently active agent tasks."""
+        gateway = self.core.gateway
+        count = 0
+        for t in list(gateway._active_tasks):
+            if not t.done():
+                t.cancel()
+                count += 1
+        
+        if count > 0:
+            await self.core.log(f"🚫 User clicked CANCEL in Control Deck. Aborting {count} task(s)...", priority=2)
+            return web.json_response({'ok': True, 'message': f'Cancellation requested for {count} task(s)'})
+        return web.json_response({'ok': False, 'message': 'No active task to cancel'})
+
     async def handle_index(self, request):
         html = r"""<!DOCTYPE html>
 <html lang="en">
@@ -163,9 +179,10 @@ html{font-size:var(--fs)}
 body{background:var(--bg);color:var(--text);font-family:var(--font);height:100vh;overflow:hidden;display:flex;flex-direction:column;font-size:1rem}
 
 /* ── TOPBAR ─────────────────────────────────────────────────────────────── */
-#topbar{display:flex;align-items:center;gap:12px;padding:10px 20px;background:var(--bg2);border-bottom:1px solid var(--border);flex-shrink:0;z-index:100;box-shadow:0 2px 20px rgba(0,0,0,0.4)}
+#topbar{display:flex;align-items:center;padding:10px 20px;background:var(--bg2);border-bottom:1px solid var(--border);flex-shrink:0;z-index:100;box-shadow:0 2px 20px rgba(0,0,0,0.4)}
+#topbar-left{display:flex;align-items:center;gap:12px;flex-shrink:0}
+#topbar-right{display:flex;align-items:center;gap:12px;flex-shrink:0}
 #topbar .logo{font-size:1.05rem;font-weight:800;letter-spacing:5px;color:var(--cyan);text-shadow:0 0 14px var(--cyan),0 0 30px rgba(0,243,255,0.3);white-space:nowrap}
-#topbar .spacer{flex:1}
 .status-dot{width:10px;height:10px;border-radius:50%;background:var(--green);box-shadow:0 0 8px var(--green),0 0 16px rgba(0,255,136,0.3);flex-shrink:0}
 .status-dot.offline{background:var(--red);box-shadow:0 0 8px var(--red)}
 #ollama-pill{display:flex;align-items:center;gap:6px;padding:5px 13px;border:1px solid var(--border);border-radius:20px;font-size:0.82rem;background:var(--bg3);cursor:pointer;transition:border-color .2s}
@@ -176,6 +193,10 @@ body{background:var(--bg);color:var(--text);font-family:var(--font);height:100vh
 .topbar-btn:hover{border-color:var(--cyan);color:var(--cyan);text-shadow:0 0 8px var(--cyan)}
 #token-counter{font-size:0.78rem;color:var(--dim);font-family:var(--mono)}
 #main{display:flex;flex:1;overflow:hidden}
+
+/* ── ORB CONTAINER ──────────────────────────────────────────────────────── */
+#orb-container{flex:1;display:flex;justify-content:center;align-items:center;min-width:0;padding:0 20px}
+#thinking-orb{display:none;color:var(--cyan);font-family:var(--mono);font-size:0.9rem;text-shadow:0 0 12px rgba(0,243,255,0.6);white-space:nowrap;font-weight:bold;background:rgba(0,0,0,0.4);padding:4px 14px;border-radius:12px;border:1px solid rgba(0,243,255,0.1)}
 
 /* ── SIDEBAR ─────────────────────────────────────────────────────────────── */
 #sidebar{width:240px;min-width:190px;background:var(--bg2);border-right:1px solid var(--border);display:flex;flex-direction:column;overflow:hidden;transition:width .2s}
@@ -759,21 +780,29 @@ body.glow-max .status-dot{box-shadow:0 0 14px var(--green),0 0 28px rgba(0,255,1
 
 <!-- TOP BAR -->
 <div id="topbar">
-  <div class="logo">⬡ GALACTIC AI</div>
-  <div style="font-size:0.7em;color:var(--cyan);letter-spacing:2px;opacity:0.7;font-weight:600">CONTROL DECK</div>
-  <div id="version-badge" style="font-size:0.65em;color:var(--dim);letter-spacing:1px;padding:2px 7px;border:1px solid var(--border);border-radius:10px;cursor:default" title="Galactic AI version">v1.1.2</div>
-  <div id='ollama-pill' onclick='switchTab("models")'>
-    <div class="status-dot" id="ollama-dot"></div>
-    <span id="ollama-label">Ollama</span>
+  <div id="topbar-left">
+    <div class="logo">⬡ GALACTIC AI</div>
+    <div style="font-size:0.7em;color:var(--cyan);letter-spacing:2px;opacity:0.7;font-weight:600">CONTROL DECK</div>
+    <div id="version-badge" style="font-size:0.65em;color:var(--dim);letter-spacing:1px;padding:2px 7px;border:1px solid var(--border);border-radius:10px;cursor:default" title="Galactic AI version">v1.2.0</div>
+    <div id='ollama-pill' onclick='switchTab("models")'>
+      <div class="status-dot" id="ollama-dot"></div>
+      <span id="ollama-label">Ollama</span>
+    </div>
+    <div id='model-badge' onclick='switchTab("models")'>Loading...</div>
   </div>
-  <div id='model-badge' onclick='switchTab("models")'>Loading...</div>
-  <div class="spacer"></div>
-  <div id="token-counter">↑0 ↓0 tokens</div>
-  <button class="topbar-btn" onclick="clearChat()">🗑 Clear</button>
-  <button class="topbar-btn" onclick="switchTab('logs')">📋 Logs</button>
-  <button class="topbar-btn" onclick="showSetupWizard({})" title="Re-run Setup Wizard — add API keys, change settings">⚙ Setup</button>
-  <button class="topbar-btn" onclick="openDisplaySettings()" title="Display Settings — font size, CRT effect, etc.">🖥 Display</button>
-  <button class="topbar-btn" onclick="location.reload()">↺</button>
+
+  <div id="orb-container">
+    <div id="thinking-orb">⠋ Pondering the orb...</div>
+  </div>
+
+  <div id="topbar-right">
+    <div id="token-counter">↑0 ↓0 tokens</div>
+    <button class="topbar-btn" onclick="clearChat()">🗑 Clear</button>
+    <button class="topbar-btn" onclick="switchTab('logs')">📋 Logs</button>
+    <button class="topbar-btn" onclick="showSetupWizard({})" title="Re-run Setup Wizard — add API keys, change settings">⚙ Setup</button>
+    <button class="topbar-btn" onclick="openDisplaySettings()" title="Display Settings — font size, CRT effect, etc.">🖥 Display</button>
+    <button class="topbar-btn" onclick="location.reload()">↺</button>
+  </div>
 </div>
 
 <!-- DISPLAY SETTINGS MODAL -->
@@ -1390,6 +1419,69 @@ let currentTool = null;
 let autoScroll = true;
 let allLogs = [];
 let httpChatPending = false;  // suppresses WS 'thought' dupes while HTTP /api/chat in flight
+
+let _orbInterval = null;
+let _orbStartTime = 0;
+let _orbActiveCount = 0;
+const ORB_JOKES = [
+  "Pondering the orb...",
+  "Consulting the digital ancestors...",
+  "Waking up the subagents...",
+  "Counting the stars...",
+  "Re-routing the warp drive...",
+  "Convincing the LLM it is human...",
+  "Generating highly plausible hallucinations...",
+  "Downloading more RAM...",
+  "Bribing the firewall...",
+  "Feeding the hamsters...",
+  "Synthesizing cognitive fluid...",
+  "Tuning the flux capacitor...",
+  "Aligning the satellite dish...",
+  "Optimizing the spice flow...",
+  "Recalibrating the reality matrix...",
+  "Hacking the mainframe (nicely)...",
+  "Polishing the chrome...",
+  "Checking the tire pressure...",
+  "Swapping the glasspacks..."
+];
+
+function startOrb() {
+  _orbActiveCount++;
+  const el = document.getElementById('thinking-orb');
+  if (!el || _orbActiveCount > 1) return;
+  
+  el.style.display = 'block';
+  _orbStartTime = Date.now();
+  let frame = 0;
+  let jokeIdx = Math.floor(Math.random() * ORB_JOKES.length);
+  const frames = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏'];
+  
+  clearInterval(_orbInterval);
+  _orbInterval = setInterval(() => {
+    const elapsed = Math.floor((Date.now() - _orbStartTime) / 1000);
+    const mins = Math.floor(elapsed / 60);
+    const secs = (elapsed % 60).toString().padStart(2, '0');
+    
+    // Change joke every 15 seconds
+    if (elapsed > 0 && elapsed % 15 === 0) {
+      jokeIdx = (jokeIdx + 1) % ORB_JOKES.length;
+    }
+    
+    el.textContent = `${frames[frame]} ${ORB_JOKES[jokeIdx]} (esc to cancel, ${mins}m ${secs}s)`;
+    frame = (frame + 1) % frames.length;
+  }, 100);
+}
+
+function stopOrb() {
+  _orbActiveCount--;
+  if (_orbActiveCount < 0) _orbActiveCount = 0;
+  if (_orbActiveCount > 0) return;
+
+  const el = document.getElementById('thinking-orb');
+  if (el) el.style.display = 'none';
+  clearInterval(_orbInterval);
+}
+
 let ALIASES = [];
 
 async function loadAliases() {
@@ -2125,6 +2217,22 @@ async function sendChatMain() {
 function handleKeyMain(e) {
   if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendChatMain(); }
 }
+
+// Global key listeners
+document.addEventListener('keydown', async (e) => {
+  if (e.key === 'Escape') {
+    const orb = document.getElementById('thinking-orb');
+    const isVisible = orb && window.getComputedStyle(orb).display !== 'none';
+    if (isVisible) {
+      try {
+        const r = await authFetch('/api/cancel_task', { method: 'POST' });
+        const d = await r.json();
+        if (d.ok) showToast('🚫 Task cancellation requested', 'info', 3000);
+      } catch (err) { console.error('Cancel error:', err); }
+    }
+  }
+});
+
 function autoResize(el) {
   el.style.height = '44px';
   el.style.height = Math.min(el.scrollHeight, 200) + 'px';
@@ -3497,6 +3605,7 @@ function handleAgentTrace(data) {
 
   // ── SESSION START ──
   if (phase === 'session_start') {
+    startOrb();
     const sEl = document.createElement('div');
     sEl.className = 'trace-session';
     sEl.dataset.sid = sid;
@@ -3587,18 +3696,14 @@ function handleAgentTrace(data) {
   } else if (phase === 'tool_result') {
     label = data.success ? 'TOOL RESULT' : 'TOOL ERROR';
     html = '<span class="trace-tool-badge">' + escHtml(data.tool || '') + '</span>\n' + escHtml(data.result || '');
-  } else if (phase === 'final_answer') {
-    label = 'FINAL ANSWER';
-    html = escHtml((data.content || '').substring(0, 2000));
-  } else if (phase === 'duplicate_blocked') {
-    label = 'DUPLICATE BLOCKED';
-    html = 'Blocked repeated call to <span class="trace-tool-badge">' + escHtml(data.tool || '') + '</span>';
-  } else if (phase === 'tool_not_found') {
-    label = 'TOOL NOT FOUND';
-    html = 'Unknown tool: <span class="trace-tool-badge">' + escHtml(data.tool || '') + '</span>';
   } else if (phase === 'session_abort') {
+    stopOrb();
     label = 'ABORTED';
     html = escHtml(data.reason || 'max turns exceeded');
+  } else if (phase === 'final_answer') {
+    stopOrb();
+    label = 'FINAL ANSWER';
+    html = escHtml((data.content || '').substring(0, 2000));
   } else {
     html = escHtml(JSON.stringify(data).substring(0, 500));
   }

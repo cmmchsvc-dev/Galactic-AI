@@ -1,67 +1,65 @@
 # PROJECT STATE
 
-**Last Updated:** 2026-02-25 16:30
+**Last Updated:** 2026-02-26 23:30
 **Owner:** Chesley McDaniel (techno-hippie / Ches)
 **Repo Path:** C:\Users\Chesley\Galactic AI
-**Current Version:** v1.2.0 (latest release: Galactic-AI-v1.2.0-windows.zip 507KB)
+**Current Version:** v1.2.0 (The Hivemind Update)
 
 ---
 
 ## Summary
-Galactic AI: Self-evolving AI platform w/ 150+ tools, skills ecosystem (core/community dynamic), Chrome ext + Playwright headless + desktop pixel automation, FLUX/Imagen/Veo gen, subagents, ChromaDB RAG (codebase/user lore), git/memory/procs. Local Win11, multi-LLM (Google/Anthropic/OpenRouter/NVIDIA/Ollama), web/Telegram UI. ~1,200 files/50MB, logs/images heavy.
+Galactic AI: Self-evolving AI platform w/ 155+ tools, skills ecosystem, Resumable Workflows (checkpoints), Mission Control Dashboard, Workspace Oracle (Plan Optimizer), and native Gemini CLI integration. High-reliability ReAct engine with auto-fallback and strict anti-hallucination guardrails.
 
 ---
 
 ## Current Focus
-- Shiny upgrades: Git init, Workspace RAG live, TruckHacker skill, voice polish, subagent swarm.
+- Production stability: Refining the Resumable Workflows system and monitoring the new Planner Fallback logic.
 
 ---
 
 ## Active Tasks
-- [x] PROJECT_STATE.md synced to C:\ (v1.2.0, full tree/stats/skills)
-- [ ] Trigger workspace_indexer.py for codebase RAG
-- [x] Deep scan: list_dir recurse complete
+- [x] Resumable Workflows (checkpoint/load) live
+- [x] Web Deck Thinking tab upgraded with Runs/Resume UI
+- [x] Workspace Oracle (plan_optimizer) skill deployed
+- [x] Gemini CLI Bridge (invoke_gemini_cli) live
+- [x] Superpowers cognitive framework integrated
+- [x] Planner Fallback Redundancy implemented
+- [x] Status Spinner & Escape-to-Cancel hotfixed
 
 ---
 
 ## Milestones
-- [x] v1.2.0 Self-Healing (test_driven_coder) & Workspace RAG
-- [x] v1.1.7 Computer Use (vision-click UI) & Live Voice
+- [x] v1.2.0 The Hivemind Update (Resumables, Oracle, CLI Bridge)
+- [x] v1.1.9 core reliability & streaming fixes
 - [x] v1.1.6 Big Brain Planner & ChromaDB Deep Memory
-- [x] Skills explosion: core (browser_pro/chrome/desktop/social), community (boot_recall/computer_use/gemini_coder/memory_manager/workspace_indexer)
-- [x] Browser triple-threat, GenAI factory, social auto-post
+- [x] Skills explosion: core (browser_pro/chrome/desktop/social), community (superpowers/plan_optimizer/gemini_cli_bridge)
 
 ---
 
 ## Blockers / Issues
-- None (UAC off, Claude suspend irrelevant—self-bootstrapping)
+- None. System is stable and pushed to GitHub.
 
 ---
 
 ## Key Files / Paths (C:\Users\Chesley\Galactic AI)
-- `gateway_v2.py` (265KB) — ReAct brain/tools
-- `web_deck.py` (291KB) — UI/WebSocket
-- `telegram_bridge.py` (90KB) — Bot/voice (/status fixed)
-- `galactic_core_v2.py` (27KB) — Orchestrator
-- `model_manager.py` (28KB) — LLM router
-- `skills/core/` — browser_pro.py (119KB Playwright), chrome_bridge.py (53KB ext), desktop_tool.py (26KB pixels), social_media.py (44KB X/Reddit)
-- `skills/community/` — workspace_indexer.py (8KB RAG), computer_use.py (6KB vision), gemini_coder.py (7KB), boot_recall_banner.py, etc.
-- `chrome-extension/` — content.js (34KB), ready
-- `chroma_data/` — galactic_memory.db (225KB) + vectors
-- `releases/v1.2.0/` — Win/Linux/Mac zips + SHA
-- `logs/` — core_2026-02-25.log (476KB), chat_history.jsonl (95KB)
-- `images/` — Veo/FLUX/Imagen galleries (36MB videos)
+- `gateway_v2.py` — ReAct brain w/ Resumable logic
+- `web_deck.py` — UI w/ status orb & checkpointing
+- `spinner.py` — High-speed terminal status engine
+- `skills/community/` — plan_optimizer.py, superpowers.py, gemini_cli_bridge.py
+- `logs/runs/` — Persistent workflow checkpoints
+- `releases/v1.2.0/` — Distribution packages
 
 ---
 
 ## Release Status
-- **Latest:** v1.2.0 (16:06, all platforms)
+- **Latest:** v1.2.0 (23:45, all platforms)
 
 ---
 
 ## Commands
 - Launch: `python galactic_core_v2.py`
-- Git: Tools live post-init
+- Setup: `python setup_wizard.py` (accessible via web UI)
+- Build: `python scripts/release.py`
 
 ---
 
@@ -69,18 +67,11 @@ Galactic AI: Self-evolving AI platform w/ 150+ tools, skills ecosystem (core/com
 Core: gateway_v2 -> model_manager
 UI: web_deck + index.html
 Bridges: telegram/discord/gmail/whatsapp
-Tools/Skills: 150+ (browser/desktop/gen/social/git/memory)
-Memory: ChromaDB + hot_buffer.json (88KB)
-Providers: Full chain
-
----
-
-## Internal System
-- 2026-02-25: Auto-exec #1-2 (PROJECT_STATE sync + Git init)
-- Path migrated C:\Users\Chesley (F:\ legacy)
-- Stats: ~1,200 files/dirs, 50MB, skills dynamic load
+Tools/Skills: 155+ (browser/desktop/gen/social/git/memory)
+Memory: ChromaDB + hot_buffer.json
+Providers: Full redundant fallback chain
 
 ---
 
 ## Notes
-- Techno-hippie prefs: F100 mods (Holley Sniper EFI, glasspacks), skoolie/RV, NM commune, stars/space, non-conformist/autistic vibe RAG'd.
+- Techno-hippie prefs: F100 mods (Holley Sniper EFI, glasspacks), skoolie/RV, NM commune, stars/space, non-conformist vibe.
