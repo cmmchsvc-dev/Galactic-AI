@@ -3239,8 +3239,13 @@ class GalacticGateway:
                     messages.pop(1)  # drop oldest non-system message
                     total_chars = sum(len(m.get('content', '')) for m in messages)
 
+        # Pre-process pseudo-providers
+        base_provider = self.llm.provider
+        if base_provider.startswith("openrouter-"):
+            base_provider = "openrouter"
+
         # ── Route to provider ─────────────────────────────────────────
-        if self.llm.provider == "google":
+        if base_provider == "google":
             # Gemini uses a single text blob (system context + user prompt)
             prompt = messages[-1]['content']
             context_str = "\n".join(
@@ -3248,7 +3253,7 @@ class GalacticGateway:
             )
             return await self._call_gemini(prompt, context_str)
 
-        elif self.llm.provider == "anthropic":
+        elif base_provider == "anthropic":
             # Anthropic Messages API: separate system field + messages array
             # Pull system message from messages[0] if it exists
             system_msg = ""
@@ -3260,12 +3265,12 @@ class GalacticGateway:
                     msg_list.append(m)
             return await self._call_anthropic_messages(system_msg, msg_list)
 
-        elif self.llm.provider == "ollama":
+        elif base_provider == "ollama":
             # Ollama supports the full OpenAI /chat/completions messages array —
             # pass it directly so multi-turn tool-call context is preserved
             return await self._call_openai_compatible_messages(messages)
 
-        elif self.llm.provider == "xai":
+        elif base_provider == "xai":
             # xAI: collapse to prompt+context (stateless one-shot)
             prompt = messages[-1]['content']
             context_str = "\n".join(
@@ -3273,10 +3278,18 @@ class GalacticGateway:
             )
             return await self._call_openai_compatible(prompt, context_str)
 
-        elif self.llm.provider in ["nvidia", "openai", "groq", "mistral", "cerebras",
-                                    "openrouter", "huggingface", "kimi", "zai", "minimax"]:
+        elif base_provider in ["nvidia", "openai", "groq", "mistral", "cerebras",
+                                    "openrouter", "huggingface", "kimi", "zai", "minimax",
+                                    "xiaomi", "moonshot", "qwen-portal", "qianfan", "together",
+                                    "vllm", "doubao", "byteplus", "cloudflare-ai-gateway", "kilocode"]:
             # OpenAI-compatible providers: pass full messages array for proper multi-turn context
-            return await self._call_openai_compatible_messages(messages)
+            orig_provider = self.llm.provider
+            self.llm.provider = base_provider
+            try:
+                res = await self._call_openai_compatible_messages(messages)
+                return res
+            finally:
+                self.llm.provider = orig_provider
 
         else:
             return f"[ERROR] Unknown provider: {self.llm.provider}"
