@@ -56,6 +56,7 @@ INCLUDE_LIST = [
     "ollama_manager.py",
     "nvidia_gateway.py",
     "scheduler.py",
+    "spinner.py",
     "splash.py",
     "autopatch.py",
     "fix_ollama.py"
