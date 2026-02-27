@@ -3,7 +3,7 @@
 **Last Updated:** 2026-02-26 23:30
 **Owner:** Chesley McDaniel (techno-hippie / Ches)
 **Repo Path:** C:\Users\Chesley\Galactic AI
-**Current Version:** v1.2.0 (The Hivemind Update)
+**Current Version:** v1.2.1 (The Control Update)
 
 ---
 
@@ -25,10 +25,12 @@ Galactic AI: Self-evolving AI platform w/ 155+ tools, skills ecosystem, Resumabl
 - [x] Superpowers cognitive framework integrated
 - [x] Planner Fallback Redundancy implemented
 - [x] Status Spinner & Escape-to-Cancel hotfixed
+- [x] Centralized Model Manager (models.yaml) deployed
 
 ---
 
 ## Milestones
+- [x] v1.2.1 The Control Update (Centralized Model Manager, OpenClaw provider parity)
 - [x] v1.2.0 The Hivemind Update (Resumables, Oracle, CLI Bridge)
 - [x] v1.1.9 core reliability & streaming fixes
 - [x] v1.1.6 Big Brain Planner & ChromaDB Deep Memory
@@ -46,13 +48,14 @@ Galactic AI: Self-evolving AI platform w/ 155+ tools, skills ecosystem, Resumabl
 - `web_deck.py` — UI w/ status orb & checkpointing
 - `spinner.py` — High-speed terminal status engine
 - `skills/community/` — plan_optimizer.py, superpowers.py, gemini_cli_bridge.py
+- `config/models.yaml` — Centralized model configuration
 - `logs/runs/` — Persistent workflow checkpoints
-- `releases/v1.2.0/` — Distribution packages
+- `releases/v1.2.1/` — Distribution packages
 
 ---
 
 ## Release Status
-- **Latest:** v1.2.0 (23:45, all platforms)
+- **Latest:** v1.2.1 (Current, all platforms)
 
 ---
 
