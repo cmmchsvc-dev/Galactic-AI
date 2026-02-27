@@ -281,7 +281,9 @@ class GalacticCore:
         comp_label = component or "Core"
         timestamp = datetime.now().strftime("%H:%M:%S")
         log_entry = f"[{timestamp}] [{comp_label}] {message}"
-        print(log_entry)
+        import sys
+        sys.stdout.write('\r\033[K' + log_entry + '\n')
+        sys.stdout.flush()
 
         logs_dir = self.config.get('paths', {}).get('logs', './logs')
         os.makedirs(logs_dir, exist_ok=True)
@@ -422,6 +424,31 @@ class GalacticCore:
             return l > c
         except (ValueError, AttributeError):
             return False
+
+    async def _terminal_input_loop(self):
+        """Non-blocking terminal input listener for Escape key."""
+        if os.name != 'nt':
+            return # Only implemented for Windows for now
+            
+        import msvcrt
+        while self.running:
+            try:
+                if msvcrt.kbhit():
+                    ch = msvcrt.getch()
+                    # 27 is the ASCII code for Escape
+                    if ch == b'\x1b':
+                        gateway = getattr(self, 'gateway', None)
+                        if gateway and gateway._active_tasks:
+                            count = 0
+                            for t in list(gateway._active_tasks):
+                                if not t.done():
+                                    t.cancel()
+                                    count += 1
+                            if count > 0:
+                                await self.log(f"🚫 Escape pressed in terminal. Aborting {count} task(s)...", priority=2)
+            except Exception:
+                pass
+            await asyncio.sleep(0.1)
 
     async def shutdown(self):
         """Graceful shutdown — close all subsystems cleanly."""
@@ -582,6 +609,7 @@ class GalacticCore:
         asyncio.create_task(self.ollama_manager.auto_discover_loop())
         asyncio.create_task(self._recovery_check_loop())
         asyncio.create_task(self._update_check_loop())
+        asyncio.create_task(self._terminal_input_loop())
 
         # Start Skills
         for skill in self.skills:

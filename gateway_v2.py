@@ -13,6 +13,7 @@ from collections import defaultdict
 from personality import GalacticPersonality
 from model_manager import (TRANSIENT_ERRORS, PERMANENT_ERRORS,
                            ERROR_RATE_LIMIT, ERROR_TIMEOUT, ERROR_AUTH)
+from spinner import spinner
 
 # Configure logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
@@ -33,6 +34,8 @@ _NVIDIA_NO_STREAM = {
 # empty chunks). Force these to non-streaming to avoid noisy fallback warnings.
 _OPENROUTER_NO_STREAM = {
     "google/gemini-3.1-pro-preview:nitro",
+    "openai/gpt-5.2-pro",
+    "qwen/qwen3-coder-next",
 }
 
 # NVIDIA models that require extra body params for thinking/reasoning.
@@ -335,6 +338,8 @@ class GalacticGateway:
 
         # Anti-spin: flag indicating an active speak() call is in progress
         self._speaking = False
+        # Set of active speak() asyncio.Tasks for reliable global cancellation
+        self._active_tasks = set()
         # Queued model switch: if user switches model during active speak(), apply after
         self._queued_switch = None
         # Lock to serialize sub-agent speak_isolated() calls (prevents concurrent state corruption)
@@ -2488,7 +2493,17 @@ class GalacticGateway:
         Serialized via _speak_lock to prevent concurrent executions and duplicate planners.
         """
         async with self._speak_lock:
-            return await self._speak_logic(user_input, context=context, chat_id=chat_id, images=images, skip_planning=skip_planning)
+            try:
+                return await self._speak_logic(user_input, context=context, chat_id=chat_id, images=images, skip_planning=skip_planning)
+            except asyncio.CancelledError:
+                # Catch the cancellation here at the top level to return a clean string
+                # instead of letting the exception crash the request handler.
+                await self._emit_trace("session_abort", 0, session_id=self._trace_sid,
+                                       reason="user_cancelled")
+                cancel_msg = "🛑 Task cancelled by user."
+                self.history.append({"role": "assistant", "content": cancel_msg})
+                self._log_chat("assistant", cancel_msg, source="telegram" if chat_id else "web")
+                return cancel_msg
 
     async def _speak_logic(self, user_input, context="", chat_id=None, images=None, skip_planning=False):
         """
@@ -2876,7 +2891,10 @@ class GalacticGateway:
             return error_msg
 
         # ── Execute the ReAct loop with wall-clock timeout ──
+        t = asyncio.current_task()
+        self._active_tasks.add(t)
         try:
+            spinner.start()
             return await asyncio.wait_for(_react_loop(), timeout=speak_timeout)
         except asyncio.TimeoutError:
             await self._emit_trace("session_abort", turn_count, session_id=trace_sid,
@@ -2891,6 +2909,8 @@ class GalacticGateway:
             self._log_chat("assistant", timeout_msg, source="telegram" if chat_id else "web")
             return timeout_msg
         finally:
+            self._active_tasks.discard(t)
+            await spinner.stop()
             # ── Always clear speaking flag and restore smart routing ──
             self._speaking = False
 
