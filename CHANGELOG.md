@@ -4,6 +4,28 @@ All notable changes to Galactic AI are documented here.
 
 ---
 
+## v1.2.0 — The Hivemind Update (2026-02-26)
+
+### Added
+- **Resumable Workflows**: The agent now automatically saves its active state (`history`, `messages`, `active_plan`, `turn_count`) to `logs/runs/<uuid>/checkpoint.json` every 5 tool calls or immediately on failure.
+- **`resume_workflow` tool**: New native tool that allows the AI (or user) to re-load an interrupted workflow state from a specific checkpoint UUID and continue execution seamlessly.
+- **Mission Control Dashboard**: Added a new Resumable Workflows UI directly into the Web Deck's **Thinking** tab. You can view all saved checkpoints, see their timestamps and plan previews, and instantly resume them with a click.
+- **Workspace Oracle (`plan_optimizer` skill)**: A new heuristic engine that allows the AI to simulate tool chains and preview execution costs (time/complexity) before committing to a massive subagent refactor.
+- **Gemini CLI Bridge (`gemini_cli_bridge` skill)**: Integrates the native Node.js `@google/gemini-cli-core` into Galactic AI. Allows Galactic AI to spawn the official Gemini CLI in the background with `--yolo` mode for deep codebase interventions.
+- **Superpowers Integration (`superpowers` skill)**: Fully ported Jesse Vincent's Superpowers cognitive workflows. Gives Galactic AI native access to advanced behavioral rulebooks like Test-Driven-Development (TDD), Systematic Debugging, and Socratic Brainstorming.
+- **Planner Fallback Model**: Added multi-tier redundancy to the internal Architect agent. You can now configure `planner_fallback_provider` and `planner_fallback_model` in `config.yaml` or via the Web Deck UI. If the primary planner model hangs or hallucinates, it instantly re-spawns using the fallback model.
+
+### Fixed
+- **Anti-Hallucination Guardrails**: Updated the core system prompt to strictly forbid the AI from hallucinating success when spawning background subagents. It is now hardcoded to verify execution via `process_status` or by reading output files.
+- **Planner Parsing Engine**: Replaced the fragile O(N^2) JSON extraction algorithm in `gateway_v2.py` with an O(N) stack-based parser. This prevents the event loop from hanging and crashing when an LLM outputs malformed nested curly braces.
+- **Empty Response Hole**: Fixed a critical bug where OpenRouter cloud models returning data inside `refusal` or `reasoning_content` tags (instead of standard `content`) were being misidentified as empty strings, causing an infinite fallback loop.
+
+### Changed
+- **Unified Boot Splash**: Combined the classic "GALACTIC" block text and the "AUTOMATION" logo into a single unified 3D ANSI banner. The dynamic cyan-to-purple gradient now sweeps across the entire boot screen instead of just the bottom half.
+- **Universal Tool Schemas**: Cloud models (GPT/Claude) now receive the exact same strict JSON tool-call examples and full parameter schemas as local Ollama models, greatly improving their ability to autonomously edit files.
+
+---
+
 ## v1.1.9 — Core Dependency Fix (2026-02-25)
 
 ### Fixed

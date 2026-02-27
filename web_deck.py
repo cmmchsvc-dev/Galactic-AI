@@ -90,10 +90,59 @@ class GalacticWebDeck:
         # Power control endpoints
         self.app.router.add_post('/api/restart', self.handle_restart)
         self.app.router.add_post('/api/shutdown', self.handle_shutdown)
+        # Resumable Workflows
+        self.app.router.add_get('/api/runs', self.handle_runs)
+        self.app.router.add_post('/api/resume/{uuid}', self.handle_resume)
         # Chrome Bridge WebSocket — connects the Galactic Browser extension
         self.app.router.add_get('/ws/chrome_bridge', self.handle_chrome_bridge_ws)
         self.trace_buffer = []  # last 500 agent trace entries for persistence
         
+    async def handle_runs(self, request):
+        """GET /api/runs - Lists all saved workflow runs/checkpoints."""
+        runs_dir = os.path.join(self.core.config.get('paths', {}).get('logs', './logs'), 'runs')
+        if not os.path.exists(runs_dir):
+            return web.json_response([])
+            
+        runs = []
+        for d in os.listdir(runs_dir):
+            cp_path = os.path.join(runs_dir, d, 'checkpoint.json')
+            if os.path.isfile(cp_path):
+                try:
+                    with open(cp_path, 'r', encoding='utf-8') as f:
+                        state = json.load(f)
+                    
+                    mtime = os.path.getmtime(cp_path)
+                    plan_preview = state.get('active_plan', {}).get('original_query', 'No query') if state.get('active_plan') else 'No active plan'
+                    turn_count = state.get('turn_count', 0)
+                    
+                    runs.append({
+                        "uuid": d,
+                        "mtime": mtime,
+                        "turn_count": turn_count,
+                        "plan_preview": plan_preview[:100] + ('...' if len(plan_preview) > 100 else '')
+                    })
+                except Exception:
+                    pass
+        # Sort by mtime descending
+        runs.sort(key=lambda x: x['mtime'], reverse=True)
+        return web.json_response(runs)
+
+    async def handle_resume(self, request):
+        """POST /api/resume/{uuid} - Triggers the resume_workflow tool."""
+        uuid_val = request.match_info.get('uuid')
+        if not uuid_val:
+            return web.json_response({'error': 'Missing UUID'}, status=400)
+            
+        # Create an isolated task to run the resume command
+        asyncio.create_task(
+            self.core.gateway.speak(
+                user_input=f"Please resume the workflow for checkpoint {uuid_val}.", 
+                context=f"You must use the resume_workflow tool right now with uuid: {uuid_val}", 
+                skip_planning=True
+            )
+        )
+        return web.json_response({'ok': True, 'message': f'Resume triggered for {uuid_val}'})
+
     async def handle_index(self, request):
         html = r"""<!DOCTYPE html>
 <html lang="en">
@@ -1151,6 +1200,15 @@ body.glow-max .status-dot{box-shadow:0 0 14px var(--green),0 0 28px rgba(0,255,1
               </select>
             </div>
           </div>
+          <div class="model-config-row">
+            <label>Planner Fallback</label>
+            <div style="display:flex;gap:8px;flex:1">
+              <select id="set-planner_fallback-provider" onchange="updateSettingsModelList('planner_fallback')" style="flex:0.4;padding:7px 10px;background:var(--bg);border:1px solid var(--border);border-radius:7px;color:var(--text);font-size:0.88em">
+              </select>
+              <select id="set-planner_fallback-model" style="flex:0.6;padding:7px 10px;background:var(--bg);border:1px solid var(--border);border-radius:7px;color:var(--text);font-size:0.88em">
+              </select>
+            </div>
+          </div>
           <div style="display:flex;gap:18px;flex-wrap:wrap;margin-top:14px">
             <label style="display:flex;align-items:center;gap:8px;cursor:pointer;font-size:0.88em">
               <input type="checkbox" id="set-auto-fallback" checked style="accent-color:var(--cyan);width:18px;height:18px;cursor:pointer">
@@ -1263,7 +1321,7 @@ body.glow-max .status-dot{box-shadow:0 0 14px var(--green),0 0 28px rgba(0,255,1
 
     <div class="tab-pane" id="tab-thinking">
       <div id="thinking-pane">
-        <div id="thinking-controls">
+        <div id="thinking-controls" style="border-bottom:1px solid rgba(255,255,255,0.05); padding-bottom: 8px;">
           <input id="thinking-filter" type="text" placeholder="Filter traces..." oninput="filterTraces()">
           <select id="thinking-phase-filter" onchange="filterTraces()">
             <option value="">All Phases</option>
@@ -1276,6 +1334,14 @@ body.glow-max .status-dot{box-shadow:0 0 14px var(--green),0 0 28px rgba(0,255,1
           <button class="btn secondary" onclick="clearTraces()">Clear</button>
           <button class="btn secondary" id="thinking-auto-scroll-btn" onclick="toggleThinkingAutoScroll()">Auto-scroll: ON</button>
           <span id="thinking-turn-counter">Turns: 0</span>
+        </div>
+        <div id="thinking-controls" style="background:var(--bg3); padding: 8px 16px;">
+          <span style="font-size: 0.85em; color: var(--dim);">Resumable Workflows:</span>
+          <select id="runs-list" style="padding:4px 8px;background:var(--bg);border:1px solid var(--border);border-radius:4px;color:var(--text);font-size:0.8em;flex:1;">
+            <option value="">-- No runs found --</option>
+          </select>
+          <button class="btn secondary" style="padding:4px 10px; font-size: 0.8em;" onclick="resumeWorkflow()">▶ Resume</button>
+          <button class="btn secondary" style="padding:4px 10px; font-size: 0.8em;" onclick="loadRuns()">↻ Refresh</button>
         </div>
         <div id="thinking-scroll"></div>
       </div>
@@ -2898,7 +2964,7 @@ function populateSettingsProviders() {
     'openrouter','huggingface','kimi','zai','minimax','nvidia','ollama','deepseek'
   ];
 
-  ['primary', 'fallback', 'planner'].forEach(role => {
+  ['primary', 'fallback', 'planner', 'planner_fallback'].forEach(role => {
     const sel = document.getElementById(`set-${role}-provider`);
     if (!sel) return;
     sel.innerHTML = '';
@@ -3004,12 +3070,16 @@ async function loadSettingsValues() {
     const prim = (d.primary_model || '/').split('/');
     const fb = (d.fallback_model || '/').split('/');
     const pl = (d.planner_model || '/').split('/');
+    const plf = (d.planner_fallback_model || '/').split('/');
+    
     const primProv = prim.length > 1 ? prim[0] : '';
     const primModel = prim.length > 1 ? prim.slice(1).join('/') : prim[0];
     const fbProv = fb.length > 1 ? fb[0] : '';
     const fbModel = fb.length > 1 ? fb.slice(1).join('/') : fb[0];
     const plProv = pl.length > 1 ? pl[0] : '';
     const plModel = pl.length > 1 ? pl.slice(1).join('/') : pl[0];
+    const plfProv = plf.length > 1 ? plf[0] : '';
+    const plfModel = plf.length > 1 ? plf.slice(1).join('/') : plf[0];
 
     const setProv = (role, val) => {
       const sel = document.getElementById(`set-${role}-provider`);
@@ -3022,6 +3092,7 @@ async function loadSettingsValues() {
     setProv('primary', primProv); setModel('primary', primModel);
     setProv('fallback', fbProv); setModel('fallback', fbModel);
     setProv('planner', plProv); setModel('planner', plModel);
+    setProv('planner_fallback', plfProv); setModel('planner_fallback', plfModel);
 
     // Toggles
     const el = id => document.getElementById(id);
@@ -3048,6 +3119,9 @@ async function saveModelSettings() {
   const fbModel = document.getElementById('set-fallback-model').value;
   const plProv = document.getElementById('set-planner-provider').value;
   const plModel = document.getElementById('set-planner-model').value;
+  const plfProv = document.getElementById('set-planner_fallback-provider')?.value || '';
+  const plfModel = document.getElementById('set-planner_fallback-model')?.value || '';
+  
   if (!primProv || !primModel) { showToast('Select a primary model', 'error', 3000); return; }
   if (!fbProv || !fbModel) { showToast('Select a fallback model', 'error', 3000); return; }
   try {
@@ -3057,6 +3131,7 @@ async function saveModelSettings() {
         primary_provider: primProv, primary_model: primModel,
         fallback_provider: fbProv, fallback_model: fbModel,
         planner_provider: plProv, planner_model: plModel,
+        planner_fallback_provider: plfProv, planner_fallback_model: plfModel,
         auto_fallback: document.getElementById('set-auto-fallback').checked,
         smart_routing: document.getElementById('set-smart-routing').checked,
         streaming: document.getElementById('set-streaming').checked,
@@ -3350,6 +3425,7 @@ function switchTab(name) {
   if (name === 'thinking') {
     const tBtn = document.getElementById('thinking-tab-btn');
     if (tBtn) { tBtn.style.color = ''; tBtn.style.textShadow = ''; }
+    loadRuns();
   }
   // Scroll to bottom when switching to content tabs (newest-last layout)
   if (name === 'chat') {
@@ -3577,6 +3653,49 @@ function clearTraces() {
 function toggleThinkingAutoScroll() {
   traceAutoScroll = !traceAutoScroll;
   document.getElementById('thinking-auto-scroll-btn').textContent = 'Auto-scroll: ' + (traceAutoScroll ? 'ON' : 'OFF');
+}
+
+// ─── RESUMABLE WORKFLOWS ───────────────────────────────────────────────────
+async function loadRuns() {
+  try {
+    const r = await authFetch('/api/runs');
+    const runs = await r.json();
+    const sel = document.getElementById('runs-list');
+    sel.innerHTML = '';
+    if (!runs || !runs.length) {
+      sel.innerHTML = '<option value="">-- No runs found --</option>';
+      return;
+    }
+    runs.forEach(run => {
+      const dt = new Date(run.mtime * 1000).toLocaleString();
+      const opt = document.createElement('option');
+      opt.value = run.uuid;
+      opt.textContent = `[${dt}] Turn ${run.turn_count} - ${run.plan_preview}`;
+      sel.appendChild(opt);
+    });
+  } catch (e) {
+    console.error('Error loading runs:', e);
+  }
+}
+
+async function resumeWorkflow() {
+  const sel = document.getElementById('runs-list');
+  const uuid = sel.value;
+  if (!uuid) return;
+  if (!confirm(`Are you sure you want to resume workflow ${uuid}?`)) return;
+  
+  try {
+    const r = await authFetch(`/api/resume/${uuid}`, { method: 'POST' });
+    const data = await r.json();
+    if (data.ok) {
+      showToast('Resume triggered. Watch the traces...', 'success', 3000);
+      switchTab('thinking');
+    } else {
+      showToast(data.error || 'Failed to resume', 'error', 3000);
+    }
+  } catch (e) {
+    showToast('Error resuming workflow', 'error', 3000);
+  }
 }
 
 // ─── POWER CONTROLS ─────────────────────────────────────────────────────────
@@ -4061,7 +4180,8 @@ try {
             'model': model_status,
             'primary_model': f"{mm.primary_provider}/{mm.primary_model}" if mm else '--',
             'fallback_model': f"{mm.fallback_provider}/{mm.fallback_model}" if mm else '--',
-            'planner_model': f"{models_cfg.get('planner_provider', 'openrouter')}/{models_cfg.get('planner_model', 'google/gemini-3.1-pro-preview')}",
+            'planner_model': f"{models_cfg.get('planner_provider', 'openrouter')}/{models_cfg.get('planner_model', 'openai/gpt-5.2')}",
+            'planner_fallback_model': f"{models_cfg.get('planner_fallback_provider', 'openrouter')}/{models_cfg.get('planner_fallback_model', 'openai/gpt-5.2-codex')}",
             'auto_fallback': mm.auto_fallback_enabled if mm else False,
             'smart_routing': models_cfg.get('smart_routing', False),
             'streaming': models_cfg.get('streaming', True),
@@ -4260,6 +4380,8 @@ try {
             fm = data.get('fallback_model', '').strip()
             plp = data.get('planner_provider', '').strip()
             plm = data.get('planner_model', '').strip()
+            plfp = data.get('planner_fallback_provider', '').strip()
+            plfm = data.get('planner_fallback_model', '').strip()
 
             if pp and pm:
                 await mm.set_primary(pp, pm)
@@ -4275,6 +4397,11 @@ try {
                 if cfg['models'].get('planner_provider') != plp or cfg['models'].get('planner_model') != plm:
                     cfg['models']['planner_provider'] = plp
                     cfg['models']['planner_model'] = plm
+                    toggle_changed = True
+            if plfp and plfm:
+                if cfg['models'].get('planner_fallback_provider') != plfp or cfg['models'].get('planner_fallback_model') != plfm:
+                    cfg['models']['planner_fallback_provider'] = plfp
+                    cfg['models']['planner_fallback_model'] = plfm
                     toggle_changed = True
                     
             if 'auto_fallback' in data:

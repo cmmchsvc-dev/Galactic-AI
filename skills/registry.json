@@ -63,6 +63,30 @@
       "installed_at": "2026-02-25T18:00:00.000000",
       "source": "ai_authored",
       "description": "Automatically indexes files in workspace/ for fast semantic search (RAG)."
+    },
+    {
+      "module": "gemini_cli_bridge",
+      "class": "GeminiCLIBridge",
+      "file": "gemini_cli_bridge.py",
+      "installed_at": "2026-02-26T16:27:09.444766",
+      "source": "ai_authored",
+      "description": "Delegates tasks to the native Node.js Gemini CLI with YOLO mode for deep codebase interventions."
+    },
+    {
+      "module": "superpowers",
+      "class": "SuperpowersSkill",
+      "file": "superpowers.py",
+      "installed_at": "2026-02-26T17:26:49.997894",
+      "source": "ai_authored",
+      "description": "Provides Jesse Vincents Superpowers cognitive workflows (TDD, brainstorming, etc) for your agent to follow."
+    },
+    {
+      "module": "plan_optimizer",
+      "class": "PlanOptimizerSkill",
+      "file": "plan_optimizer.py",
+      "installed_at": "2026-02-26T19:37:19.677724",
+      "source": "ai_authored",
+      "description": "Workspace Oracle: Simulates tool chains and previews costs/steps before execution."
     }
   ]
 }
