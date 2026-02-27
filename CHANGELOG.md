@@ -4,6 +4,21 @@ All notable changes to Galactic AI are documented here.
 
 ---
 
+## v1.2.1 — The Control Update (2026-02-27)
+
+### Added
+- **Centralized Model Manager**: Replaced massive hardcoded model lists across `web_deck.py` and `telegram_bridge.py` with a single source of truth: `config/models.yaml`.
+- **Dynamic UI Loading**: The Control Deck and Telegram Bridge now dynamically fetch and render models from `models.yaml`, allowing users to easily add new models, edit names, or set `enabled: false` to hide them without modifying code.
+- **OpenClaw Provider Parity**: Scanned the OpenClaw codebase and added support for 14 new AI providers to `models.yaml` (including MiniMax, Xiaomi, Moonshot, Qwen Portal, Qianfan, Together AI, HuggingFace, vLLM, Doubao, BytePlus, Cloudflare AI Gateway, Amazon Bedrock, Kilocode, and GitHub Copilot).
+- **Custom Emojis**: Added visual styling and custom emojis to the Control Deck UI for all the newly integrated OpenClaw providers.
+- **OpenRouter Tiers Restored**: Restored the "kickass assortment" of 26 OpenRouter models and re-implemented their categorizations (`openrouter-frontier`, `openrouter-strong`, `openrouter-fast`) safely into the dynamic architecture.
+
+### Fixed
+- **Ollama Dynamic Injection**: Fixed a UI issue where automatically detected Ollama models were failing to render because the generic "Ollama" provider block wasn't present in the static YAML file.
+- **Provider Settings Crash**: Fixed a critical frontend exception in the Control Deck Settings tab caused by missing `provider` attributes on dynamically loaded model objects.
+
+---
+
 ## v1.2.0 — The Hivemind Update (2026-02-26)
 
 ### Added
