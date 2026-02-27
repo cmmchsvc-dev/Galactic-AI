@@ -47,6 +47,7 @@ class GalacticWebDeck:
         self.app.router.add_get('/api/check_setup', self.handle_check_setup)
         self.app.router.add_get('/stream', self.handle_stream)
         self.app.router.add_get('/api/files', self.handle_list_files)
+        self.app.router.add_get('/api/models', self.handle_get_models)
         self.app.router.add_get('/api/file', self.handle_get_file)
         self.app.router.add_post('/api/file', self.handle_save_file)
         # Ollama live endpoints
@@ -97,8 +98,6 @@ class GalacticWebDeck:
         self.app.router.add_post('/api/cancel_task', self.handle_cancel_task)
         # Chrome Bridge WebSocket — connects the Galactic Browser extension
         self.app.router.add_get('/ws/chrome_bridge', self.handle_chrome_bridge_ws)
-        # Virtual Terminal WebSocket
-        self.app.router.add_get('/ws/terminal', self.handle_terminal_ws)
         self.trace_buffer = []  # last 500 agent trace entries for persistence
         
     async def handle_runs(self, request):
@@ -168,9 +167,6 @@ class GalacticWebDeck:
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>GALACTIC AI — CONTROL DECK</title>
-<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/xterm@5.3.0/css/xterm.css" />
-<script src="https://cdn.jsdelivr.net/npm/xterm@5.3.0/lib/xterm.js"></script>
-<script src="https://cdn.jsdelivr.net/npm/xterm-addon-fit@0.8.0/lib/xterm-addon-fit.js"></script>
 <style>
 *{box-sizing:border-box;margin:0;padding:0}
 :root{
@@ -183,18 +179,8 @@ class GalacticWebDeck:
 html{font-size:var(--fs)}
 body{background:var(--bg);color:var(--text);font-family:var(--font);height:100vh;overflow:hidden;display:flex;flex-direction:column;font-size:1rem}
 
-/* ── TERMINAL ───────────────────────────────────────────────────────────── */
-#tab-terminal{background:#000;display:none;flex-direction:column;height:100%;overflow:hidden}
-#tab-terminal.active{display:flex}
-#terminal-header{display:flex;align-items:center;justify-content:space-between;padding:10px 20px;background:#0a0a0a;border-bottom:1px solid #1a1a1a;flex-shrink:0}
-#terminal-title{font-family:var(--mono);font-size:0.85rem;color:var(--cyan);letter-spacing:1px;text-transform:uppercase}
-#terminal-container{flex:1;overflow:hidden;padding:10px;background:#000}
-.xterm .xterm-viewport{background-color:#000!important;overflow-y:auto!important}
-.term-btn{padding:6px 14px;background:#1a1a1a;border:1px solid #333;border-radius:6px;color:#aaa;cursor:pointer;font-size:0.78rem;font-weight:600;transition:all .2s}
-.term-btn:hover{border-color:var(--cyan);color:#fff;text-shadow:0 0 8px var(--cyan);background:#222}
-
 /* ── TOPBAR ─────────────────────────────────────────────────────────────── */
-#topbar{display:flex;align-items:center;justify-content:space-between;padding:0 24px;background:var(--bg2);border-bottom:1px solid var(--border);flex-shrink:0;z-index:100;box-shadow:0 2px 20px rgba(0,0,0,0.4);height:64px;position:relative}
+#topbar{display:flex;align-items:center;justify-content:space-between;padding:10px 24px;background:var(--bg2);border-bottom:1px solid var(--border);flex-shrink:0;z-index:100;box-shadow:0 2px 20px rgba(0,0,0,0.4);height:64px}
 #topbar-left{display:flex;align-items:center;gap:12px;flex:1;justify-content:flex-start;min-width:0}
 #topbar-right{display:flex;align-items:center;gap:14px;flex:1;justify-content:flex-end;min-width:0}
 #topbar .logo{font-size:1.05rem;font-weight:800;letter-spacing:5px;color:var(--cyan);text-shadow:0 0 14px var(--cyan);white-space:nowrap}
@@ -207,9 +193,10 @@ body{background:var(--bg);color:var(--text);font-family:var(--font);height:100vh
 #token-counter{font-size:0.8rem;color:var(--dim);font-family:var(--mono);flex-shrink:0;white-space:nowrap;margin-right:4px}
 #main{display:flex;flex:1;overflow:hidden}
 
-/* ── ORB CONTAINER ──────────────────────────────────────────────────────── */
-#orb-container{flex:0 0 auto;display:flex;justify-content:center;align-items:center;margin:0 60px;min-width:300px}
-#thinking-orb{display:none;color:var(--cyan);font-family:var(--mono);font-size:0.92rem;text-shadow:0 0 14px rgba(0,243,245,0.7);white-space:nowrap;font-weight:bold;background:rgba(0,0,0,0.6);padding:6px 18px;border-radius:20px;border:1px solid rgba(0,243,245,0.2);box-shadow:0 0 20px rgba(0,0,0,0.5);overflow:hidden;text-overflow:ellipsis}
+/* ── SUB-HEADER ──────────────────────────────────────────────────────────── */
+#sub-header{height:42px;background:var(--bg3);border-bottom:1px solid var(--border);display:flex;align-items:center;justify-content:center;padding:0 24px;flex-shrink:0;z-index:90;position:relative;overflow:hidden}
+#orb-container{display:flex;justify-content:center;align-items:center;pointer-events:none}
+#thinking-orb{display:none;color:var(--cyan);font-family:var(--mono);font-size:0.85rem;text-shadow:0 0 10px rgba(0,243,245,0.5);white-space:nowrap;font-weight:bold;padding:4px 12px;border-radius:10px}
 
 /* ── SIDEBAR ─────────────────────────────────────────────────────────────── */
 #sidebar{width:240px;min-width:190px;background:var(--bg2);border-right:1px solid var(--border);display:flex;flex-direction:column;overflow:hidden;transition:width .2s}
@@ -796,16 +783,12 @@ body.glow-max .status-dot{box-shadow:0 0 14px var(--green),0 0 28px rgba(0,255,1
   <div id="topbar-left">
     <div class="logo">⬡ GALACTIC AI</div>
     <div style="font-size:0.7em;color:var(--cyan);letter-spacing:2px;opacity:0.7;font-weight:600">CONTROL DECK</div>
-    <div id="version-badge" style="font-size:0.65em;color:var(--dim);letter-spacing:1px;padding:2px 7px;border:1px solid var(--border);border-radius:10px;cursor:default" title="Galactic AI version">v1.2.0</div>
+    <div id="version-badge" style="font-size:0.65em;color:var(--dim);letter-spacing:1px;padding:2px 7px;border:1px solid var(--border);border-radius:10px;cursor:default" title="Galactic AI version">v1.2.1</div>
     <div id='ollama-pill' onclick='switchTab("models")'>
       <div class="status-dot" id="ollama-dot"></div>
       <span id="ollama-label">Ollama</span>
     </div>
     <div id='model-badge' onclick='switchTab("models")'>Loading...</div>
-  </div>
-
-  <div id="orb-container">
-    <div id="thinking-orb">⠋ Pondering the orb...</div>
   </div>
 
   <div id="topbar-right">
@@ -815,6 +798,13 @@ body.glow-max .status-dot{box-shadow:0 0 14px var(--green),0 0 28px rgba(0,255,1
     <button class="topbar-btn" onclick="showSetupWizard({})" title="Re-run Setup Wizard — add API keys, change settings">⚙ Setup</button>
     <button class="topbar-btn" onclick="openDisplaySettings()" title="Display Settings — font size, CRT effect, etc.">🖥 Display</button>
     <button class="topbar-btn" onclick="location.reload()">↺</button>
+  </div>
+</div>
+
+<!-- SUB-HEADER for Thinking Orb -->
+<div id="sub-header">
+  <div id="orb-container">
+    <div id="thinking-orb">⠋ Pondering the orb...</div>
   </div>
 </div>
 
@@ -889,7 +879,6 @@ body.glow-max .status-dot{box-shadow:0 0 14px var(--green),0 0 28px rgba(0,255,1
     <div class="sidebar-item" onclick="switchTab('settings')"><span class="icon">⚙️</span> Settings</div>
     <div class="sidebar-item" onclick="switchTab('logs')"><span class="icon">📋</span> Logs</div>
     <div class="sidebar-item" onclick="switchTab('thinking')"><span class="icon">🧠</span> Thinking</div>
-    <div class="sidebar-item" onclick="switchTab('terminal')"><span class="icon">💻</span> Terminal</div>
   </div>
 
   <!-- CONTENT -->
@@ -905,7 +894,6 @@ body.glow-max .status-dot{box-shadow:0 0 14px var(--green),0 0 28px rgba(0,255,1
       <button class="tab-btn" onclick="switchTab('settings')">⚙️ Settings</button>
       <button class="tab-btn" onclick="switchTab('logs')">📋 Logs</button>
       <button class="tab-btn" id="thinking-tab-btn" onclick="switchTab('thinking')">🧠 Thinking</button>
-      <button class="tab-btn" onclick="switchTab('terminal')">💻 Terminal</button>
     </div>
 
     <!-- CHAT -->
@@ -1510,6 +1498,13 @@ function stopOrb() {
   clearInterval(_orbInterval);
 }
 
+function resetOrb() {
+  _orbActiveCount = 0;
+  const el = document.getElementById('thinking-orb');
+  if (el) el.style.display = 'none';
+  clearInterval(_orbInterval);
+}
+
 let ALIASES = [];
 
 // ─── VIRTUAL TERMINAL ──────────────────────────────────────────────────────
@@ -1529,7 +1524,7 @@ function initTerminal() {
     fontFamily: 'JetBrains Mono, Cascadia Code, monospace',
     fontSize: 14
   });
-  fitAddon = new TerminalAddonFit.Fit();
+  fitAddon = new FitAddon.FitAddon();
   term.loadAddon(fitAddon);
   term.open(document.getElementById('terminal-container'));
   fitAddon.fit();
@@ -1982,6 +1977,7 @@ async function loadTraceHistory() {
 }
 
 async function init() {
+  stopOrb(); // Reset orb state on load
   await loadChatHistory();
   await loadLogHistory();
   await loadTraceHistory();
@@ -1990,12 +1986,10 @@ async function init() {
   await loadPlugins();
   loadOllamaStatus();
   await loadAliases();
-  renderModelGrid();
+  await loadModels(); // Fetches models from config/models.yaml
   refreshStatus();
   loadFileList();
   // Settings tab initialization
-  populateSettingsProviders();
-  populatePmoDropdown();
   loadSettingsValues();
   // Restore the last active tab (defaults to 'chat' if none saved)
   const savedTab = localStorage.getItem('gal_activeTab') || 'chat';
@@ -2327,6 +2321,7 @@ document.addEventListener('keydown', async (e) => {
     const orb = document.getElementById('thinking-orb');
     const isVisible = orb && window.getComputedStyle(orb).display !== 'none';
     if (isVisible) {
+      resetOrb(); // Force clear local orb state
       try {
         const r = await authFetch('/api/cancel_task', { method: 'POST' });
         const d = await r.json();
@@ -2496,135 +2491,66 @@ async function togglePlugin(name, enabled) {
 }
 
 // Models
-const ALL_MODELS = {
-  '\ud83d\udd35 Google': [
-    {name:'Gemini 3.1 Pro \ud83e\udde0 [LATEST]', id:'gemini-3.1-pro-preview', provider:'google'},
-    {name:'Gemini 3 Flash \u26a1', id:'gemini-3-flash-preview', provider:'google'},
-    {name:'Gemini 3 Pro \ud83e\udde0', id:'gemini-3-pro-preview', provider:'google'},
-    {name:'Gemini 2.5 Flash \ud83c\udfce\ufe0f', id:'gemini-2.5-flash', provider:'google'},
-    {name:'Gemini 2.5 Pro \ud83e\uddbe', id:'gemini-2.5-pro', provider:'google'},
-    {name:'Gemini 2.0 Flash \u26a1', id:'gemini-2.0-flash', provider:'google'},
-  ],
-  '\ud83d\udfe3 Anthropic': [
-    {name:'Claude Opus 4.6 \ud83d\udc51 [LATEST]', id:'claude-opus-4-6', provider:'anthropic'},
-    {name:'Claude Sonnet 4.6 \ud83c\udf1f', id:'claude-sonnet-4-6', provider:'anthropic'},
-    {name:'Claude Haiku 4.5 \u26a1 (fast)', id:'claude-haiku-4-5', provider:'anthropic'},
-    {name:'Claude Sonnet 4.5 \ud83d\ude80 (legacy)', id:'claude-sonnet-4-5', provider:'anthropic'},
-    {name:'Claude Opus 4.5 \ud83c\udfdb\ufe0f (legacy)', id:'claude-opus-4-5', provider:'anthropic'},
-  ],
-  '\ud83d\udfe2 OpenAI': [
-    {name:'GPT-4o \ud83e\udde0 [LATEST]', id:'gpt-4o', provider:'openai'},
-    {name:'GPT-4.1 \ud83c\udf1f', id:'gpt-4.1', provider:'openai'},
-    {name:'GPT-4o Mini \u26a1', id:'gpt-4o-mini', provider:'openai'},
-    {name:'o3 Mini \ud83e\uddee', id:'o3-mini', provider:'openai'},
-    {name:'o1 \ud83c\udfdb\ufe0f', id:'o1', provider:'openai'},
-  ],
-  '\u26a1 xAI': [
-    {name:'Grok 4 \ud83e\udde0 [LATEST]', id:'grok-4', provider:'xai'},
-    {name:'Grok 4 Fast \u26a1', id:'grok-4-fast', provider:'xai'},
-    {name:'Grok 3 \ud83c\udf0c', id:'grok-3', provider:'xai'},
-    {name:'Grok 3 Mini \ud83c\udfaf', id:'grok-3-mini', provider:'xai'},
-  ],
-  '\ud83d\udd2e DeepSeek': [
-    {name:'DeepSeek V3 \ud83e\udde0 [LATEST]', id:'deepseek-chat', provider:'deepseek'},
-    {name:'DeepSeek R1 (Reasoning) \ud83e\uddee', id:'deepseek-reasoner', provider:'deepseek'},
-  ],
-  '\ud83c\udfce\ufe0f Groq (Fast)': [
-    {name:'Llama 4 Scout 17B \u26a1 [FAST]', id:'llama-4-scout-17b-16e-instruct', provider:'groq'},
-    {name:'Llama 4 Maverick 17B \ud83e\uddbe', id:'llama-4-maverick-17b-128e-instruct', provider:'groq'},
-    {name:'Llama 3.3 70B \ud83c\udfdb\ufe0f', id:'llama-3.3-70b-versatile', provider:'groq'},
-    {name:'DeepSeek R1 70B \ud83e\uddee', id:'deepseek-r1-distill-llama-70b', provider:'groq'},
-    {name:'Qwen 3 32B \ud83e\udde0', id:'qwen-3-32b', provider:'groq'},
-    {name:'Gemma 3 27B \ud83c\udf0c', id:'gemma2-9b-it', provider:'groq'},
-  ],
-  '\ud83c\udf0a Mistral': [
-    {name:'Mistral Small 3.1 \u26a1', id:'mistral-small-latest', provider:'mistral'},
-    {name:'Codestral (Code) \ud83e\uddbe', id:'codestral-latest', provider:'mistral'},
-    {name:'Devstral (Agents) \ud83e\udd16', id:'devstral-small-latest', provider:'mistral'},
-    {name:'Mistral Large 2 \ud83c\udfdb\ufe0f', id:'mistral-large-latest', provider:'mistral'},
-    {name:'Magistral Medium \ud83e\udde0', id:'magistral-medium-latest', provider:'mistral'},
-  ],
-  '\u26a1 Cerebras': [
-    {name:'Llama 3.3 70B \u26a1 [FAST]', id:'llama3.3-70b', provider:'cerebras'},
-    {name:'Llama 3.1 8B \ud83c\udfce\ufe0f', id:'llama3.1-8b', provider:'cerebras'},
-    {name:'Qwen 3 32B \ud83e\udde0', id:'qwen-3-32b', provider:'cerebras'},
-  ],
-  '\ud83d\udd00 OpenRouter — Frontier': [
-    {name:'Gemini 3.1 Pro Preview \ud83d\udc51', id:'google/gemini-3.1-pro-preview', provider:'openrouter'},
-    {name:'Claude Opus 4.6 \ud83d\udc51', id:'anthropic/claude-opus-4.6', provider:'openrouter'},
-    {name:'GPT-5.3 Codex \ud83d\udcbb', id:'openai/gpt-5.3-codex', provider:'openrouter'},
-    {name:'GPT-5.2 \ud83e\udde0', id:'openai/gpt-5.2', provider:'openrouter'},
-    {name:'GPT-5.2 Codex \ud83d\udcbb', id:'openai/gpt-5.2-codex', provider:'openrouter'},
-    {name:'Grok 4.1 Fast \u26a1', id:'x-ai/grok-4.1-fast', provider:'openrouter'},
-    {name:'DeepSeek V3.2 \ud83d\ude80', id:'deepseek/deepseek-v3.2', provider:'openrouter'},
-    {name:'Qwen 3.5 Plus (1M ctx) \ud83e\udde0', id:'qwen/qwen3.5-plus-02-15', provider:'openrouter'},
-  ],
-  '\ud83d\udd00 OpenRouter — Strong': [
-    {name:'Gemini 3 Pro Preview \ud83c\udf1f', id:'google/gemini-3-pro-preview', provider:'openrouter'},
-    {name:'Gemini 3 Flash Preview \u26a1', id:'google/gemini-3-flash-preview', provider:'openrouter'},
-    {name:'Claude Sonnet 4.6 \ud83c\udf1f', id:'anthropic/claude-sonnet-4.6', provider:'openrouter'},
-    {name:'Claude Opus 4.5 \ud83e\uddbe', id:'anthropic/claude-opus-4.5', provider:'openrouter'},
-    {name:'GPT-5.2 Pro \ud83e\uddbe', id:'openai/gpt-5.2-pro', provider:'openrouter'},
-    {name:'GPT-5.1 \ud83e\udde0', id:'openai/gpt-5.1', provider:'openrouter'},
-    {name:'GPT-5.1 Codex \ud83d\udcbb', id:'openai/gpt-5.1-codex', provider:'openrouter'},
-    {name:'Qwen 3.5 397B \ud83e\udde0', id:'qwen/qwen3.5-397b-a17b', provider:'openrouter'},
-    {name:'Qwen 3 Coder Next \ud83d\udcbb', id:'qwen/qwen3-coder-next', provider:'openrouter'},
-    {name:'Kimi K2.5 \ud83c\udf19', id:'moonshotai/kimi-k2.5', provider:'openrouter'},
-    {name:'DeepSeek V3.2 Speciale \ud83d\ude80', id:'deepseek/deepseek-v3.2-speciale', provider:'openrouter'},
-    {name:'GLM-5 \ud83e\uddbe', id:'z-ai/glm-5', provider:'openrouter'},
-  ],
-  '\ud83d\udd00 OpenRouter — Fast': [
-    {name:'Mistral Large 2512 \ud83c\udf1f', id:'mistralai/mistral-large-2512', provider:'openrouter'},
-    {name:'Devstral 2512 \ud83d\udcbb', id:'mistralai/devstral-2512', provider:'openrouter'},
-    {name:'MiniMax M2.5 \u26a1', id:'minimax/minimax-m2.5', provider:'openrouter'},
-    {name:'Sonar Pro Search \ud83d\udd0d', id:'perplexity/sonar-pro-search', provider:'openrouter'},
-    {name:'Nemotron Nano 30B \u26a1', id:'nvidia/nemotron-3-nano-30b-a3b', provider:'openrouter'},
-    {name:'Step 3.5 Flash \u26a1', id:'stepfun/step-3.5-flash', provider:'openrouter'},
-    {name:'GPT-5.2 Chat \ud83d\udcac', id:'openai/gpt-5.2-chat', provider:'openrouter'},
-  ],
-  '\ud83e\udd17 HuggingFace': [
-    {name:'Qwen3 235B \ud83e\udde0', id:'Qwen/Qwen3-235B-A22B', provider:'huggingface'},
-    {name:'Llama 4 Scout \u26a1', id:'meta-llama/Llama-4-Scout-17B-16E-Instruct', provider:'huggingface'},
-    {name:'DeepSeek V3 \ud83d\ude80', id:'deepseek-ai/DeepSeek-V3-0324', provider:'huggingface'},
-  ],
-  '\ud83c\udf19 Kimi / Moonshot': [
-    {name:'Kimi K2.5 (Thinking) \ud83c\udf19 [via NVIDIA]', id:'moonshotai/kimi-k2.5', provider:'nvidia'},
-  ],
-  '\ud83e\udde0 ZAI / GLM': [
-    {name:'GLM-5 (Thinking) \ud83e\udde0 [via NVIDIA]', id:'z-ai/glm5', provider:'nvidia'},
-  ],
-  '\ud83c\udfaf MiniMax': [
-    {name:'MiniMax M2.1 \ud83c\udfaf [via NVIDIA]', id:'minimaxai/minimax-m2.1', provider:'nvidia'},
-  ],
-  '\ud83d\uddbc\ufe0f Google Imagen': [
-    {name:'Imagen 4 Ultra \u2b50 (best quality)', id:'imagen-4-ultra', provider:'google'},
-    {name:'Imagen 4 \ud83d\uddbc\ufe0f (standard)', id:'imagen-4', provider:'google'},
-    {name:'Imagen 4 Fast \u26a1\ufe0f (quick)', id:'imagen-4-fast', provider:'google'},
-  ],
-  '\ud83c\udfa8 FLUX (Image Gen)': [
-    {name:'FLUX.1 Schnell \u26a1\ufe0f (fast)', id:'black-forest-labs/flux.1-schnell', provider:'nvidia'},
-    {name:'FLUX.1 Dev \ud83c\udfa8 (quality)', id:'black-forest-labs/flux.1-dev', provider:'nvidia'},
-  ],
-  '\ud83d\udfe9 NVIDIA': [
-    {name:'GLM-5 (Thinking) \ud83e\udde0', id:'z-ai/glm5', provider:'nvidia'},
-    {name:'Kimi K2.5 (Thinking) \ud83c\udf19', id:'moonshotai/kimi-k2.5', provider:'nvidia'},
-    {name:'Qwen 3.5 397B (Thinking) \ud83e\uddbe', id:'qwen/qwen3.5-397b-a17b', provider:'nvidia'},
-    {name:'Nemotron Super 49B (Thinking) \ud83d\ude80', id:'nvidia/llama-3.3-nemotron-super-49b-v1.5', provider:'nvidia'},
-    {name:'Nemotron Nano 9B (Thinking) \u26a1', id:'nvidia/nvidia-nemotron-nano-9b-v2', provider:'nvidia'},
-    {name:'Nemotron 30B (Reasoning) \u269b\ufe0f', id:'nvidia/nemotron-3-nano-30b-a3b', provider:'nvidia'},
-    {name:'Nemotron Nano VL \ud83d\udc41\ufe0f', id:'nvidia/nemotron-nano-12b-v2-vl', provider:'nvidia'},
-    {name:'Phi-3 Medium (Chat) \ud83d\udcac', id:'microsoft/phi-3-medium-4k-instruct', provider:'nvidia'},
-    {name:'StepFun 3.5 Flash \u26a1\ufe0f', id:'stepfun-ai/step-3.5-flash', provider:'nvidia'},
-    {name:'MiniMax M2.1 \ud83c\udfaf', id:'minimaxai/minimax-m2.1', provider:'nvidia'},
-    {name:'DeepSeek V3.2 (Thinking) \ud83d\ude80', id:'deepseek-ai/deepseek-v3.2', provider:'nvidia'},
-    {name:'Llama 405B (Reasoning) \ud83c\udfdb\ufe0f', id:'meta/llama-3.1-405b-instruct', provider:'nvidia'},
-    {name:'Phi-3.5 Vision (OCR) \ud83d\udc41\ufe0f', id:'microsoft/phi-3.5-vision-instruct', provider:'nvidia'},
-    {name:'Gemma 3 27B (Chat) \ud83c\udf0c', id:'google/gemma-3-27b-it', provider:'nvidia'},
-    {name:'Mistral Large 3 (General) \ud83c\udf0a', id:'mistralai/mistral-large-3-675b-instruct-2512', provider:'nvidia'},
-    {name:'Qwen 480B Coder \ud83e\uddbe', id:'qwen/qwen3-coder-480b-a35b-instruct', provider:'nvidia'}
-  ],
-  '\ud83e\udd99 Ollama (Local)': []
+let ALL_MODELS = {};
+
+const PROV_ICONS = {
+  'google': '🔵 Google',
+  'anthropic': '🟣 Anthropic',
+  'openai': '🟢 OpenAI',
+  'nvidia': '🟩 NVIDIA',
+  'openrouter': '🔀 OpenRouter',
+  'openrouter-frontier': '🔀 OpenRouter — Frontier',
+  'openrouter-strong': '🔀 OpenRouter — Strong',
+  'openrouter-fast': '🔀 OpenRouter — Fast',
+  'deepseek': '🔮 DeepSeek',
+  'xai': '⚡ xAI',
+  'groq': '🏎️ Groq (Fast)',
+  'mistral': '🌊 Mistral',
+  'cerebras': '⚡ Cerebras',
+  'huggingface': '🤗 HuggingFace',
+  'kimi': '🌙 Kimi / Moonshot',
+  'zai': '🧠 ZAI / GLM',
+  'minimax': '🎯 MiniMax',
+  'ollama': '🦙 Ollama (Local)',
+  'google-imagen': '🖼️ Google Imagen',
+  'flux': '🎨 FLUX (Image Gen)',
+  'xiaomi': '📱 Xiaomi',
+  'moonshot': '🌙 Moonshot',
+  'qwen-portal': '🌐 Qwen Portal',
+  'qianfan': '⛴️ Qianfan',
+  'together': '🤝 Together AI',
+  'vllm': '🚀 vLLM',
+  'doubao': '🫘 Doubao',
+  'byteplus': '➕ BytePlus',
+  'cloudflare-ai-gateway': '☁️ Cloudflare Gateway',
+  'amazon-bedrock': '🪨 Amazon Bedrock',
+  'kilocode': '💻 Kilocode',
+  'github-copilot': '🐙 GitHub Copilot'
 };
+
+async function loadModels() {
+  try {
+    const r = await authFetch('/api/models');
+    const d = await r.json();
+    
+    // Format the incoming data to match what the UI expects
+    ALL_MODELS = {};
+    if (d.providers) {
+      for (const [prov, models] of Object.entries(d.providers)) {
+        const displayProv = PROV_ICONS[prov.toLowerCase()] || (prov.charAt(0).toUpperCase() + prov.slice(1));
+        const actualProv = prov.toLowerCase().startsWith('openrouter-') ? 'openrouter' : prov.toLowerCase();
+        ALL_MODELS[displayProv] = models.map(m => ({...m, provider: m.provider || actualProv}));
+      }
+    }
+    
+    renderModelGrid();
+    if (typeof populateSettingsProviders === 'function') populateSettingsProviders();
+    if (typeof populatePmoDropdown === 'function') populatePmoDropdown();
+  } catch (e) {
+    console.error('Failed to load models:', e);
+    showToast('Failed to load model list from server', 'error');
+  }
+}
 let currentProvider = '', currentModelId = '';
 
 async function loadOllamaStatus() {
@@ -2654,8 +2580,8 @@ function updateOllamaHealth(d) {
 }
 
 function renderOllamaModels(models) {
-  const ollamaKey = Object.keys(ALL_MODELS).find(k => k.includes('Ollama'));
-  if (ollamaKey) ALL_MODELS[ollamaKey] = models.map(m => ({name: m + ' \ud83e\udd99', id: m, provider: 'ollama'}));
+  const ollamaKey = Object.keys(ALL_MODELS).find(k => k.toLowerCase().includes('ollama')) || '🦙 Ollama (Local)';
+  ALL_MODELS[ollamaKey] = models.map(m => ({name: m + ' \ud83e\udd99', id: m, provider: 'ollama'}));
   renderModelGrid();
 }
 
@@ -5177,7 +5103,7 @@ try {
     # ── Virtual Terminal WebSocket ──────────────────────────────────────
     async def handle_terminal_ws(self, request):
         """WebSocket endpoint for the Virtual Gemini Terminal."""
-        ws = web.WebSocketResponse()
+        ws = web.WebSocketResponse(heartbeat=30)
         await ws.prepare(request)
 
         # Auth check
@@ -5209,18 +5135,21 @@ try {
         )
 
         async def read_stdout():
-            while True:
-                data = await process.stdout.read(1024)
-                if not data:
-                    break
-                # Convert to string and send to WS
-                try:
-                    await ws.send_str(json.dumps({
-                        'type': 'output',
-                        'data': data.decode('utf-8', errors='replace')
-                    }))
-                except Exception:
-                    break
+            try:
+                while True:
+                    data = await process.stdout.read(4096)
+                    if not data:
+                        break
+                    try:
+                        text = data.decode('utf-8', errors='replace')
+                    except Exception:
+                        text = repr(data)
+                    if text and not ws.closed:
+                        await ws.send_str(json.dumps({'type': 'output', 'data': text}))
+            except asyncio.CancelledError:
+                pass
+            except Exception:
+                pass
 
         stdout_task = asyncio.create_task(read_stdout())
 
@@ -5229,28 +5158,54 @@ try {
                 if msg.type == web.WSMsgType.TEXT:
                     p = json.loads(msg.data)
                     if p['type'] == 'input':
-                        process.stdin.write(p['data'].encode())
-                        await process.stdin.drain()
+                        raw = p['data']
+                        try:
+                            process.stdin.write(raw.encode('utf-8'))
+                            await process.stdin.drain()
+                        except (BrokenPipeError, ConnectionResetError, OSError):
+                            break
+                        # Local echo: piped stdin doesn't echo on Windows
+                        if not ws.closed:
+                            echo = raw.replace('\r', '\r\n')
+                            await ws.send_str(json.dumps({'type': 'output', 'data': echo}))
                     elif p['type'] == 'command':
                         cmd = p['data']
                         if cmd == 'gemini':
-                            # Build the gemini command with the current primary model
-                            model_id = self.core.gateway.llm.model
-                            # We can try to map Galactic AI model IDs to gemini CLI model IDs if needed
-                            # but usually passing the full ID or just running it is fine.
-                            process.stdin.write(f"gemini --model \"{model_id}\"\n".encode())
+                            launch_cmd = 'npx -y @google/gemini-cli\n'
                         else:
-                            process.stdin.write(f"{cmd}\n".encode())
-                        await process.stdin.drain()
+                            launch_cmd = f'{cmd}\n'
+                        try:
+                            process.stdin.write(launch_cmd.encode('utf-8'))
+                            await process.stdin.drain()
+                        except (BrokenPipeError, ConnectionResetError, OSError):
+                            break
                 elif msg.type in (web.WSMsgType.ERROR, web.WSMsgType.CLOSE):
                     break
         except Exception:
             pass
         finally:
-            stdout_task.cancel()
-            if process.returncode is None:
-                process.terminate()
-            await ws.close()
+            if not stdout_task.done():
+                stdout_task.cancel()
+            try:
+                await stdout_task
+            except (asyncio.CancelledError, Exception):
+                pass
+            # Safely terminate the subprocess
+            try:
+                if process.returncode is None:
+                    try:
+                        process.stdin.close()
+                    except Exception:
+                        pass
+                    process.kill()
+                    try:
+                        await asyncio.wait_for(process.wait(), timeout=3.0)
+                    except asyncio.TimeoutError:
+                        pass
+            except Exception:
+                pass
+            if not ws.closed:
+                await ws.close()
         return ws
 
     async def handle_stream(self, request):
@@ -5459,6 +5414,32 @@ try {
         except Exception as e:
             return web.json_response({'files': [], 'error': str(e)})
     
+    async def handle_get_models(self, request):
+        """Serve the models.yaml file to the frontend."""
+        try:
+            import yaml
+            project_root = self.core.config.get('paths', {}).get('workspace', '.')
+            models_path = os.path.join(project_root, 'config', 'models.yaml')
+            if not os.path.exists(models_path):
+                models_path = os.path.join(os.path.dirname(__file__), 'config', 'models.yaml')
+                if not os.path.exists(models_path):
+                    return web.json_response({'providers': {}})
+            with open(models_path, 'r', encoding='utf-8') as f:
+                data = yaml.safe_load(f)
+            out_map = {}
+            for prov, items in data.get('providers', {}).items():
+                filtered = []
+                for i in items:
+                    if i.get('enabled', True):
+                        i_copy = dict(i)
+                        i_copy['provider'] = prov
+                        filtered.append(i_copy)
+                if filtered:
+                    out_map[prov] = filtered
+            return web.json_response({'providers': out_map})
+        except Exception as e:
+            return web.json_response({'error': str(e)}, status=500)
+
     async def handle_get_file(self, request):
         """Get file contents"""
         filename = request.query.get('name')
