@@ -37,6 +37,9 @@ Beyond recalling chat history, Galactic AI now has a living memory of your local
 # Extract the ZIP, open PowerShell in the folder, then:
 .\install.ps1    # Installs all dependencies
 .\launch.ps1     # Starts Galactic AI
+
+# Create a Desktop Shortcut with custom icon:
+.\create_shortcut.ps1
 ```
 
 ### macOS / Linux

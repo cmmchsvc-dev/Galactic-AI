@@ -36,6 +36,8 @@ INCLUDE_LIST = [
     "terms.html",
     "update.ps1",
     "update.sh",
+    "create_shortcut.ps1",
+    "galactic_ai_flux_v4.ico",
     "galactic_core_v2.py",
     "galactic_memory.py",
     "gateway_v2.py",
