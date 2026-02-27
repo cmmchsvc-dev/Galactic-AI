@@ -504,7 +504,8 @@ class GalacticCore:
                 self.loop.add_signal_handler(sig, _signal_handler)
 
         # GALACTIC AI SPLASH SCREEN
-        splash = f"""
+        ver = self.config.get('system',{}).get('version','?')
+        full_splash = f"""
 ╔═══════════════════════════════════════════════════════════════╗
 ║                                                               ║
 ║   ██████╗  █████╗ ██╗      █████╗  ██████╗████████╗██╗ ██████╗║
@@ -514,12 +515,31 @@ class GalacticCore:
 ║  ╚██████╔╝██║  ██║███████╗██║  ██║╚██████╗   ██║   ██║╚██████╗║
 ║   ╚═════╝ ╚═╝  ╚═╝╚══════╝╚═╝  ╚═╝ ╚═════╝   ╚═╝   ╚═╝ ╚═════╝║
 ║                                                               ║
-║               * * *  AUTOMATION SUITE  * * *                  ║
-║                      v{self.config.get('system',{}).get('version','?')}                                   ║
-║                   Sovereign - Universal - Fast                ║
+║                       v{ver:<39}║
+║                  Sovereign - Universal - Fast                 ║
 ║                                                               ║
 ╚═══════════════════════════════════════════════════════════════╝
 """
+        def _gradient(text, start_hex, end_hex):
+            start = tuple(int(start_hex[i:i+2], 16) for i in (0, 2, 4))
+            end = tuple(int(end_hex[i:i+2], 16) for i in (0, 2, 4))
+            lines = text.strip('\n').split('\n')
+            max_len = max(len(line) for line in lines) if lines else 1
+            res = []
+            for line in lines:
+                colored = ""
+                for x, char in enumerate(line):
+                    ratio = x / max_len if max_len > 0 else 0
+                    r = int(start[0] + (end[0] - start[0]) * ratio)
+                    g = int(start[1] + (end[1] - start[1]) * ratio)
+                    b = int(start[2] + (end[2] - start[2]) * ratio)
+                    colored += f"\033[38;2;{r};{g};{b}m{char}"
+                colored += "\033[0m"
+                res.append(colored)
+            return '\n'.join(res)
+
+        splash = "\n" + _gradient(full_splash, "00F0FF", "8A2BE2") + "\n"
+        
         # Try to print with UTF-8 encoding
         try:
             print(splash.encode('utf-8').decode('utf-8'))

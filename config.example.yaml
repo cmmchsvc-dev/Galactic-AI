@@ -6,7 +6,7 @@
 
 system:
   name: Galactic AI
-  version: 1.1.8
+  version: 1.2.0
   port: 9999
   heartbeat_interval: 5
   update_check_interval: 21600
@@ -22,6 +22,9 @@ models:
   # The "Big Brain" for strategic planning and investigation
   planner_provider: google
   planner_model: gemini-2.0-pro-exp-02-05
+  
+  planner_fallback_provider: openrouter
+  planner_fallback_model: openai/gpt-4o
   
   auto_fallback: true
   smart_routing: true
@@ -126,7 +129,7 @@ social_media:
     client_secret: ""
     username: ""
     password: ""
-    user_agent: "GalacticAI/1.1.8"
+    user_agent: "GalacticAI/1.2.0"
 
 # ─── WEB CONTROL DECK ─────────────────────────────────────────────────────────
 web:

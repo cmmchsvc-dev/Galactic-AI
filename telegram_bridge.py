@@ -413,7 +413,8 @@ class TelegramBridge:
                 f"{mode_indicator} **Active:** {current['provider']}/{current['model']} ({current['mode']})\n\n"
                 f"🎯 **Primary (Builder):** {mm.primary_provider}/{mm.primary_model}\n"
                 f"🔄 **Fallback:** {mm.fallback_provider}/{mm.fallback_model}\n"
-                f"🧠 **Planner:** {models_cfg.get('planner_provider', 'openrouter')}/{models_cfg.get('planner_model', 'google/gemini-3.1-pro-preview')}\n\n"
+                f"🧠 **Planner:** {models_cfg.get('planner_provider', 'openrouter')}/{models_cfg.get('planner_model', 'openai/gpt-5.2')}\n"
+                f"🛡️ **Planner Fallback:** {models_cfg.get('planner_fallback_provider', 'openrouter')}/{models_cfg.get('planner_fallback_model', 'openai/gpt-5.2-codex')}\n\n"
                 f"**Auto-Fallback:** {'✅ Enabled' if mm.auto_fallback_enabled else '❌ Disabled'}\n"
                 f"**Error Threshold:** {mm.error_threshold}\n"
                 f"**Recovery Time:** {mm.recovery_time}s\n\n"
@@ -422,6 +423,7 @@ class TelegramBridge:
             buttons = [
                 [{"text": "🎯 Set Primary (Builder)", "callback_data": "cfg_primary"}],
                 [{"text": "🧠 Set Planner (Big Brain)", "callback_data": "cfg_planner"}],
+                [{"text": "🛡️ Set Planner Fallback", "callback_data": "cfg_planner_fallback"}],
                 [{"text": "🔄 Set Fallback Model", "callback_data": "cfg_fallback"}],
                 [{"text": "🔄 Switch to Primary", "callback_data": "cfg_switch_primary"}],
                 [{"text": "🟡 Switch to Fallback", "callback_data": "cfg_switch_fallback"}],
@@ -553,19 +555,28 @@ class TelegramBridge:
                     f"{self.api_url}/editMessageText",
                     json={"chat_id": chat_id, "message_id": message_id, "text": text, "reply_markup": markup, "parse_mode": "Markdown"},
                 )
-            elif data.startswith("cfg_primary_prov_") or data.startswith("cfg_fallback_prov_") or data.startswith("cfg_planner_prov_"):
-                parts = data.split("_")
-                setting_type = parts[1]
-                provider_name = parts[3]
-                text, markup = await self.get_models_config_menu(config_type="model", provider=f"{setting_type}_prov_{provider_name}")
+            elif data == "cfg_planner_fallback":
+                text, markup = await self.get_models_config_menu(config_type="provider", provider="planner_fallback")
                 await self.client.post(
                     f"{self.api_url}/editMessageText",
                     json={"chat_id": chat_id, "message_id": message_id, "text": text, "reply_markup": markup, "parse_mode": "Markdown"},
                 )
-            elif data.startswith("cfg_primary_set_") or data.startswith("cfg_fallback_set_") or data.startswith("cfg_planner_set_"):
-                parts = data.split("_")
-                setting_type = parts[1]
-                provider_and_model = parts[3]
+            elif data.startswith("cfg_primary_prov_") or data.startswith("cfg_fallback_prov_") or data.startswith("cfg_planner_prov_") or data.startswith("cfg_planner_fallback_prov_"):
+                # E.g. cfg_planner_fallback_prov_openrouter -> parts: ['cfg', 'planner', 'fallback', 'prov', 'openrouter']
+                # Let's handle it more robustly
+                prefix = "cfg_"
+                rest = data[len(prefix):]
+                # rest is like "primary_prov_openai" or "planner_fallback_prov_openrouter"
+                _type, _prov = rest.rsplit("_prov_", 1)
+                text, markup = await self.get_models_config_menu(config_type="model", provider=f"{_type}_prov_{_prov}")
+                await self.client.post(
+                    f"{self.api_url}/editMessageText",
+                    json={"chat_id": chat_id, "message_id": message_id, "text": text, "reply_markup": markup, "parse_mode": "Markdown"},
+                )
+            elif data.startswith("cfg_primary_set_") or data.startswith("cfg_fallback_set_") or data.startswith("cfg_planner_set_") or data.startswith("cfg_planner_fallback_set_"):
+                prefix = "cfg_"
+                rest = data[len(prefix):]
+                setting_type, provider_and_model = rest.rsplit("_set_", 1)
                 provider_name, model_id = provider_and_model.split("|")
                 if setting_type == "primary":
                     await self.core.model_manager.set_primary(provider_name, model_id)
@@ -573,17 +584,22 @@ class TelegramBridge:
                 elif setting_type == "fallback":
                     await self.core.model_manager.set_fallback(provider_name, model_id)
                     await self.send_message(chat_id, f"✅ **Fallback model set:** {provider_name}/{model_id}")
-                elif setting_type == "planner":
+                elif setting_type in ("planner", "planner_fallback"):
                     cfg = self.core.config
                     cfg.setdefault('models', {})
-                    cfg['models']['planner_provider'] = provider_name
-                    cfg['models']['planner_model'] = model_id
-                    # We need to trigger a save, best way here is via ModelManager logic or just rewrite
+                    if setting_type == "planner":
+                        cfg['models']['planner_provider'] = provider_name
+                        cfg['models']['planner_model'] = model_id
+                        await self.send_message(chat_id, f"✅ **Planner model set:** {provider_name}/{model_id}")
+                    else:
+                        cfg['models']['planner_fallback_provider'] = provider_name
+                        cfg['models']['planner_fallback_model'] = model_id
+                        await self.send_message(chat_id, f"✅ **Fallback Planner model set:** {provider_name}/{model_id}")
+                    # Trigger save
                     if hasattr(self.core.gateway, '_save_config'):
                         self.core.gateway._save_config(cfg)
                     elif hasattr(self.core, 'web_deck'):
                         self.core.web_deck._save_config(cfg)
-                    await self.send_message(chat_id, f"✅ **Planner model set:** {provider_name}/{model_id}")
                 text, markup = await self.get_models_config_menu()
                 await self.client.post(
                     f"{self.api_url}/editMessageText",

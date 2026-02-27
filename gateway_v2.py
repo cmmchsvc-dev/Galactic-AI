@@ -347,8 +347,18 @@ class GalacticGateway:
         # Conversation History
         self.history = []
 
-        # Persistent chat log (JSONL) — survives page refreshes
+        # Resumable Workflows State
         logs_dir = core.config.get('paths', {}).get('logs', './logs')
+        self.runs_dir = os.path.join(logs_dir, 'runs')
+        os.makedirs(self.runs_dir, exist_ok=True)
+        self.checkpoint_uuid = None
+        self._tool_count_since_cp = 0
+        self._consecutive_failures = 0
+        self._recent_tools = []
+        self._trace_sid = None
+        self.active_plan = None
+
+        # Persistent chat log (JSONL) — survives page refreshes
         self.history_file = os.path.join(logs_dir, 'chat_history.jsonl')
         os.makedirs(os.path.dirname(self.history_file), exist_ok=True)
 
@@ -958,6 +968,17 @@ class GalacticGateway:
                 },
                 "fn": self.tool_remove_skill
             },
+            "resume_workflow": {
+                "description": "Resume an interrupted background workflow or task from a saved checkpoint.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "uuid": {"type": "string", "description": "The UUID of the checkpoint to load."}
+                    },
+                    "required": ["uuid"]
+                },
+                "fn": self.tool_resume_workflow
+            },
         }
 
     def register_skill_tools(self, skills):
@@ -984,6 +1005,21 @@ class GalacticGateway:
             print(f"[Skills] Upgraded core tools: {', '.join(set(overwritten))}")
 
     # --- Tool Implementations ---
+    async def tool_resume_workflow(self, args):
+        """Tool handler to restore state from a checkpoint and continue."""
+        uuid_val = args.get('uuid')
+        if not uuid_val:
+            return "Error: 'uuid' is required."
+            
+        try:
+            state = await self.load_checkpoint(uuid_val)
+            # The actual resuming is tricky to do fully inside a tool call since it interrupts the current flow, 
+            # but setting the state means the NEXT turn uses it. 
+            # We will return a system prompt instructing the model to proceed.
+            return f"[OK] Restored checkpoint {uuid_val}. State restored: turn {state.get('turn_count')}. You MUST now continue the interrupted task."
+        except Exception as e:
+            return f"[Error] Failed to resume workflow: {str(e)}"
+
     async def tool_read_file(self, args):
         path = args.get('path')
         try:
@@ -2067,19 +2103,19 @@ class GalacticGateway:
         if fence_match:
             candidates.append(fence_match.group(1))
 
-        # Step 3: Find ALL {...} spans in the cleaned text (greedy outer-most)
-        # We look for balanced braces to handle nested objects properly
+        # Step 3: Find ALL {...} spans in the cleaned text in O(N)
+        # We use a stack to find all balanced brace pairs.
+        stack = []
         for i, ch in enumerate(cleaned):
             if ch == '{':
-                depth = 0
-                for j in range(i, len(cleaned)):
-                    if cleaned[j] == '{':
-                        depth += 1
-                    elif cleaned[j] == '}':
-                        depth -= 1
-                        if depth == 0:
-                            candidates.append(cleaned[i:j+1])
-                            break
+                stack.append(i)
+            elif ch == '}':
+                if stack:
+                    start_idx = stack.pop()
+                    candidates.append(cleaned[start_idx:i+1])
+
+        # Try outermost/largest blocks first (they were completed last)
+        candidates.reverse()
 
         # Step 4: Try each candidate JSON blob
         for json_str in candidates:
@@ -2128,92 +2164,63 @@ class GalacticGateway:
 
     def _build_system_prompt(self, context="", is_ollama=False):
         """
-        Build the system prompt.  For Ollama/local models we inject:
-          - Full parameter schemas (not just descriptions) so the model
-            knows exact argument names and types
+        Build the system prompt. We inject:
+          - Full parameter schemas so the model knows exact argument names and types
           - Concrete few-shot examples of correct tool-call JSON
-          - Explicit instruction to output ONLY raw JSON (no markdown, no prose)
+          - Explicit instruction to output ONLY raw JSON
         """
         personality_prompt = self.personality.get_system_prompt()
 
-        if is_ollama:
-            # Full schema for every tool so local models know what args to pass
-            tool_schemas = {}
-            for name, tool in self.tools.items():
-                tool_schemas[name] = {
-                    "description": tool.get("description", ""),
-                    "parameters": tool.get("parameters", {})
-                }
-            tool_block = json.dumps(tool_schemas, indent=2)
+        # Full schema for every tool so models know what args to pass
+        tool_schemas = {}
+        for name, tool in self.tools.items():
+            tool_schemas[name] = {
+                "description": tool.get("description", ""),
+                "parameters": tool.get("parameters", {})
+            }
+        tool_block = json.dumps(tool_schemas, indent=2)
 
-            few_shot = (
-                'EXAMPLES OF CORRECT TOOL CALLS:\n'
-                '  Read a file:\n'
-                '  {"tool": "read_file", "args": {"path": "C:\\\\data\\\\notes.txt"}}\n\n'
-                '  Run a shell command:\n'
-                '  {"tool": "exec_shell", "args": {"command": "dir C:\\\\Users"}}\n\n'
-                '  Navigate browser to URL:\n'
-                '  {"tool": "browser_navigate", "args": {"url": "https://example.com"}}\n\n'
-                '  Take a screenshot:\n'
-                '  {"tool": "browser_screenshot", "args": {}}\n\n'
-                '  Search the web:\n'
-                '  {"tool": "web_search", "args": {"query": "python asyncio tutorial"}}\n'
-            )
+        few_shot = (
+            'EXAMPLES OF CORRECT TOOL CALLS:\n'
+            '  Read a file:\n'
+            '  {"tool": "read_file", "args": {"path": "C:\\\\data\\\\notes.txt"}}\n\n'
+            '  Run a shell command:\n'
+            '  {"tool": "exec_shell", "args": {"command": "dir C:\\\\Users"}}\n\n'
+            '  Navigate browser to URL:\n'
+            '  {"tool": "browser_navigate", "args": {"url": "https://example.com"}}\n\n'
+            '  Take a screenshot:\n'
+            '  {"tool": "browser_screenshot", "args": {}}\n\n'
+            '  Search the web:\n'
+            '  {"tool": "web_search", "args": {"query": "python asyncio tutorial"}}\n'
+        )
 
-            protocol = (
-                "TOOL USAGE RULES — FOLLOW EXACTLY:\n"
-                "1. To use a tool output ONLY a raw JSON object. NO markdown. NO prose. NO code fences.\n"
-                "   CORRECT:   {\"tool\": \"read_file\", \"args\": {\"path\": \"/tmp/a.txt\"}}\n"
-                "   WRONG:     ```json\\n{...}\\n```   (never use fences)\n"
-                "   WRONG:     'I will read the file: {...}'  (never wrap in prose)\n"
-                "2. After a tool output appears as 'Tool Output: ...' give your FINAL answer in plain text.\n"
-                "3. For simple tasks: use 1 tool then answer immediately.\n"
-                "4. For complex tasks: chain up to 10 tool calls, then answer.\n"
-                "5. NEVER repeat a tool call with the same args — trust the output.\n"
-                "6. If you don't need a tool, just answer in plain text — no JSON.\n"
-                "7. If a tool fails or times out: do NOT retry the same approach. Explain the failure and try a different strategy.\n"
-                "8. If stuck after 3+ failed attempts: STOP. Tell the user what you tried, what went wrong, and ask for guidance.\n"
-                "9. BEFORE writing scripts: read config.yaml for real credentials. NEVER use placeholder values.\n"
-                "10. NEVER overwrite requirements.txt, config.yaml, or core .py files. Create NEW files with unique names.\n"
-                "11. NEVER run scripts with while True loops or sleep() via exec_shell — they timeout. Tell the user how to launch them.\n"
-                "12. CRITICAL: NEVER use `write_file` or `edit_file` on an existing file without using `read_file` first to see its content.\n"
-            )
+        protocol = (
+            "TOOL USAGE RULES — FOLLOW EXACTLY:\n"
+            "1. To use a tool output ONLY a raw JSON object. NO markdown. NO prose. NO code fences.\n"
+            "   CORRECT:   {\"tool\": \"read_file\", \"args\": {\"path\": \"/tmp/a.txt\"}}\n"
+            "   WRONG:     ```json\\n{...}\\n```   (never use fences)\n"
+            "   WRONG:     'I will read the file: {...}'  (never wrap in prose)\n"
+            "2. After a tool output appears as 'Tool Output: ...' give your FINAL answer in plain text.\n"
+            "3. For simple tasks: use 1 tool then answer immediately.\n"
+            "4. For complex tasks: chain up to 10 tool calls, then answer.\n"
+            "5. NEVER repeat a tool call with the same args — trust the output.\n"
+            "6. If you don't need a tool, just answer in plain text — no JSON.\n"
+            "7. If a tool fails or times out: do NOT retry the same approach. Explain the failure and try a different strategy.\n"
+            "8. If stuck after 3+ failed attempts: STOP. Tell the user what you tried, what went wrong, and ask for guidance.\n"
+            "9. BEFORE writing scripts: read config.yaml for real credentials. NEVER use placeholder values.\n"
+            "10. NEVER overwrite requirements.txt, config.yaml, or core .py files. Create NEW files with unique names.\n"
+            "11. NEVER run scripts with while True loops or sleep() via exec_shell — they timeout. Tell the user how to launch them.\n"
+            "12. CRITICAL: NEVER use `write_file` or `edit_file` on an existing file without using `read_file` first to see its content.\n"
+            "13. CRITICAL: If you spawn a background task or subagent, DO NOT hallucinate that it finished successfully. You MUST check its status or read the output files before claiming success.\n"
+        )
 
-            system_prompt = (
-                f"{personality_prompt}\n\n"
-                f"AVAILABLE TOOLS (with parameter schemas):\n{tool_block}\n\n"
-                f"{few_shot}\n"
-                f"{protocol}\n"
-                f"Context: {context}"
-            )
-        else:
-            # Cloud models: concise descriptions are enough — they already follow JSON tool protocols
-            tool_desc = json.dumps(
-                {k: v['description'] for k, v in self.tools.items()}, indent=2
-            )
-            system_prompt = (
-                f"{personality_prompt}\n\n"
-                f"You have access to the following tools:\n{tool_desc}\n\n"
-                f"TOOL USAGE PROTOCOL:\n"
-                f"- To use a tool: respond with ONLY a JSON object: {{\"tool\": \"tool_name\", \"args\": {{...}}}}\n"
-                f"- After using a tool: you'll see the output and can use another tool OR give your final answer\n"
-                f"- When you have enough information: STOP using tools and give a complete answer\n"
-                f"- For SIMPLE tasks (write file, read file, single command): use 1 tool then ANSWER immediately\n"
-                f"- For 'systems check' queries: gather 2-3 key metrics then ANSWER, don't exhaust all tools\n"
-                f"- For COMPLEX tasks (multi-step automation): plan your approach FIRST, then execute. Target under 15 tool calls\n"
-                f"- NEVER verify what you just did — trust the tool output and respond to the user!\n"
-                f"- If a tool fails or times out: do NOT retry the same approach. Explain the failure and try a different strategy\n"
-                f"- If you write a file: deliver it to the user. Do NOT immediately run it to test — let the user verify\n"
-                f"- NEVER launch long-running background processes via exec_shell — they timeout after 120s. Write the script and tell the user how to run it\n"
-                f"- If stuck after 3+ failed attempts: STOP. Tell the user what you tried, what went wrong, and ask for guidance\n"
-                f"\nCRITICAL RULES:\n"
-                f"- NEVER use `write_file` or `edit_file` on an existing file without using `read_file` first to see its content.\n"
-                f"- BEFORE writing any script: read config.yaml to get real credentials (Telegram token, API keys, etc.). NEVER use placeholder values like 'YOUR_TOKEN_HERE'\n"
-                f"- NEVER overwrite requirements.txt, config.yaml, or any core .py file unless explicitly asked. Create NEW files with unique names for scripts\n"
-                f"- When asked to 'create a script': write ONE complete file with all logic, then STOP. Do not write multiple draft versions\n"
-                f"- NEVER run a script that has a while True loop or sleep() via exec_shell — it WILL timeout. Tell the user how to launch it instead\n"
-                f"Context: {context}"
-            )
+        system_prompt = (
+            f"{personality_prompt}\n\n"
+            f"AVAILABLE TOOLS (with parameter schemas):\n{tool_block}\n\n"
+            f"{few_shot}\n"
+            f"{protocol}\n"
+            f"Context: {context}"
+        )
 
         return system_prompt
 
@@ -2231,10 +2238,133 @@ class GalacticGateway:
         payload.update(kwargs)
         await self.core.relay.emit(3, "agent_trace", payload)
 
+    async def checkpoint(self, uuid_str):
+        """Save the current agent state to a JSON file."""
+        if not uuid_str:
+            return
+        run_dir = os.path.join(self.runs_dir, uuid_str)
+        os.makedirs(run_dir, exist_ok=True)
+        checkpoint_path = os.path.join(run_dir, 'checkpoint.json')
+        
+        # Mask API key for security
+        import copy
+        api_key_masked = "NONE"
+        if self.llm.api_key and len(self.llm.api_key) > 8:
+            api_key_masked = "***" + self.llm.api_key[-8:]
+            
+        state = {
+            'uuid': uuid_str,
+            'history': copy.deepcopy(self.history),
+            'active_plan': copy.deepcopy(self.active_plan),
+            'turn_count': self._tool_count_since_cp,
+            'llm_state': {
+                'provider': self.llm.provider,
+                'model': self.llm.model,
+                'api_key_mask': api_key_masked
+            },
+            'trace_sid': self._trace_sid,
+            'recent_tools': copy.deepcopy(self._recent_tools),
+            'consecutive_failures': self._consecutive_failures
+        }
+        
+        try:
+            with open(checkpoint_path, 'w', encoding='utf-8') as f:
+                json.dump(state, f, indent=2)
+            await self.core.log(f"💾 Checkpoint saved: {uuid_str}", priority=3)
+        except Exception as e:
+            await self.core.log(f"⚠️ Failed to save checkpoint {uuid_str}: {e}", priority=1)
+
+    async def load_checkpoint(self, uuid_str):
+        """Load a previously saved agent state."""
+        checkpoint_path = os.path.join(self.runs_dir, uuid_str, 'checkpoint.json')
+        if not os.path.exists(checkpoint_path):
+            return False
+            
+        try:
+            with open(checkpoint_path, 'r', encoding='utf-8') as f:
+                state = json.load(f)
+                
+            self.checkpoint_uuid = uuid_str
+            self.history = state.get('history', [])
+            self.active_plan = state.get('active_plan')
+            self._tool_count_since_cp = state.get('turn_count', 0)
+            self._trace_sid = state.get('trace_sid')
+            self._recent_tools = state.get('recent_tools', [])
+            self._consecutive_failures = state.get('consecutive_failures', 0)
+            
+            # Note: We do not restore the raw API key from state since it is masked.
+            # The current initialized provider/model API key will be used.
+            
+            await self.core.log(f"🔄 Checkpoint restored: {uuid_str}", priority=2)
+            return True
+        except Exception as e:
+            await self.core.log(f"⚠️ Failed to load checkpoint {uuid_str}: {e}", priority=1)
+            return False
+
+    async def checkpoint(self, turn_count, messages):
+        """Save the current workflow state to disk for resumability."""
+        if not self.checkpoint_uuid:
+            self.checkpoint_uuid = str(uuid.uuid4())[:8]
+            
+        cp_dir = os.path.join(self.runs_dir, self.checkpoint_uuid)
+        os.makedirs(cp_dir, exist_ok=True)
+        
+        # Mask API key before saving
+        llm_state = {
+            "provider": self.llm.provider,
+            "model": self.llm.model,
+            "api_key_mask": f"***{self.llm.api_key[-8:]}" if hasattr(self.llm, 'api_key') and self.llm.api_key else "NONE"
+        }
+        
+        import copy
+        state = {
+            "uuid": self.checkpoint_uuid,
+            "history": copy.deepcopy(self.history),
+            "messages": copy.deepcopy(messages),
+            "active_plan": copy.deepcopy(self.active_plan),
+            "turn_count": turn_count,
+            "llm_state": llm_state,
+            "trace_sid": self._trace_sid,
+            "recent_tools": copy.deepcopy(self._recent_tools),
+            "consecutive_failures": self._consecutive_failures
+        }
+        
+        cp_path = os.path.join(cp_dir, "checkpoint.json")
+        try:
+            with open(cp_path, 'w', encoding='utf-8') as f:
+                json.dump(state, f, indent=2)
+            await self.core.log(f"💾 Checkpoint saved: {self.checkpoint_uuid}", priority=3)
+        except Exception as e:
+            await self.core.log(f"⚠️ Failed to save checkpoint: {e}", priority=1)
+
+    async def load_checkpoint(self, target_uuid):
+        """Restore workflow state from a saved checkpoint."""
+        cp_path = os.path.join(self.runs_dir, target_uuid, "checkpoint.json")
+        if not os.path.exists(cp_path):
+            raise FileNotFoundError(f"Checkpoint {target_uuid} not found")
+            
+        with open(cp_path, 'r', encoding='utf-8') as f:
+            state = json.load(f)
+            
+        self.checkpoint_uuid = state.get('uuid')
+        self.history = state.get('history', [])
+        # We don't restore the API key, we keep the currently loaded config
+        self.active_plan = state.get('active_plan')
+        self._trace_sid = state.get('trace_sid')
+        self._recent_tools = state.get('recent_tools', [])
+        self._consecutive_failures = state.get('consecutive_failures', 0)
+        self._tool_count_since_cp = 0  # reset for new run
+        
+        await self.core.log(f"🔄 Restored checkpoint: {target_uuid}", priority=2)
+        return state
+
     async def _generate_plan(self, user_input):
         """Generates a step-by-step plan using an isolated planner agent that can scan the codebase."""
         planner_provider = self.core.config.get('models', {}).get('planner_provider')
         planner_model = self.core.config.get('models', {}).get('planner_model')
+
+        planner_fallback_provider = self.core.config.get('models', {}).get('planner_fallback_provider')
+        planner_fallback_model = self.core.config.get('models', {}).get('planner_fallback_model')
 
         # Fallback to simple gemini_code tool if no planner model is explicitly configured
         if not planner_provider or not planner_model:
@@ -2278,9 +2408,6 @@ class GalacticGateway:
                 return None
 
         # --- ADVANCED PLANNER LOOP ---
-        await self.core.log(f"[Planner] Spawning isolated planner agent ({planner_provider}/{planner_model})...")
-        await self._emit_trace("planning_start", 0, session_id="planner", query=user_input[:500])
-
         planner_context = (
             "You are the Lead Architect and Strategic Planner.\n"
             "Your job is to thoroughly analyze the user's request, scan the necessary files and codebase to understand the context, "
@@ -2290,51 +2417,70 @@ class GalacticGateway:
             "Focus on identifying information gaps, research needs, and logical progression."
         )
 
-        try:
-            # Run the isolated ReAct loop using the planner model with a strict timeout
-            result = await asyncio.wait_for(
-                self.speak_isolated(
-                    user_input=f"Analyze and plan the following task:\n\n{user_input}",
-                    context=planner_context,
-                    override_provider=planner_provider,
-                    override_model=planner_model,
-                    use_lock=False, # ALREADY LOCKED BY SPEAK()
-                    skip_planning=True # PREVENT RECURSION
-                ),
-                timeout=120
-            )
+        attempts = [
+            (planner_provider, planner_model, "Primary"),
+        ]
+        if planner_fallback_provider and planner_fallback_model:
+            attempts.append((planner_fallback_provider, planner_fallback_model, "Fallback"))
 
-            # Extract the <plan> from the result
-            match = re.search(r'<plan>(.*?)</plan>', result, re.DOTALL)
-            plan_text = match.group(1).strip() if match else result
-            
-            # Extract the numbered list
-            plan_steps = re.findall(r'^\s*\d\.\s*(.*)', plan_text, re.MULTILINE)
-            
-            if not plan_steps:
-                # Fallback if no numbers were used (split by lines)
-                plan_steps = [s.strip() for s in plan_text.split('\n') if s.strip()][:10]
+        for prov, mod, label in attempts:
+            await self.core.log(f"[Planner] Spawning isolated planner agent ({label}: {prov}/{mod})...")
+            await self._emit_trace("planning_start", 0, session_id="planner", query=user_input[:500])
 
-            if plan_steps:
-                plan = { "steps": plan_steps, "current_step": 0, "original_query": user_input }
-                await self.core.log(f"[Planner] Generated plan with {len(plan_steps)} steps.", priority=2)
-                await self._emit_trace("plan_generated", 0, session_id="planner", plan=plan_steps)
+            try:
+                # Run the isolated ReAct loop using the planner model with a strict timeout
+                result = await asyncio.wait_for(
+                    self.speak_isolated(
+                        user_input=f"Analyze and plan the following task:\n\n{user_input}",
+                        context=planner_context,
+                        override_provider=prov,
+                        override_model=mod,
+                        use_lock=False, # ALREADY LOCKED BY SPEAK()
+                        skip_planning=True # PREVENT RECURSION
+                    ),
+                    timeout=300
+                )
+
+                if result and result.startswith("[ERROR]"):
+                    raise Exception(result)
+
+                # Extract the <plan> from the result
+                match = re.search(r'<plan>(.*?)</plan>', result, re.DOTALL)
+                plan_text = match.group(1).strip() if match else result
                 
-                # Store the plan in long-term memory
-                if "store_memory" in self.tools:
-                    formatted_plan = "\n".join([f"{i+1}. {step}" for i, step in enumerate(plan_steps)])
-                    await self.tools["store_memory"]["fn"]({
-                        "text": f"User request: {user_input}\nGenerated Plan:\n{formatted_plan}",
-                        "metadata": { "type": "plan", "original_query": user_input[:200] }
-                    })
-                return plan
-            else:
-                await self.core.log("[Planner] Failed to extract plan steps from Planner Agent output.", priority=1)
-                return None
+                # Extract the numbered list
+                plan_steps = re.findall(r'^\s*\d\.\s*(.*)', plan_text, re.MULTILINE)
                 
-        except Exception as e:
-            await self.core.log(f"[Planner] Error generating plan via agent: {e}", priority=1)
-            return None
+                if not plan_steps:
+                    # Fallback if no numbers were used (split by lines)
+                    plan_steps = [s.strip() for s in plan_text.split('\n') if s.strip()][:10]
+
+                if plan_steps:
+                    plan = { "steps": plan_steps, "current_step": 0, "original_query": user_input }
+                    await self.core.log(f"[Planner] Generated plan with {len(plan_steps)} steps.", priority=2)
+                    await self._emit_trace("plan_generated", 0, session_id="planner", plan=plan_steps)
+                    
+                    # Store the plan in long-term memory
+                    if "store_memory" in self.tools:
+                        formatted_plan = "\n".join([f"{i+1}. {step}" for i, step in enumerate(plan_steps)])
+                        await self.tools["store_memory"]["fn"]({
+                            "text": f"User request: {user_input}\nGenerated Plan:\n{formatted_plan}",
+                            "metadata": { "type": "plan", "original_query": user_input[:200] }
+                        })
+                    return plan
+                else:
+                    await self.core.log(f"[Planner] Failed to extract plan steps from Planner Agent ({label}) output.", priority=1)
+                    continue # Try fallback if extraction fails
+                    
+            except asyncio.TimeoutError:
+                await self.core.log(f"[Planner] {label} model timed out after 300 seconds", priority=1)
+                continue
+            except Exception as e:
+                await self.core.log(f"[Planner] Error generating plan via {label} agent: {e}", priority=1)
+                continue
+                
+        await self.core.log("[Planner] All planner attempts failed.", priority=1)
+        return None
 
     async def speak(self, user_input, context="", chat_id=None, images=None, skip_planning=False):
         """
@@ -2441,7 +2587,12 @@ class GalacticGateway:
         self._speaking = True
 
         # Unique session ID for tracing this speak() invocation
-        trace_sid = str(uuid.uuid4())[:8]
+        trace_sid = self._trace_sid or str(uuid.uuid4())[:8]
+        self._trace_sid = trace_sid
+        
+        if not self.checkpoint_uuid:
+            self.checkpoint_uuid = str(uuid.uuid4())[:8]
+
         await self._emit_trace("session_start", 0, session_id=trace_sid,
                                query=user_input[:500])
 
@@ -2582,6 +2733,12 @@ class GalacticGateway:
                         recent_tools.append(tool_name)
                         if len(recent_tools) > 6:
                             recent_tools.pop(0)
+                            
+                        # ── Resumable Checkpoints ──
+                        self._tool_count_since_cp += 1
+                        if self._tool_count_since_cp >= 5 or consecutive_failures > 0:
+                            await self.checkpoint(turn_count, messages)
+                            self._tool_count_since_cp = 0
 
                         messages.append({"role": "assistant", "content": response_text})
 
@@ -2894,6 +3051,7 @@ class GalacticGateway:
 
         # Record the failure on the current provider
         model_mgr._record_provider_failure(self.llm.provider, error_type)
+        await model_mgr.handle_api_error(result)
 
         # Walk the fallback chain
         return await self._walk_fallback_chain(messages, error_type)
@@ -3434,7 +3592,7 @@ class GalacticGateway:
                 elif reasoning:
                     return f"[Reasoning]\n{reasoning}"
                 else:
-                    return '[No response]'
+                    return f"[ERROR] {self.llm.provider}: empty content in response"
         except Exception as e:
             return f"[ERROR] {self.llm.provider}: {str(e)}"
 
@@ -3473,7 +3631,10 @@ class GalacticGateway:
                             continue
                     if token_buf:
                         await self.core.relay.emit(3, "stream_chunk", "".join(token_buf))
-            return "".join(full_response)
+            res = "".join(full_response)
+            if not res.strip():
+                return f"[ERROR] {self.llm.provider}: empty stream content"
+            return res
         except Exception as e:
             return f"[ERROR] {self.llm.provider} (streaming): {str(e)}"
 
@@ -3773,10 +3934,11 @@ class GalacticGateway:
                         return f"[ERROR] {provider}: {json.dumps(data)[:500]}"
                     msg = data['choices'][0]['message']
                     content = (msg.get('content') or '').strip()
-                    reasoning = (msg.get('reasoning_content') or '').strip()
+                    reasoning = (msg.get('reasoning_content') or msg.get('reasoning') or '').strip()
+                    refusal = (msg.get('refusal') or '').strip()
                     # Handle native tool_calls (Gemini/GPT via OpenRouter may
                     # use this instead of putting JSON in content text)
-                    if not content and not reasoning and msg.get('tool_calls'):
+                    if not content and not reasoning and not refusal and msg.get('tool_calls'):
                         tc_list = msg['tool_calls']
                         if tc_list:
                             fn = tc_list[0].get('function', {})
@@ -3795,14 +3957,10 @@ class GalacticGateway:
                         return content
                     elif reasoning:
                         return f"[Reasoning]\n{reasoning}"
+                    elif refusal:
+                        return f"[Refusal] {refusal}"
                     else:
-                        await self.core.log(
-                            f"⚠️ [DIAG] Non-streaming returned empty content "
-                            f"(provider={provider}, model={self.llm.model}, "
-                            f"msg_keys={list(msg.keys())})",
-                            priority=1
-                        )
-                        return '[No response]'
+                        return f"[ERROR] {provider}: empty content in response (possible safety filter or invalid model name)"
             except Exception as e:
                 if _attempt < _max_retries and provider == "nvidia":
                     await self.core.log(

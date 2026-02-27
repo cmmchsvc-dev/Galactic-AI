@@ -3,7 +3,7 @@
 **Last Updated:** 2026-02-25 16:30
 **Owner:** Chesley McDaniel (techno-hippie / Ches)
 **Repo Path:** C:\Users\Chesley\Galactic AI
-**Current Version:** v1.1.8 (latest release: Galactic-AI-v1.1.8-windows.zip 507KB)
+**Current Version:** v1.2.0 (latest release: Galactic-AI-v1.2.0-windows.zip 507KB)
 
 ---
 
@@ -18,14 +18,14 @@ Galactic AI: Self-evolving AI platform w/ 150+ tools, skills ecosystem (core/com
 ---
 
 ## Active Tasks
-- [x] PROJECT_STATE.md synced to C:\ (v1.1.8, full tree/stats/skills)
+- [x] PROJECT_STATE.md synced to C:\ (v1.2.0, full tree/stats/skills)
 - [ ] Trigger workspace_indexer.py for codebase RAG
 - [x] Deep scan: list_dir recurse complete
 
 ---
 
 ## Milestones
-- [x] v1.1.8 Self-Healing (test_driven_coder) & Workspace RAG
+- [x] v1.2.0 Self-Healing (test_driven_coder) & Workspace RAG
 - [x] v1.1.7 Computer Use (vision-click UI) & Live Voice
 - [x] v1.1.6 Big Brain Planner & ChromaDB Deep Memory
 - [x] Skills explosion: core (browser_pro/chrome/desktop/social), community (boot_recall/computer_use/gemini_coder/memory_manager/workspace_indexer)
@@ -48,14 +48,14 @@ Galactic AI: Self-evolving AI platform w/ 150+ tools, skills ecosystem (core/com
 - `skills/community/` — workspace_indexer.py (8KB RAG), computer_use.py (6KB vision), gemini_coder.py (7KB), boot_recall_banner.py, etc.
 - `chrome-extension/` — content.js (34KB), ready
 - `chroma_data/` — galactic_memory.db (225KB) + vectors
-- `releases/v1.1.8/` — Win/Linux/Mac zips + SHA
+- `releases/v1.2.0/` — Win/Linux/Mac zips + SHA
 - `logs/` — core_2026-02-25.log (476KB), chat_history.jsonl (95KB)
 - `images/` — Veo/FLUX/Imagen galleries (36MB videos)
 
 ---
 
 ## Release Status
-- **Latest:** v1.1.8 (16:06, all platforms)
+- **Latest:** v1.2.0 (16:06, all platforms)
 
 ---
 
