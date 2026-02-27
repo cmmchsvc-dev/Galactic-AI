@@ -11,12 +11,9 @@ Architecture:
 """
 
 import asyncio
-import base64
 import json
 import logging
 import uuid
-from datetime import datetime
-from pathlib import Path
 
 from skills.base import GalacticSkill
 
@@ -33,7 +30,7 @@ class ChromeBridgeSkill(GalacticSkill):
     """
 
     skill_name  = "chrome_bridge"
-    version     = "1.1.9"
+    version     = "1.1.1"
     author      = "Galactic AI"
     description = "Chrome extension WebSocket bridge for real browser control."
     category    = "browser"
@@ -57,11 +54,6 @@ class ChromeBridgeSkill(GalacticSkill):
 
         # Cache of known tabs: {tab_id: {"title": ..., "url": ...}}
         self._tabs: dict[int, dict] = {}
-
-        # GIF recorder state
-        self._gif_recording = False
-        self._gif_frames: list[bytes] = []
-        self._gif_task = None  # asyncio task for polling loop
 
     # ── Metadata property (web_deck compat) ─────────────────────────────
 
@@ -181,23 +173,12 @@ class ChromeBridgeSkill(GalacticSkill):
                 "fn": self._tool_chrome_read_console
             },
             "chrome_read_network": {
-                "description": "Read network requests made by the current page in the user's Chrome browser. Each entry includes a request_id field that can be passed to chrome_get_network_body to retrieve the full response body.",
+                "description": "Read network requests made by the current page in the user's Chrome browser.",
                 "parameters": {"type": "object", "properties": {
                     "url_pattern": {"type": "string", "description": "Filter by URL substring"},
                     "clear": {"type": "boolean", "description": "Clear requests after reading"},
                 }},
                 "fn": self._tool_chrome_read_network
-            },
-            "chrome_get_network_body": {
-                "description": "Get the full response body for a captured network request. Use request_id from chrome_read_network output.",
-                "parameters": {
-                    "type": "object",
-                    "properties": {
-                        "request_id": {"type": "string", "description": "Request ID from chrome_read_network output (e.g. '12345.678')"}
-                    },
-                    "required": ["request_id"]
-                },
-                "fn": self._tool_chrome_get_network_body
             },
             "chrome_hover": {
                 "description": "Hover over an element in the user's Chrome browser to trigger hover states, tooltips, or menus.",
@@ -209,154 +190,19 @@ class ChromeBridgeSkill(GalacticSkill):
                 }},
                 "fn": self._tool_chrome_hover
             },
-            "chrome_zoom": {
-                "description": "Capture a cropped region of the Chrome browser for close inspection of small elements (icons, buttons, form fields). region=[x0,y0,x1,y1] in pixels from top-left of viewport. Returns a JPEG of just that region.",
-                "parameters": {"type": "object", "properties": {
-                    "region": {"type": "array", "description": "Bounding box [x0, y0, x1, y1] in pixels from viewport top-left. E.g. [0, 0, 200, 200] for top-left 200x200px"},
-                }, "required": ["region"]},
-                "fn": self._tool_chrome_zoom
-            },
-            "chrome_drag": {
-                "description": "Drag from one coordinate to another in Chrome for drag-and-drop interactions, sliders, and reordering.",
-                "parameters": {"type": "object", "properties": {
-                    "start_x": {"type": "number", "description": "Starting X coordinate"},
-                    "start_y": {"type": "number", "description": "Starting Y coordinate"},
-                    "end_x": {"type": "number", "description": "Ending X coordinate"},
-                    "end_y": {"type": "number", "description": "Ending Y coordinate"},
-                }, "required": ["start_x", "start_y", "end_x", "end_y"]},
-                "fn": self._tool_chrome_drag
-            },
-            "chrome_right_click": {
-                "description": "Right-click at a ref, selector, or coordinates in Chrome. Triggers JavaScript-based context menus (custom dropdowns, right-click menus on apps like Reddit, Notion). Note: cannot open the native browser context menu due to browser security restrictions.",
-                "parameters": {"type": "object", "properties": {
-                    "ref": {"type": "string", "description": "Element ref ID from chrome_read_page"},
-                    "selector": {"type": "string", "description": "CSS selector"},
-                    "x": {"type": "number", "description": "X coordinate"},
-                    "y": {"type": "number", "description": "Y coordinate"},
-                }},
-                "fn": self._tool_chrome_right_click
-            },
-            "chrome_triple_click": {
-                "description": "Triple-click an element in Chrome to select all its text content. Use before typing to replace existing text.",
-                "parameters": {"type": "object", "properties": {
-                    "ref": {"type": "string", "description": "Element ref ID from chrome_read_page"},
-                    "selector": {"type": "string", "description": "CSS selector"},
-                    "x": {"type": "number", "description": "X coordinate"},
-                    "y": {"type": "number", "description": "Y coordinate"},
-                }},
-                "fn": self._tool_chrome_triple_click
-            },
-            "chrome_upload": {
-                "description": "Upload a local file to a <input type='file'> element. Requires the absolute file path on disk. Target with ref or selector (selector takes priority if both provided).",
-                "parameters": {"type": "object", "properties": {
-                    "file_path": {"type": "string", "description": "Absolute path to the file to upload"},
-                    "ref": {"type": "string", "description": "Element reference ID (e.g. ref_123)"},
-                    "selector": {"type": "string", "description": "CSS selector for the file input"},
-                }, "required": ["file_path"]},
-                "fn": self._tool_chrome_upload
-            },
-            "chrome_resize": {
-                "description": "Resize the Chrome viewport. Presets: mobile (375\u00d7812), tablet (768\u00d71024), desktop (1280\u00d7800). Or provide custom width and height in pixels.",
-                "parameters": {"type": "object", "properties": {
-                    "preset": {"type": "string", "description": "Device preset: mobile, tablet, or desktop"},
-                    "width": {"type": "number", "description": "Custom viewport width in pixels"},
-                    "height": {"type": "number", "description": "Custom viewport height in pixels"},
-                }, "required": []},
-                "fn": self._tool_chrome_resize
-            },
-            "chrome_wait_for": {
-                "description": "Wait for a specific element (CSS selector) or text content to appear on the current page in the user's Chrome browser.",
-                "parameters": {"type": "object", "properties": {
-                    "selector": {"type": "string", "description": "CSS selector to wait for"},
-                    "text": {"type": "string", "description": "Text content to wait for"},
-                    "timeout": {"type": "number", "description": "Max wait time in milliseconds (default: 10000)"},
-                }},
-                "fn": self._tool_chrome_wait_for
-            },
-            "chrome_wait": {
-                "description": "Wait for N seconds. Use to let pages load, animations settle, or rate-limit between actions.",
-                "parameters": {
-                    "seconds": {"type": "number", "description": "Number of seconds to wait (max 30)"}
-                },
-                "required": ["seconds"],
-                "fn": self._tool_chrome_wait
-            },
-            "chrome_gif_start": {
-                "description": "Start recording the browser as an animated GIF. Captures screenshots at the specified frame rate. Call chrome_gif_stop when done, then chrome_gif_export to save.",
-                "parameters": {
-                    "fps": {"type": "number", "description": "Frames per second (default: 2, max: 5)"}
-                },
-                "required": [],
-                "fn": self._tool_chrome_gif_start
-            },
-            "chrome_gif_stop": {
-                "description": "Stop the GIF recording. Frames are kept in memory. Call chrome_gif_export to save the GIF.",
-                "parameters": {},
-                "required": [],
-                "fn": self._tool_chrome_gif_stop
-            },
-            "chrome_gif_export": {
-                "description": "Export the recorded frames as an animated GIF. Saves to logs/recordings/ and returns the file path.",
-                "parameters": {
-                    "filename": {"type": "string", "description": "Output filename (without .gif extension). Defaults to timestamp."},
-                    "frame_duration_ms": {"type": "number", "description": "Duration per frame in milliseconds (default: 500)"}
-                },
-                "required": [],
-                "fn": self._tool_chrome_gif_export
-            },
         }
 
     # ── Tool handlers ────────────────────────────────────────────────────
 
     async def _tool_chrome_screenshot(self, args):
-        if not self.ws_connection:
-            return "[ERROR] Chrome extension not connected. Install the Galactic Browser extension and click Connect."
+        if not self.ws_connection: return "[ERROR] Chrome extension not connected. Install the Galactic Browser extension and click Connect."
         result = await self.screenshot()
         if result.get('status') == 'success':
             img_data = result.get('image_b64', '')
-            if not img_data:
-                return "[ERROR] Chrome screenshot: no image data returned"
-
-            # Save to images/browser/ directory (consistent with Playwright screenshot tool)
-            try:
-                images_dir = self.core.config.get('paths', {}).get('images', './images')
-                img_subdir = Path(images_dir) / 'browser'
-                img_subdir.mkdir(parents=True, exist_ok=True)
-                ts = datetime.now().strftime('%Y%m%d_%H%M%S')
-                path = str(img_subdir / f'chrome_{ts}.jpg')
-                raw = base64.b64decode(img_data)
-                with open(path, 'wb') as f:
-                    f.write(raw)
-                # Return special dict that gateway detects and renders as a vision message
-                return {"__image_b64__": img_data, "path": path, "media_type": "image/jpeg",
-                        "text": f"[CHROME] Screenshot saved: {path}"}
-            except Exception as e:
-                return f"[CHROME] Screenshot captured ({len(img_data)} chars base64) — save failed: {e}"
+            if img_data:
+                return f"[CHROME] Screenshot captured ({len(img_data)} bytes base64)"
+            return "[CHROME] Screenshot captured (no image data)"
         return f"[ERROR] Chrome screenshot: {result.get('error') or result.get('message') or 'unknown error'}"
-
-    async def _tool_chrome_zoom(self, args):
-        if not self.ws_connection: return "[ERROR] Chrome extension not connected."
-        region = args.get('region')
-        if not region or len(region) != 4:
-            return "[ERROR] chrome_zoom: region must be [x0, y0, x1, y1]"
-        result = await self.zoom(region=region)
-        if result.get('status') == 'success':
-            img_data = result.get('image_b64', '')
-            if not img_data:
-                return "[ERROR] Chrome zoom: no image data returned"
-            try:
-                images_dir = self.core.config.get('paths', {}).get('images', './images')
-                img_subdir = Path(images_dir) / 'browser'
-                img_subdir.mkdir(parents=True, exist_ok=True)
-                ts = datetime.now().strftime('%Y%m%d_%H%M%S')
-                path = str(img_subdir / f'chrome_zoom_{ts}.jpg')
-                with open(path, 'wb') as f:
-                    f.write(base64.b64decode(img_data))
-                return {"__image_b64__": img_data, "path": path, "media_type": "image/jpeg",
-                        "text": f"[CHROME] Zoomed region {region} saved: {path}"}
-            except Exception as e:
-                return f"[CHROME] Zoom captured — save failed: {e}"
-        return f"[ERROR] Chrome zoom: {result.get('error') or result.get('message') or 'unknown'}"
 
     async def _tool_chrome_navigate(self, args):
         if not self.ws_connection: return "[ERROR] Chrome extension not connected."
@@ -471,18 +317,6 @@ class ChromeBridgeSkill(GalacticSkill):
             return f"[CHROME] New tab created: {result.get('url', 'new tab')}"
         return f"[ERROR] Chrome tabs_create: {result.get('error') or result.get('message') or 'unknown error'}"
 
-    async def _tool_chrome_wait_for(self, args):
-        if not self.ws_connection: return "[ERROR] Chrome extension not connected."
-        result = await self.wait_for(
-            selector=args.get('selector'),
-            text=args.get('text'),
-            timeout=args.get('timeout', 10000)
-        )
-        if result.get('status') == 'success':
-            target = args.get('selector') or args.get('text')
-            return f"[CHROME] Wait for '{target}' succeeded"
-        return f"[ERROR] Chrome wait_for: {result.get('error') or result.get('message') or 'unknown error'}"
-
     async def _tool_chrome_key_press(self, args):
         if not self.ws_connection: return "[ERROR] Chrome extension not connected."
         result = await self.key_press(
@@ -521,28 +355,9 @@ class ChromeBridgeSkill(GalacticSkill):
                 return "[CHROME] No network requests captured."
             lines = [f"[CHROME] {len(requests_list)} network request(s):"]
             for r in requests_list[:50]:
-                rid = r.get('request_id') or 'n/a'
-                lines.append(f"  [{rid}] {r.get('method', '?')} {r.get('status', '?')} {r.get('url', '')[:120]}")
+                lines.append(f"  {r.get('method', '?')} {r.get('status', '?')} {r.get('url', '')[:120]}")
             return "\n".join(lines)
         return f"[ERROR] Chrome read_network: {result.get('error') or result.get('message') or 'unknown error'}"
-
-    async def _tool_chrome_get_network_body(self, args: dict) -> str:
-        if not self.ws_connection:
-            return "[ERROR] Chrome extension not connected."
-        request_id = args.get("request_id", "")
-        if not request_id:
-            return "[ERROR] chrome_get_network_body: request_id is required"
-        result = await self.send_command("get_network_body", {"request_id": request_id})
-        if result.get("status") == "success":
-            body = result.get("body", "")
-            if result.get("base64Encoded"):
-                return f"[CHROME] Response body (base64): {body[:8000]}"
-            MAX_BODY = 8000
-            truncated = len(body) > MAX_BODY
-            display = body[:MAX_BODY]
-            note = f"\n... [truncated, {len(body)} total chars]" if truncated else ""
-            return f"[CHROME] Response body:\n{display}{note}"
-        return f"[ERROR] chrome_get_network_body: {result.get('error') or result.get('message') or 'unknown error'}"
 
     async def _tool_chrome_hover(self, args):
         if not self.ws_connection: return "[ERROR] Chrome extension not connected."
@@ -554,174 +369,6 @@ class ChromeBridgeSkill(GalacticSkill):
             target = args.get('ref') or args.get('selector') or f"({args.get('x')},{args.get('y')})"
             return f"[CHROME] Hovered: {target}"
         return f"[ERROR] Chrome hover: {result.get('error') or result.get('message') or 'unknown error'}"
-
-    async def _tool_chrome_drag(self, args):
-        if not self.ws_connection: return "[ERROR] Chrome extension not connected."
-        result = await self.send_command("drag", {
-            "start_x": args.get('start_x'), "start_y": args.get('start_y'),
-            "end_x": args.get('end_x'), "end_y": args.get('end_y'),
-        })
-        if result.get('status') == 'success':
-            return (f"[CHROME] Dragged from ({args.get('start_x')},{args.get('start_y')}) "
-                    f"to ({args.get('end_x')},{args.get('end_y')})")
-        return f"[ERROR] Chrome drag: {result.get('error') or result.get('message') or 'unknown'}"
-
-    async def _tool_chrome_right_click(self, args):
-        if not self.ws_connection: return "[ERROR] Chrome extension not connected."
-        result = await self.send_command("right_click", {
-            "ref": args.get('ref'), "selector": args.get('selector'),
-            "x": args.get('x'), "y": args.get('y'),
-        })
-        if result.get('status') == 'success':
-            target = args.get('ref') or args.get('selector') or f"({args.get('x')},{args.get('y')})"
-            return f"[CHROME] Right-clicked: {target}"
-        return f"[ERROR] Chrome right_click: {result.get('error') or result.get('message') or 'unknown'}"
-
-    async def _tool_chrome_triple_click(self, args):
-        if not self.ws_connection: return "[ERROR] Chrome extension not connected."
-        result = await self.send_command("triple_click", {
-            "ref": args.get('ref'), "selector": args.get('selector'),
-            "x": args.get('x'), "y": args.get('y'),
-        })
-        if result.get('status') == 'success':
-            target = args.get('ref') or args.get('selector') or f"({args.get('x')},{args.get('y')})"
-            return f"[CHROME] Triple-clicked: {target}"
-        return f"[ERROR] Chrome triple_click: {result.get('error') or result.get('message') or 'unknown'}"
-
-    async def _tool_chrome_upload(self, args):
-        if not self.ws_connection: return "[ERROR] Chrome extension not connected."
-        file_path = args.get('file_path', '')
-        if not file_path:
-            return "[ERROR] chrome_upload: file_path is required"
-        if not Path(file_path).exists():
-            return f"[ERROR] chrome_upload: File not found: {file_path}"
-        result = await self.upload_file(
-            file_path=file_path,
-            ref=args.get('ref'),
-            selector=args.get('selector'),
-        )
-        if result.get('status') == 'success':
-            return f"[CHROME] File uploaded: {result.get('file_path', file_path)}"
-        return f"[ERROR] Chrome upload: {result.get('error') or result.get('message') or 'unknown'}"
-
-    async def _tool_chrome_resize(self, args: dict) -> str:
-        if not self.ws_connection:
-            return "[ERROR] Chrome extension not connected."
-        result = await self.send_command("resize_window", args)
-        if result.get("status") == "success":
-            return f"[CHROME] Viewport resized to {result['width']}\u00d7{result['height']}"
-        return f"[ERROR] chrome_resize: {result.get('error') or result.get('message') or 'unknown error'}"
-
-    async def _tool_chrome_wait(self, args: dict) -> str:
-        try:
-            seconds = float(args.get("seconds", 1))
-        except (TypeError, ValueError):
-            return "[ERROR] chrome_wait: seconds must be a number"
-        if seconds <= 0:
-            return "[ERROR] chrome_wait: seconds must be positive"
-        if seconds > 30:
-            seconds = 30  # cap at 30 seconds
-        await asyncio.sleep(seconds)
-        return f"[CHROME] Waited {seconds} seconds"
-
-    async def _tool_chrome_gif_start(self, args: dict) -> str:
-        if self._gif_recording:
-            return "[CHROME] GIF recording already in progress"
-        fps = float(args.get("fps", 2))
-        if fps <= 0 or fps > 5:
-            fps = 2
-        self._gif_recording = True
-        self._gif_frames = []
-        interval = 1.0 / fps
-
-        async def _poll():
-            while self._gif_recording:
-                try:
-                    result = await self.send_command("screenshot", {})
-                    if isinstance(result, dict) and result.get("__image_b64__"):
-                        frame_b64 = result["__image_b64__"]
-                        frame_bytes = base64.b64decode(frame_b64)
-                        self._gif_frames.append(frame_bytes)
-                    elif isinstance(result, dict) and result.get("image_b64"):
-                        frame_b64 = result["image_b64"]
-                        frame_bytes = base64.b64decode(frame_b64)
-                        self._gif_frames.append(frame_bytes)
-                    elif isinstance(result, str) and result.startswith("data:image"):
-                        # strip data URI prefix if present
-                        b64 = result.split(",", 1)[1]
-                        self._gif_frames.append(base64.b64decode(b64))
-                except Exception:
-                    pass
-                await asyncio.sleep(interval)
-
-        self._gif_task = asyncio.create_task(_poll())
-        return f"[CHROME] GIF recording started at {fps} fps"
-
-    async def _tool_chrome_gif_stop(self, args: dict) -> str:
-        if not self._gif_recording:
-            return "[CHROME] No GIF recording in progress"
-        self._gif_recording = False
-        if self._gif_task:
-            self._gif_task.cancel()
-            try:
-                await self._gif_task
-            except asyncio.CancelledError:
-                pass
-            self._gif_task = None
-        return f"[CHROME] GIF recording stopped. {len(self._gif_frames)} frames captured."
-
-    async def _tool_chrome_gif_export(self, args: dict) -> str:
-        if not self._gif_frames:
-            return "[ERROR] chrome_gif_export: No frames to export. Use chrome_gif_start first."
-        try:
-            from PIL import Image
-            import io
-        except ImportError:
-            return "[ERROR] chrome_gif_export: Pillow not installed. Run: pip install Pillow"
-
-        frame_duration = int(args.get("frame_duration_ms", 500))
-        if frame_duration < 100:
-            frame_duration = 100
-        if frame_duration > 3000:
-            frame_duration = 3000
-
-        filename = args.get("filename", "")
-        if not filename:
-            filename = datetime.now().strftime("%Y%m%d_%H%M%S")
-        # Sanitize filename
-        filename = "".join(c for c in filename if c.isalnum() or c in "_-")[:64] or "recording"
-
-        logs_dir = self.core.config.get('paths', {}).get('logs', 'logs') if hasattr(self, 'core') and self.core else 'logs'
-        out_dir = Path(logs_dir) / 'recordings'
-        out_dir.mkdir(parents=True, exist_ok=True)
-        out_path = out_dir / f"{filename}.gif"
-
-        # Convert JPEG bytes to PIL Images
-        pil_frames = []
-        for frame_bytes in self._gif_frames:
-            try:
-                img = Image.open(io.BytesIO(frame_bytes)).convert("RGB")
-                # Quantize for GIF (256 colors)
-                img = img.quantize(colors=256, method=Image.Quantize.MEDIANCUT)
-                pil_frames.append(img)
-            except Exception:
-                continue
-
-        if not pil_frames:
-            return "[ERROR] chrome_gif_export: Could not decode any frames"
-
-        pil_frames[0].save(
-            str(out_path),
-            format="GIF",
-            save_all=True,
-            append_images=pil_frames[1:],
-            loop=0,
-            duration=frame_duration,
-            optimize=False
-        )
-
-        self._gif_frames = []  # clear frames after export
-        return f"[CHROME] GIF saved: {out_path} ({len(pil_frames)} frames)"
 
     # ── Inbound message handler (called by web_deck) ─────────────────────
 
@@ -877,15 +524,6 @@ class ChromeBridgeSkill(GalacticSkill):
         """Find elements on the page using natural-language search."""
         return await self.send_command("find_element", {"query": query, "tab_id": tab_id})
 
-    async def wait_for(self, selector=None, text=None, timeout=10000, tab_id=None):
-        """Wait for a CSS selector or text to appear on the page."""
-        return await self.send_command("wait_for", {
-            "selector": selector,
-            "text": text,
-            "timeout": timeout,
-            "tab_id": tab_id,
-        })
-
     async def click(self, selector=None, ref=None, coordinate=None, x=None, y=None, tab_id=None, double_click=False):
         """Click an element by CSS selector, ref ID, or viewport coordinate."""
         return await self.send_command("click", {
@@ -964,13 +602,6 @@ class ChromeBridgeSkill(GalacticSkill):
             "clear": clear,
         })
 
-    async def get_network_body(self, request_id: str, tab_id: str = None) -> dict:
-        """Fetch the full response body for a captured network request by its CDP request ID."""
-        args = {"request_id": request_id}
-        if tab_id:
-            args["tab_id"] = tab_id
-        return await self.send_command("get_network_body", args)
-
     async def hover(self, selector=None, ref=None, coordinate=None, x=None, y=None, tab_id=None):
         """Move the mouse cursor to an element without clicking."""
         return await self.send_command("hover", {
@@ -981,43 +612,6 @@ class ChromeBridgeSkill(GalacticSkill):
             "y": y,
             "tab_id": tab_id,
         })
-
-    async def zoom(self, region: list, tab_id=None):
-        """Capture a cropped region of the active tab as a JPEG."""
-        return await self.send_command("zoom", {"region": region, "tab_id": tab_id})
-
-    async def drag(self, start_x, start_y, end_x, end_y, tab_id=None):
-        """Drag from one coordinate to another."""
-        return await self.send_command("drag", {
-            "start_x": start_x, "start_y": start_y,
-            "end_x": end_x, "end_y": end_y, "tab_id": tab_id
-        })
-
-    async def upload_file(self, file_path: str, ref: str = None, selector: str = None, tab_id: str = None) -> dict:
-        """Upload a local file to a file input element via Chrome Debugger DOM.setFileInputFiles."""
-        args = {"file_path": file_path}
-        if ref:
-            args["ref"] = ref
-        if selector:
-            args["selector"] = selector
-        if tab_id:
-            args["tab_id"] = tab_id
-        return await self.send_command("upload_file", args)
-
-    async def resize_window(self, preset: str = None, width: int = None, height: int = None) -> dict:
-        """Resize the Chrome viewport using a preset or custom dimensions."""
-        args = {}
-        if preset:
-            args["preset"] = preset
-        if width is not None:
-            args["width"] = width
-        if height is not None:
-            args["height"] = height
-        return await self.send_command("resize_window", args)
-
-    async def wait(self, seconds: float) -> str:
-        """Sleep for *seconds* seconds (Python-side only, no extension command)."""
-        return await self._tool_chrome_wait({"seconds": seconds})
 
     # ── Internal helpers ─────────────────────────────────────────────────
 
