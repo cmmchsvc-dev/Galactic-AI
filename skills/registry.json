@@ -87,6 +87,30 @@
       "installed_at": "2026-02-26T19:37:19.677724",
       "source": "ai_authored",
       "description": "Workspace Oracle: Simulates tool chains and previews costs/steps before execution."
+    },
+    {
+      "module": "agent_builder",
+      "class": "AgentBuilderSkill",
+      "file": "agent_builder.py",
+      "installed_at": "2026-02-27T09:56:50.664703",
+      "source": "ai_authored",
+      "description": "Ported from Claude agent-development: Generates robust subagent markdown specs with frontmatter and examples."
+    },
+    {
+      "module": "automation_recommender",
+      "class": "AutomationRecommender",
+      "file": "automation_recommender.py",
+      "installed_at": "2026-02-27T10:10:47.880120",
+      "source": "ai_authored",
+      "description": "Analyzes codebase patterns to recommend custom Galactic AI automations."
+    },
+    {
+      "module": "md_improver",
+      "class": "MdImprover",
+      "file": "md_improver.py",
+      "installed_at": "2026-02-27T10:11:32.990979",
+      "source": "ai_authored",
+      "description": "Audits a markdown file against quality heuristics."
     }
   ]
 }
