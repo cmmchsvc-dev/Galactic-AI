@@ -373,8 +373,13 @@ class ModelManager:
     def _set_api_key(self, provider):
         """Set correct API key for provider."""
         providers_cfg = self.core.config.get('providers', {})
+        
+        # Resolve base provider for pseudo-providers
+        base_provider = provider
+        if provider.startswith("openrouter-"):
+            base_provider = "openrouter"
 
-        if provider == "nvidia":
+        if base_provider == "nvidia":
             # Route to the correct NVIDIA API key based on the active model name
             # Try unified key first
             nvidia_cfg = providers_cfg.get('nvidia', {})
@@ -399,11 +404,11 @@ class ModelManager:
                     break
             all_keys = list(keys.values())
             self.core.gateway.llm.api_key = selected_key or (all_keys[0] if all_keys else "NONE")
-        elif provider == "ollama":
+        elif base_provider == "ollama":
             self.core.gateway.llm.api_key = "NONE"
         else:
             # All other providers use apiKey field
-            prov_cfg = providers_cfg.get(provider, {})
+            prov_cfg = providers_cfg.get(base_provider, {})
             key = prov_cfg.get('apiKey', '') or prov_cfg.get('api_key', '') or prov_cfg.get('apikey', '')
             self.core.gateway.llm.api_key = key or "NONE"
 

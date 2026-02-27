@@ -9,7 +9,7 @@ providers:
       name: "Claude Sonnet 4.6 🌟"
       enabled: true
     - id: "claude-haiku-4-5"
-      name: "Claude Haiku 4.5 ⚡️"
+      name: "Claude Haiku 4.5 ⚡"
       enabled: true
     - id: "claude-sonnet-4-5"
       name: "Claude Sonnet 4.5 🚀"
@@ -19,7 +19,7 @@ providers:
       name: "Gemini 3.1 Pro 🧠 [LATEST]"
       enabled: true
     - id: "gemini-3-flash-preview"
-      name: "Gemini 3 Flash ⚡️"
+      name: "Gemini 3 Flash ⚡"
       enabled: true
     - id: "gemini-3-pro-preview"
       name: "Gemini 3 Pro 🧠"
@@ -31,7 +31,7 @@ providers:
       name: "Gemini 2.5 Pro 🦾"
       enabled: true
     - id: "gemini-2.0-flash"
-      name: "Gemini 2.0 Flash ⚡️"
+      name: "Gemini 2.0 Flash ⚡"
       enabled: true
   openai:
     - id: "gpt-4o"
@@ -41,7 +41,7 @@ providers:
       name: "GPT-4.1 🌟"
       enabled: true
     - id: "gpt-4o-mini"
-      name: "GPT-4o Mini ⚡️"
+      name: "GPT-4o Mini ⚡"
       enabled: true
     - id: "o3-mini"
       name: "o3 Mini 🧮"
@@ -182,21 +182,24 @@ providers:
       name: "Grok 4 🧠 [LATEST]"
       enabled: true
     - id: "grok-4-fast"
-      name: "Grok 4 Fast ⚡️"
+      name: "Grok 4 Fast ⚡"
       enabled: true
   groq:
     - id: "llama-4-scout-17b-16e-instruct"
-      name: "Llama 4 Scout 17B ⚡️"
+      name: "Llama 4 Scout 17B ⚡"
       enabled: true
     - id: "deepseek-r1-distill-llama-70b"
       name: "DeepSeek R1 70B 🧮"
       enabled: true
   mistral:
     - id: "mistral-small-latest"
-      name: "Mistral Small 3.1 ⚡️"
+      name: "Mistral Small 3.1 ⚡"
       enabled: true
     - id: "codestral-latest"
       name: "Codestral (Code) 🦾"
+      enabled: true
+    - id: "devstral-small-latest"
+      name: "Devstral (Agents) 🤖"
       enabled: true
   google-imagen:
     - id: "imagen-4-ultra"

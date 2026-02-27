@@ -3239,60 +3239,64 @@ class GalacticGateway:
                     messages.pop(1)  # drop oldest non-system message
                     total_chars = sum(len(m.get('content', '')) for m in messages)
 
-        # Pre-process pseudo-providers
-        base_provider = self.llm.provider
+        # Pre-process pseudo-providers (e.g. openrouter-frontier -> openrouter)
+        orig_provider = self.llm.provider
+        base_provider = orig_provider
         if base_provider.startswith("openrouter-"):
             base_provider = "openrouter"
+        
+        # Temporarily swap for the duration of the call to ensure 
+        # internal logic matches the expected API provider
+        self.llm.provider = base_provider
 
-        # ── Route to provider ─────────────────────────────────────────
-        if base_provider == "google":
-            # Gemini uses a single text blob (system context + user prompt)
-            prompt = messages[-1]['content']
-            context_str = "\n".join(
-                [f"{m['role']}: {m['content']}" for m in messages[:-1]]
-            )
-            return await self._call_gemini(prompt, context_str)
+        try:
+            # ── Route to provider ─────────────────────────────────────────
+            if base_provider == "google":
+                # Gemini uses a single text blob (system context + user prompt)
+                prompt = messages[-1]['content']
+                context_str = "\n".join(
+                    [f"{m['role']}: {m['content']}" for m in messages[:-1]]
+                )
+                return await self._call_gemini(prompt, context_str)
 
-        elif base_provider == "anthropic":
-            # Anthropic Messages API: separate system field + messages array
-            # Pull system message from messages[0] if it exists
-            system_msg = ""
-            msg_list = []
-            for m in messages:
-                if m["role"] == "system":
-                    system_msg = m["content"]
-                else:
-                    msg_list.append(m)
-            return await self._call_anthropic_messages(system_msg, msg_list)
+            elif base_provider == "deepseek":
+                return await self._call_deepseek_messages(messages)
 
-        elif base_provider == "ollama":
-            # Ollama supports the full OpenAI /chat/completions messages array —
-            # pass it directly so multi-turn tool-call context is preserved
-            return await self._call_openai_compatible_messages(messages)
+            elif base_provider == "anthropic":
+                # Anthropic Messages API: separate system field + messages array
+                system_msg = ""
+                msg_list = []
+                for m in messages:
+                    if m["role"] == "system":
+                        system_msg = m["content"]
+                    else:
+                        msg_list.append(m)
+                return await self._call_anthropic_messages(system_msg, msg_list)
 
-        elif base_provider == "xai":
-            # xAI: collapse to prompt+context (stateless one-shot)
-            prompt = messages[-1]['content']
-            context_str = "\n".join(
-                [f"{m['role']}: {m['content']}" for m in messages[:-1]]
-            )
-            return await self._call_openai_compatible(prompt, context_str)
+            elif base_provider == "ollama":
+                # Ollama supports the full OpenAI /chat/completions messages array
+                return await self._call_openai_compatible_messages(messages)
 
-        elif base_provider in ["nvidia", "openai", "groq", "mistral", "cerebras",
-                                    "openrouter", "huggingface", "kimi", "zai", "minimax",
-                                    "xiaomi", "moonshot", "qwen-portal", "qianfan", "together",
-                                    "vllm", "doubao", "byteplus", "cloudflare-ai-gateway", "kilocode"]:
-            # OpenAI-compatible providers: pass full messages array for proper multi-turn context
-            orig_provider = self.llm.provider
-            self.llm.provider = base_provider
-            try:
-                res = await self._call_openai_compatible_messages(messages)
-                return res
-            finally:
-                self.llm.provider = orig_provider
+            elif base_provider == "xai":
+                # xAI: collapse to prompt+context (stateless one-shot)
+                prompt = messages[-1]['content']
+                context_str = "\n".join(
+                    [f"{m['role']}: {m['content']}" for m in messages[:-1]]
+                )
+                return await self._call_openai_compatible(prompt, context_str)
 
-        else:
-            return f"[ERROR] Unknown provider: {self.llm.provider}"
+            elif base_provider in ["nvidia", "openai", "groq", "mistral", "cerebras",
+                                        "openrouter", "huggingface", "kimi", "zai", "minimax",
+                                        "xiaomi", "moonshot", "qwen-portal", "qianfan", "together",
+                                        "vllm", "doubao", "byteplus", "cloudflare-ai-gateway", "kilocode"]:
+                # OpenAI-compatible providers: pass full messages array for proper multi-turn context
+                return await self._call_openai_compatible_messages(messages)
+
+            else:
+                return f"[ERROR] Unknown provider: {orig_provider}"
+        finally:
+            # ALWAYS restore the original provider (including pseudo-suffix)
+            self.llm.provider = orig_provider
     
     async def _call_gemini(self, prompt, context):
         """Google Gemini API call."""
@@ -4328,7 +4332,11 @@ class GalacticGateway:
                     f"and ask them for the correct absolute path."
                 )
             search = os.path.join(base, '**', pattern) if recurse else os.path.join(base, pattern)
-            entries = _glob.glob(search, recursive=recurse)
+            
+            # Run blocking glob in a thread pool
+            loop = asyncio.get_running_loop()
+            entries = await loop.run_in_executor(None, lambda: _glob.glob(search, recursive=recurse))
+            
             if not entries:
                 return f"No files match '{pattern}' in {base}"
             lines = [f"{'TYPE':<5} {'SIZE':>10}  {'MODIFIED':<20}  NAME"]
@@ -4361,7 +4369,11 @@ class GalacticGateway:
                 search = os.path.join(base, pattern)
             else:
                 search = os.path.join(base, '**', pattern)
-            results = _glob.glob(search, recursive=True)
+            
+            # Run blocking glob in a thread pool
+            loop = asyncio.get_running_loop()
+            results = await loop.run_in_executor(None, lambda: _glob.glob(search, recursive=True))
+            
             results = [os.path.relpath(r, base) for r in sorted(results)]
             total = len(results)
             results = results[:limit]
