@@ -14,7 +14,23 @@ import os
 import traceback
 import tempfile
 import time
+import yaml
 
+def _load_yaml_models(core):
+    try:
+        yaml_path = os.path.join(core.config.get('paths', {}).get('workspace', '.'), 'config', 'models.yaml')
+        if not os.path.exists(yaml_path):
+            yaml_path = os.path.join(os.path.dirname(__file__), 'config', 'models.yaml')
+        with open(yaml_path, 'r', encoding='utf-8') as f:
+            data = yaml.safe_load(f)
+            
+        out_map = {}
+        for prov, items in data.get('providers', {}).items():
+            out_map[prov] = [(i.get('name', i['id']), i['id']) for i in items if i.get('enabled', True)]
+        return out_map
+    except Exception as e:
+        print(f"[Telegram Bridge] Could not load config/models.yaml: {e}")
+        return {}
 
 class TelegramBridge:
     """The high-frequency command deck for Galactic AI."""
@@ -312,85 +328,12 @@ class TelegramBridge:
 
         text = f"🧠 **{provider.capitalize()} Cluster**\nSelect a specific brain to activate:"
         buttons = []
-        model_map = {
-            "anthropic": [
-                ("Claude Opus 4.6 👑 [LATEST]", "claude-opus-4-6"),
-                ("Claude Sonnet 4.6 🌟", "claude-sonnet-4-6"),
-                ("Claude Haiku 4.5 ⚡️", "claude-haiku-4-5"),
-                ("Claude Sonnet 4.5 🚀", "claude-sonnet-4-5"),
-                ("Claude Opus 4.5 🏛️", "claude-opus-4-5"),
-            ],
-            "google": [
-                ("Gemini 3.1 Pro 🧠 [LATEST]", "gemini-3.1-pro-preview"),
-                ("Gemini 3 Flash ⚡️", "gemini-3-flash-preview"),
-                ("Gemini 3 Pro 🧠", "gemini-3-pro-preview"),
-                ("Gemini 2.5 Flash 🏎️", "gemini-2.5-flash"),
-                ("Gemini 2.5 Pro 🦾", "gemini-2.5-pro"),
-                ("Gemini 2.0 Flash ⚡️", "gemini-2.0-flash"),
-            ],
-            "openai": [
-                ("GPT-4o 🧠 [LATEST]", "gpt-4o"),
-                ("GPT-4.1 🌟", "gpt-4.1"),
-                ("GPT-4o Mini ⚡️", "gpt-4o-mini"),
-                ("o3 Mini 🧮", "o3-mini"),
-                ("o1 🏛️", "o1"),
-            ],
-            "nvidia": [
-                ("GLM-5 (Thinking) 🧠", "z-ai/glm5"),
-                ("Kimi K2.5 (Thinking) 🌙", "moonshotai/kimi-k2.5"),
-                ("Qwen 3.5 397B (Thinking) 🦾", "qwen/qwen3.5-397b-a17b"),
-                ("Nemotron 30B (Reasoning) ⚛️", "nvidia/nemotron-3-nano-30b-a3b"),
-                ("Nemotron Nano VL 👁️", "nvidia/nemotron-nano-12b-v2-vl"),
-                ("StepFun 3.5 Flash ⚡️", "stepfun-ai/step-3.5-flash"),
-                ("MiniMax M2.1 🎯", "minimaxai/minimax-m2.1"),
-                ("DeepSeek V3.2 (Math) 🚀", "deepseek-ai/deepseek-v3.2"),
-                ("Llama 405B 🏛️", "meta/llama-3.1-405b-instruct"),
-                ("Phi-3.5 Vision (OCR) 👁️", "microsoft/phi-3.5-vision-instruct"),
-                ("Gemma 3 27B 🌌", "google/gemma-3-27b-it"),
-                ("Mistral Large 3 🌊", "mistralai/mistral-large-3-675b-instruct-2512"),
-                ("Qwen 480B Coder 🦾", "qwen/qwen3-coder-480b-a35b-instruct"),
-            ],
-            "xai": [
-                ("Grok 4 🧠 [LATEST]", "grok-4"),
-                ("Grok 4 Fast ⚡️", "grok-4-fast"),
-                ("Grok 3 🌌", "grok-3"),
-                ("Grok 3 Mini 🎯", "grok-3-mini"),
-            ],
-            "deepseek": [("DeepSeek V3 🧠 [LATEST]", "deepseek-chat"), ("DeepSeek R1 (Reasoning) 🧮", "deepseek-reasoner")],
-            "groq": [
-                ("Llama 4 Scout 17B ⚡️ [FAST]", "llama-4-scout-17b-16e-instruct"),
-                ("Llama 4 Maverick 17B 🦾", "llama-4-maverick-17b-128e-instruct"),
-                ("Llama 3.3 70B 🏛️", "llama-3.3-70b-versatile"),
-                ("DeepSeek R1 70B 🧮", "deepseek-r1-distill-llama-70b"),
-                ("Qwen 3 32B 🧠", "qwen-3-32b"),
-            ],
-            "mistral": [
-                ("Mistral Small 3.1 ⚡️", "mistral-small-latest"),
-                ("Codestral (Code) 🦾", "codestral-latest"),
-                ("Devstral (Agents) 🤖", "devstral-small-latest"),
-                ("Mistral Large 2 🏛️", "mistral-large-latest"),
-                ("Magistral Medium 🧠", "magistral-medium-latest"),
-            ],
-            "cerebras": [("Llama 3.3 70B ⚡️ [FAST]", "llama3.3-70b"), ("Llama 3.1 8B 🏎️", "llama3.1-8b"), ("Qwen 3 32B 🧠", "qwen-3-32b")],
-            "openrouter": [
-                ("Gemini 3.1 Pro 👑", "google/gemini-3.1-pro-preview"),
-                ("Claude Opus 4.6 👑", "anthropic/claude-opus-4.6"),
-                ("GPT-5.2 👑", "openai/gpt-5.2"),
-                ("GPT-5.2 Codex 💻", "openai/gpt-5.2-codex"),
-                ("Grok 4.1 Fast ⚡", "x-ai/grok-4.1-fast"),
-                ("DeepSeek V3.2 🚀", "deepseek/deepseek-v3.2"),
-                ("Qwen 3.5 Plus 🧠", "qwen/qwen3.5-plus-02-15"),
-                ("Claude Sonnet 4.6 🌟", "anthropic/claude-sonnet-4.6"),
-                ("Gemini 3 Flash ⚡", "google/gemini-3-flash-preview"),
-                ("Mistral Large 🌟", "mistralai/mistral-large-2512"),
-            ],
-            "huggingface": [("Qwen3 235B 🧠", "Qwen/Qwen3-235B-A22B"), ("Llama 4 Scout ⚡️", "meta-llama/Llama-4-Scout-17B-16E-Instruct"), ("DeepSeek V3 🚀", "deepseek-ai/DeepSeek-V3-0324")],
-            "kimi": [("Kimi K2.5 🌙", "moonshot-v1-auto")],
-            "zai": [("GLM-4 Plus 🧠", "glm-4-plus")],
-            "minimax": [("MiniMax Text-01 🎯", "MiniMax-Text-01")],
-            "ollama": self._get_live_ollama_menu_entries(),
-        }
-        models = model_map.get(provider, [])
+        model_map = _load_yaml_models(self.core)
+        
+        if provider == 'ollama':
+            models = self._get_live_ollama_menu_entries()
+        else:
+            models = model_map.get(provider, [])
         row = []
         for label, m_id in models:
             row.append({"text": label, "callback_data": f"mod_{provider}|{m_id}"})
@@ -450,24 +393,11 @@ class TelegramBridge:
             setting_type = provider.split("_")[0]
             provider_name = provider.split("_")[-1]
             text = f"⚙️ **Select Model from {provider_name.capitalize()}**\nSetting as **{setting_type.upper()}** model"
-            model_map = {
-                "anthropic": [("Opus 4.6 👑", "claude-opus-4-6"), ("Sonnet 4.6 🌟", "claude-sonnet-4-6"), ("Haiku 4.5 ⚡️", "claude-haiku-4-5"), ("Sonnet 4.5 🚀", "claude-sonnet-4-5")],
-                "google": [("Gemini 3.1 Pro 🧠", "gemini-3.1-pro-preview"), ("Gemini 3 Flash ⚡️", "gemini-3-flash-preview"), ("Gemini 2.5 Flash 🏎️", "gemini-2.5-flash"), ("Gemini 2.5 Pro 🦾", "gemini-2.5-pro")],
-                "openai": [("GPT-4o 🧠", "gpt-4o"), ("GPT-4.1 🌟", "gpt-4.1"), ("GPT-4o Mini ⚡️", "gpt-4o-mini"), ("o3 Mini 🧮", "o3-mini")],
-                "nvidia": [("GLM-5 Thinking 🧠", "z-ai/glm5"), ("Kimi K2.5 🌙", "moonshotai/kimi-k2.5"), ("Qwen 3.5 397B 🦾", "qwen/qwen3.5-397b-a17b"), ("Nemotron 30B ⚛️", "nvidia/nemotron-3-nano-30b-a3b"), ("DeepSeek V3.2 🚀", "deepseek-ai/deepseek-v3.2"), ("Llama 405B 🏛️", "meta/llama-3.1-405b-instruct"), ("Phi-3.5 Vision 👁️", "microsoft/phi-3.5-vision-instruct"), ("Qwen 480B Coder 🦾", "qwen/qwen3-coder-480b-a35b-instruct")],
-                "xai": [("Grok 4 🧠", "grok-4"), ("Grok 4 Fast ⚡️", "grok-4-fast")],
-                "deepseek": [("DeepSeek V3 🧠", "deepseek-chat"), ("DeepSeek R1 🧮", "deepseek-reasoner")],
-                "groq": [("Llama 4 Scout ⚡️", "llama-4-scout-17b-16e-instruct"), ("Llama 3.3 70B 🏛️", "llama-3.3-70b-versatile"), ("DeepSeek R1 70B 🧮", "deepseek-r1-distill-llama-70b")],
-                "mistral": [("Mistral Small 3.1 ⚡️", "mistral-small-latest"), ("Mistral Large 2 🏛️", "mistral-large-latest"), ("Codestral 🦾", "codestral-latest")],
-                "cerebras": [("Llama 3.3 70B ⚡️", "llama3.3-70b"), ("Qwen 3 32B 🧠", "qwen-3-32b")],
-                "openrouter": [("Gemini 3.1 Pro 👑", "google/gemini-3.1-pro-preview"), ("Claude Opus 4.6 👑", "anthropic/claude-opus-4.6"), ("GPT-5.2 👑", "openai/gpt-5.2"), ("DeepSeek V3.2 🚀", "deepseek/deepseek-v3.2"), ("Grok 4.1 Fast ⚡", "x-ai/grok-4.1-fast")],
-                "huggingface": [("Qwen3 235B 🧠", "Qwen/Qwen3-235B-A22B"), ("Llama 4 Scout ⚡️", "meta-llama/Llama-4-Scout-17B-16E-Instruct")],
-                "kimi": [("Kimi K2.5 🌙", "moonshot-v1-auto")],
-                "zai": [("GLM-4 Plus 🧠", "glm-4-plus")],
-                "minimax": [("MiniMax Text-01 🎯", "MiniMax-Text-01")],
-                "ollama": self._get_live_ollama_menu_entries(),
-            }
-            models = model_map.get(provider_name, [])
+            model_map = _load_yaml_models(self.core)
+            if provider_name == 'ollama':
+                models = self._get_live_ollama_menu_entries()
+            else:
+                models = model_map.get(provider_name, [])
             buttons = []
             row = []
             for label, m_id in models:
@@ -514,6 +444,8 @@ class TelegramBridge:
             )
         elif data.startswith("mod_"):
             provider, model = data.split("_")[1].split("|")
+            if provider.startswith('openrouter-'):
+                provider = 'openrouter'
             self.core.gateway.llm.provider = provider
             self.core.gateway.llm.model = model
             if hasattr(self.core, 'model_manager'):
@@ -578,6 +510,8 @@ class TelegramBridge:
                 rest = data[len(prefix):]
                 setting_type, provider_and_model = rest.rsplit("_set_", 1)
                 provider_name, model_id = provider_and_model.split("|")
+                if provider_name.startswith('openrouter-'):
+                    provider_name = 'openrouter'
                 if setting_type == "primary":
                     await self.core.model_manager.set_primary(provider_name, model_id)
                     await self.send_message(chat_id, f"✅ **Primary model set:** {provider_name}/{model_id}\nNow active!")

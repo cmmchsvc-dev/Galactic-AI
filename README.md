@@ -2,7 +2,7 @@
 
 **Sovereign. Universal. Fast.**
 
-A powerful, local-first AI automation platform with 147 built-in tools, an extensible Skills ecosystem, true persistent memory, voice I/O, video generation, Chrome browser extension, social media tools, 14 AI providers, multi-platform messaging bridges, and a real-time web Control Deck. **v1.2.0**
+A powerful, local-first AI automation platform with 147 built-in tools, an extensible Skills ecosystem, true persistent memory, voice I/O, video generation, Chrome browser extension, social media tools, 14 AI providers, multi-platform messaging bridges, and a real-time web Control Deck. **v1.2.1**
 
 Run fully local with Ollama (no API keys, no cloud, no tracking), or connect to any of 14 cloud providers. Your data stays yours.
 
