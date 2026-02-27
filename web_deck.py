@@ -97,6 +97,8 @@ class GalacticWebDeck:
         self.app.router.add_post('/api/cancel_task', self.handle_cancel_task)
         # Chrome Bridge WebSocket — connects the Galactic Browser extension
         self.app.router.add_get('/ws/chrome_bridge', self.handle_chrome_bridge_ws)
+        # Virtual Terminal WebSocket
+        self.app.router.add_get('/ws/terminal', self.handle_terminal_ws)
         self.trace_buffer = []  # last 500 agent trace entries for persistence
         
     async def handle_runs(self, request):
@@ -166,6 +168,9 @@ class GalacticWebDeck:
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>GALACTIC AI — CONTROL DECK</title>
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/xterm@5.3.0/css/xterm.css" />
+<script src="https://cdn.jsdelivr.net/npm/xterm@5.3.0/lib/xterm.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/xterm-addon-fit@0.8.0/lib/xterm-addon-fit.js"></script>
 <style>
 *{box-sizing:border-box;margin:0;padding:0}
 :root{
@@ -178,25 +183,33 @@ class GalacticWebDeck:
 html{font-size:var(--fs)}
 body{background:var(--bg);color:var(--text);font-family:var(--font);height:100vh;overflow:hidden;display:flex;flex-direction:column;font-size:1rem}
 
+/* ── TERMINAL ───────────────────────────────────────────────────────────── */
+#tab-terminal{background:#000;display:none;flex-direction:column;height:100%;overflow:hidden}
+#tab-terminal.active{display:flex}
+#terminal-header{display:flex;align-items:center;justify-content:space-between;padding:10px 20px;background:#0a0a0a;border-bottom:1px solid #1a1a1a;flex-shrink:0}
+#terminal-title{font-family:var(--mono);font-size:0.85rem;color:var(--cyan);letter-spacing:1px;text-transform:uppercase}
+#terminal-container{flex:1;overflow:hidden;padding:10px;background:#000}
+.xterm .xterm-viewport{background-color:#000!important;overflow-y:auto!important}
+.term-btn{padding:6px 14px;background:#1a1a1a;border:1px solid #333;border-radius:6px;color:#aaa;cursor:pointer;font-size:0.78rem;font-weight:600;transition:all .2s}
+.term-btn:hover{border-color:var(--cyan);color:#fff;text-shadow:0 0 8px var(--cyan);background:#222}
+
 /* ── TOPBAR ─────────────────────────────────────────────────────────────── */
-#topbar{display:flex;align-items:center;padding:10px 20px;background:var(--bg2);border-bottom:1px solid var(--border);flex-shrink:0;z-index:100;box-shadow:0 2px 20px rgba(0,0,0,0.4)}
-#topbar-left{display:flex;align-items:center;gap:12px;flex-shrink:0}
-#topbar-right{display:flex;align-items:center;gap:12px;flex-shrink:0}
-#topbar .logo{font-size:1.05rem;font-weight:800;letter-spacing:5px;color:var(--cyan);text-shadow:0 0 14px var(--cyan),0 0 30px rgba(0,243,255,0.3);white-space:nowrap}
-.status-dot{width:10px;height:10px;border-radius:50%;background:var(--green);box-shadow:0 0 8px var(--green),0 0 16px rgba(0,255,136,0.3);flex-shrink:0}
+#topbar{display:flex;align-items:center;justify-content:space-between;padding:0 24px;background:var(--bg2);border-bottom:1px solid var(--border);flex-shrink:0;z-index:100;box-shadow:0 2px 20px rgba(0,0,0,0.4);height:64px;position:relative}
+#topbar-left{display:flex;align-items:center;gap:12px;flex:1;justify-content:flex-start;min-width:0}
+#topbar-right{display:flex;align-items:center;gap:14px;flex:1;justify-content:flex-end;min-width:0}
+#topbar .logo{font-size:1.05rem;font-weight:800;letter-spacing:5px;color:var(--cyan);text-shadow:0 0 14px var(--cyan);white-space:nowrap}
+.status-dot{width:10px;height:10px;border-radius:50%;background:var(--green);box-shadow:0 0 8px var(--green);flex-shrink:0}
 .status-dot.offline{background:var(--red);box-shadow:0 0 8px var(--red)}
-#ollama-pill{display:flex;align-items:center;gap:6px;padding:5px 13px;border:1px solid var(--border);border-radius:20px;font-size:0.82rem;background:var(--bg3);cursor:pointer;transition:border-color .2s}
-#ollama-pill:hover{border-color:var(--border-hi)}
-#model-badge{display:inline-flex;align-items:center;justify-content:center;padding:5px 13px;min-width:96px;max-width:260px;flex-shrink:0;border:1px solid var(--pink);border-radius:20px;font-size:0.82rem;color:var(--pink);text-shadow:0 0 8px rgba(255,0,200,0.4);cursor:pointer;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;transition:all .2s}
-#model-badge:hover{background:rgba(255,0,200,0.08)}
-.topbar-btn{padding:6px 14px;border:1px solid var(--border);border-radius:7px;background:var(--bg3);color:var(--text);cursor:pointer;font-size:0.82rem;transition:all .2s}
+#ollama-pill{display:flex;align-items:center;gap:6px;padding:5px 12px;border:1px solid var(--border);border-radius:20px;font-size:0.8rem;background:var(--bg3);cursor:pointer;flex-shrink:0}
+#model-badge{display:inline-flex;align-items:center;justify-content:center;padding:5px 14px;min-width:110px;max-width:280px;flex-shrink:0;border:1px solid var(--pink);border-radius:20px;font-size:0.8rem;color:var(--pink);text-shadow:0 0 8px rgba(255,0,200,0.4);cursor:pointer;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.topbar-btn{padding:7px 14px;border:1px solid var(--border);border-radius:8px;background:var(--bg3);color:var(--text);cursor:pointer;font-size:0.8rem;transition:all .2s;flex-shrink:0}
 .topbar-btn:hover{border-color:var(--cyan);color:var(--cyan);text-shadow:0 0 8px var(--cyan)}
-#token-counter{font-size:0.78rem;color:var(--dim);font-family:var(--mono)}
+#token-counter{font-size:0.8rem;color:var(--dim);font-family:var(--mono);flex-shrink:0;white-space:nowrap;margin-right:4px}
 #main{display:flex;flex:1;overflow:hidden}
 
 /* ── ORB CONTAINER ──────────────────────────────────────────────────────── */
-#orb-container{flex:1;display:flex;justify-content:center;align-items:center;min-width:0;padding:0 20px}
-#thinking-orb{display:none;color:var(--cyan);font-family:var(--mono);font-size:0.9rem;text-shadow:0 0 12px rgba(0,243,255,0.6);white-space:nowrap;font-weight:bold;background:rgba(0,0,0,0.4);padding:4px 14px;border-radius:12px;border:1px solid rgba(0,243,255,0.1)}
+#orb-container{flex:0 0 auto;display:flex;justify-content:center;align-items:center;margin:0 60px;min-width:300px}
+#thinking-orb{display:none;color:var(--cyan);font-family:var(--mono);font-size:0.92rem;text-shadow:0 0 14px rgba(0,243,245,0.7);white-space:nowrap;font-weight:bold;background:rgba(0,0,0,0.6);padding:6px 18px;border-radius:20px;border:1px solid rgba(0,243,245,0.2);box-shadow:0 0 20px rgba(0,0,0,0.5);overflow:hidden;text-overflow:ellipsis}
 
 /* ── SIDEBAR ─────────────────────────────────────────────────────────────── */
 #sidebar{width:240px;min-width:190px;background:var(--bg2);border-right:1px solid var(--border);display:flex;flex-direction:column;overflow:hidden;transition:width .2s}
@@ -876,6 +889,7 @@ body.glow-max .status-dot{box-shadow:0 0 14px var(--green),0 0 28px rgba(0,255,1
     <div class="sidebar-item" onclick="switchTab('settings')"><span class="icon">⚙️</span> Settings</div>
     <div class="sidebar-item" onclick="switchTab('logs')"><span class="icon">📋</span> Logs</div>
     <div class="sidebar-item" onclick="switchTab('thinking')"><span class="icon">🧠</span> Thinking</div>
+    <div class="sidebar-item" onclick="switchTab('terminal')"><span class="icon">💻</span> Terminal</div>
   </div>
 
   <!-- CONTENT -->
@@ -891,6 +905,7 @@ body.glow-max .status-dot{box-shadow:0 0 14px var(--green),0 0 28px rgba(0,255,1
       <button class="tab-btn" onclick="switchTab('settings')">⚙️ Settings</button>
       <button class="tab-btn" onclick="switchTab('logs')">📋 Logs</button>
       <button class="tab-btn" id="thinking-tab-btn" onclick="switchTab('thinking')">🧠 Thinking</button>
+      <button class="tab-btn" onclick="switchTab('terminal')">💻 Terminal</button>
     </div>
 
     <!-- CHAT -->
@@ -1376,6 +1391,19 @@ body.glow-max .status-dot{box-shadow:0 0 14px var(--green),0 0 28px rgba(0,255,1
       </div>
     </div>
 
+    <!-- TERMINAL -->
+    <div class="tab-pane" id="tab-terminal">
+      <div id="terminal-header">
+        <div id="terminal-title">💻 Virtual Terminal</div>
+        <div style="display:flex;gap:8px">
+          <button class="term-btn" onclick="launchShell()">💻 Standard Shell</button>
+          <button class="term-btn" onclick="launchGeminiCLI()">🚀 Launch Gemini CLI</button>
+          <button class="term-btn" onclick="resetTerminal()">↺ Reset</button>
+        </div>
+      </div>
+      <div id="terminal-container"></div>
+    </div>
+
   </div><!-- /content -->
 </div><!-- /main -->
 
@@ -1483,6 +1511,81 @@ function stopOrb() {
 }
 
 let ALIASES = [];
+
+// ─── VIRTUAL TERMINAL ──────────────────────────────────────────────────────
+let term = null;
+let fitAddon = null;
+let termSocket = null;
+
+function initTerminal() {
+  if (term) return;
+  term = new Terminal({
+    cursorBlink: true,
+    theme: {
+      background: '#000000',
+      foreground: '#00f3ff',
+      cursor: '#ff00c8'
+    },
+    fontFamily: 'JetBrains Mono, Cascadia Code, monospace',
+    fontSize: 14
+  });
+  fitAddon = new TerminalAddonFit.Fit();
+  term.loadAddon(fitAddon);
+  term.open(document.getElementById('terminal-container'));
+  fitAddon.fit();
+
+  term.onData(data => {
+    if (termSocket && termSocket.readyState === WebSocket.OPEN) {
+      termSocket.send(JSON.stringify({type: 'input', data: data}));
+    }
+  });
+
+  window.addEventListener('resize', () => fitAddon.fit());
+}
+
+function connectTerminalWS() {
+  if (termSocket) termSocket.close();
+  const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+  termSocket = new WebSocket(`${protocol}//${window.location.host}/ws/terminal?token=${token}`);
+  
+  termSocket.onopen = () => {
+    term.write('\r\n\x1b[1;32mCONNECTED TO GALACTIC TERMINAL ENGINE\x1b[0m\r\n');
+  };
+  
+  termSocket.onmessage = (event) => {
+    const p = JSON.parse(event.data);
+    if (p.type === 'output') term.write(p.data);
+  };
+  
+  termSocket.onclose = () => {
+    term.write('\r\n\x1b[1;31mTERMINAL DISCONNECTED\x1b[0m\r\n');
+  };
+}
+
+function launchGeminiCLI() {
+  if (!termSocket || termSocket.readyState !== WebSocket.OPEN) {
+    connectTerminalWS();
+  }
+  const check = setInterval(() => {
+    if (termSocket.readyState === WebSocket.OPEN) {
+      clearInterval(check);
+      termSocket.send(JSON.stringify({type: 'command', data: 'gemini'}));
+    }
+  }, 100);
+  setTimeout(() => clearInterval(check), 5000);
+}
+
+function launchShell() {
+  if (!termSocket || termSocket.readyState !== WebSocket.OPEN) {
+    connectTerminalWS();
+  }
+}
+
+function resetTerminal() {
+  if (term) term.clear();
+  if (termSocket) termSocket.close();
+  connectTerminalWS();
+}
 
 async function loadAliases() {
   try {
@@ -3530,6 +3633,7 @@ function switchTab(name) {
   }
   if (name === 'models') { loadOllamaStatus(); pmoLoad(); }
   if (name === 'plugins') loadPlugins();
+  if (name === 'terminal') { initTerminal(); connectTerminalWS(); }
   if (name === 'thinking') {
     const tBtn = document.getElementById('thinking-tab-btn');
     if (tBtn) { tBtn.style.color = ''; tBtn.style.textShadow = ''; }
@@ -5068,6 +5172,85 @@ try {
                     fut.set_exception(ConnectionError("Chrome extension disconnected"))
             bridge._pending.clear()
             await self.core.log("[Chrome Bridge] Extension disconnected", priority=2)
+        return ws
+
+    # ── Virtual Terminal WebSocket ──────────────────────────────────────
+    async def handle_terminal_ws(self, request):
+        """WebSocket endpoint for the Virtual Gemini Terminal."""
+        ws = web.WebSocketResponse()
+        await ws.prepare(request)
+
+        # Auth check
+        token = request.query.get('token')
+        token_valid = (token == self.password_hash)
+        if not token_valid and self.jwt_secret:
+            from remote_access import verify_jwt
+            token_valid = verify_jwt(token, self.jwt_secret)
+        if not token_valid:
+            await ws.close(code=4001)
+            return ws
+
+        # Setup environment with current keys
+        env = os.environ.copy()
+        google_api_key = self.core.config.get('providers', {}).get('google', {}).get('apiKey')
+        if google_api_key:
+            env['GOOGLE_API_KEY'] = google_api_key
+            env['GEMINI_API_KEY'] = google_api_key
+
+        # Spawn a shell process
+        shell_cmd = "cmd.exe" if os.name == 'nt' else "bash"
+        process = await asyncio.create_subprocess_shell(
+            shell_cmd,
+            stdin=asyncio.subprocess.PIPE,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.STDOUT,
+            env=env,
+            cwd=self.core.config.get('system', {}).get('workspace_dir', os.getcwd())
+        )
+
+        async def read_stdout():
+            while True:
+                data = await process.stdout.read(1024)
+                if not data:
+                    break
+                # Convert to string and send to WS
+                try:
+                    await ws.send_str(json.dumps({
+                        'type': 'output',
+                        'data': data.decode('utf-8', errors='replace')
+                    }))
+                except Exception:
+                    break
+
+        stdout_task = asyncio.create_task(read_stdout())
+
+        try:
+            async for msg in ws:
+                if msg.type == web.WSMsgType.TEXT:
+                    p = json.loads(msg.data)
+                    if p['type'] == 'input':
+                        process.stdin.write(p['data'].encode())
+                        await process.stdin.drain()
+                    elif p['type'] == 'command':
+                        cmd = p['data']
+                        if cmd == 'gemini':
+                            # Build the gemini command with the current primary model
+                            model_id = self.core.gateway.llm.model
+                            # We can try to map Galactic AI model IDs to gemini CLI model IDs if needed
+                            # but usually passing the full ID or just running it is fine.
+                            process.stdin.write(f"gemini --model \"{model_id}\"\n".encode())
+                        else:
+                            process.stdin.write(f"{cmd}\n".encode())
+                        await process.stdin.drain()
+                elif msg.type in (web.WSMsgType.ERROR, web.WSMsgType.CLOSE):
+                    break
+        except Exception:
+            pass
+        finally:
+            stdout_task.cancel()
+            if process.returncode is None:
+                process.terminate()
+            await ws.close()
         return ws
 
     async def handle_stream(self, request):
