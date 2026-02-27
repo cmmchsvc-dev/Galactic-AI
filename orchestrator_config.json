@@ -1,0 +1,23 @@
+{
+  "newegg_watchdog": {
+    "script": "newegg_5080_watch.py",
+    "args": [],
+    "auto_start": true,
+    "restart_on_crash": true,
+    "description": "Monitors Newegg for RTX 5080 deals (Stealth Mode)"
+  },
+  "f100_voice_logger": {
+    "script": "f100_voice_logger.py",
+    "args": [],
+    "auto_start": false,
+    "restart_on_crash": true,
+    "description": "Watches for voice notes and logs to DB (Coming Soon)"
+  },
+  "github_monitor": {
+    "script": "github_monitor.py",
+    "args": [],
+    "auto_start": false,
+    "restart_on_crash": true,
+    "description": "Checks GitHub repos for PRs/Issues (Coming Soon)"
+  }
+}

@@ -30,6 +30,8 @@ beautifulsoup4>=4.12.0
 lxml>=5.0.0                  # Faster HTML/XML parser for beautifulsoup4
 
 # ─── Data / memory / ML ──────────────────────────────────────────────────────
+chromadb>=0.4.24
+sentence-transformers>=2.2.2
 numpy>=1.26.0                # Semantic memory module
 scikit-learn>=1.4.0          # Semantic memory module (TF-IDF, cosine similarity)
 

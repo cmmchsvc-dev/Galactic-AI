@@ -37,6 +37,7 @@ INCLUDE_LIST = [
     "update.ps1",
     "update.sh",
     "galactic_core_v2.py",
+    "galactic_memory.py",
     "gateway_v2.py",
     "memory_module_v2.py",
     "model_manager.py",
