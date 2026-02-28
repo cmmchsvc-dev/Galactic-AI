@@ -5445,8 +5445,10 @@ try {
         filename = request.query.get('name')
         if not filename or not filename.endswith('.md'):
             return web.json_response({'error': 'Invalid file'}, status=400)
-        workspace = self.core.config['paths']['workspace']
-        path = os.path.join(workspace, filename)
+        workspace = os.path.normpath(self.core.config['paths']['workspace'])
+        path = os.path.normpath(os.path.join(workspace, filename))
+        if not path.startswith(workspace):
+            return web.json_response({'error': 'Path traversal detected'}, status=403)
         if not os.path.exists(path):
             return web.json_response({'error': 'File not found'}, status=404)
         with open(path, 'r', encoding='utf-8') as f:
@@ -5460,8 +5462,10 @@ try {
         content = data.get('content')
         if not filename or not filename.endswith('.md'):
             return web.json_response({'error': 'Invalid file'}, status=400)
-        workspace = self.core.config['paths']['workspace']
-        path = os.path.join(workspace, filename)
+        workspace = os.path.normpath(self.core.config['paths']['workspace'])
+        path = os.path.normpath(os.path.join(workspace, filename))
+        if not path.startswith(workspace):
+            return web.json_response({'error': 'Path traversal detected'}, status=403)
         with open(path, 'w', encoding='utf-8') as f:
             f.write(content)
         await self.core.log(f"File saved via Web Deck: {filename}", priority=2)
