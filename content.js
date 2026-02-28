@@ -389,7 +389,7 @@
       }
     }
 
-    return { status: 'success', tree: lines.join('\n'), ref_count: refCounter };
+    return { status: 'success', tree: lines.join('\n'), ref_count: refMap.size };
   }
 
   /* ─── Find Elements ─────────────────────────────────────────────────── */

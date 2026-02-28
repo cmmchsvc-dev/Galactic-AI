@@ -20,7 +20,7 @@ class AutomationRecommender(GalacticSkill):
                     },
                     "required": ["directory"]
                 },
-                "handler": self.recommend_automations
+                "fn": self.recommend_automations
             }
         }
 

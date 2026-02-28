@@ -332,6 +332,13 @@ class TelegramBridge:
         
         if provider == 'ollama':
             models = self._get_live_ollama_menu_entries()
+        elif provider == 'openrouter':
+            models = (
+                model_map.get('openrouter-frontier', []) +
+                model_map.get('openrouter-strong', []) +
+                model_map.get('openrouter-fast', []) +
+                model_map.get('openrouter', [])
+            )
         else:
             models = model_map.get(provider, [])
         row = []
