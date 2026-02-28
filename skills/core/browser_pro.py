@@ -701,9 +701,11 @@ class BrowserProSkill(GalacticSkill):
             page = self._get_page()
             if not page:
                 return "[ERROR] No browser page open. Open a URL first."
+            from urllib.parse import urlparse
             url = page.url
-            if "youtube.com" in url or "google.com" in url:
-                selector = 'input[name="search_query"]' if "youtube.com" in url else 'input[name="q"]'
+            hostname = urlparse(url).hostname or ""
+            if hostname.endswith("youtube.com") or hostname.endswith("google.com"):
+                selector = 'input[name="search_query"]' if hostname.endswith("youtube.com") else 'input[name="q"]'
                 result = await self.type_text(selector, query, press_enter=True)
                 if result['status'] == 'success':
                     return f"[BROWSER] Searched for: {query}"
