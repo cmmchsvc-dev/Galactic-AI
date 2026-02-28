@@ -324,7 +324,11 @@ class ChromeBridgeSkill(GalacticSkill):
                 img_subdir.mkdir(parents=True, exist_ok=True)
                 ts = datetime.now().strftime('%Y%m%d_%H%M%S')
                 path = str(img_subdir / f'chrome_{ts}.jpg')
-                raw = base64.b64decode(img_data)
+                
+                # Strip data URI prefix if present
+                clean_b64 = img_data.split(',', 1)[1] if ',' in img_data and img_data.startswith('data:') else img_data
+                
+                raw = base64.b64decode(clean_b64)
                 with open(path, 'wb') as f:
                     f.write(raw)
                 # Return special dict that gateway detects and renders as a vision message
@@ -350,8 +354,12 @@ class ChromeBridgeSkill(GalacticSkill):
                 img_subdir.mkdir(parents=True, exist_ok=True)
                 ts = datetime.now().strftime('%Y%m%d_%H%M%S')
                 path = str(img_subdir / f'chrome_zoom_{ts}.jpg')
+                
+                # Strip data URI prefix if present
+                clean_b64 = img_data.split(',', 1)[1] if ',' in img_data and img_data.startswith('data:') else img_data
+                
                 with open(path, 'wb') as f:
-                    f.write(base64.b64decode(img_data))
+                    f.write(base64.b64decode(clean_b64))
                 return {"__image_b64__": img_data, "path": path, "media_type": "image/jpeg",
                         "text": f"[CHROME] Zoomed region {region} saved: {path}"}
             except Exception as e:

@@ -524,6 +524,8 @@ MIT License — see LICENSE file.
 
 | Version | Highlights |
 |---|---|
+| **v1.2.1** | 🎛️ The Control Update — Centralized dynamic models.yaml, 14 new providers added, OpenRouter tiers restored, and robust JSON extraction (O(N) stack-based parser) + Subprocess Unicode encoding fixes |
+| **v1.2.0** | 🧠 The Hivemind Update — Resumable workflows via checkpoints, Workspace Oracle planner, Gemini CLI Bridge, Superpowers TDD integration, and Planner fallback redundancy |
 | **v1.1.4** | 🛰️ Telegram UX update — `/status` lite/full (`/status`, `/status full`, `--full`, `-f`); `/help` + command menu updated • 🧠 Restart resilience: conversation auto-recall injection + boot recall banner |
 | **v1.1.3** | 🔧 Chrome extension parity — 11 new tools (16 → 27 total): `chrome_zoom`, `chrome_drag`, `chrome_right_click`, `chrome_triple_click`, `chrome_upload`, `chrome_resize`, `chrome_get_network_body`, `chrome_wait`, `chrome_gif_start/stop/export`; contenteditable fix (X.com, Notion, Reddit); screenshot now returns real image to LLM |
 | **v1.1.1** | 🌐 Chrome extension (Galactic Browser) with 10 browser tools, side panel chat, real-time page interaction; 📱 Social media plugin (Twitter/X + Reddit, 8 tools); 🔧 System-wide [No response] fix (native tool_calls capture); 📨 Telegram reliability overhaul (Markdown fallback, message splitting, CancelledError fix) |

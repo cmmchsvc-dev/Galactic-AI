@@ -23,10 +23,13 @@ class ShellPlugin(GalacticPlugin):
             await self.core.log(f"DEBUG EXEC START: {command[:50]}...", priority=1)
 
             # Use absolute path to powershell and simple execution
+            env = os.environ.copy()
+            env["PYTHONIOENCODING"] = "utf-8"
             process = await asyncio.create_subprocess_exec(
                 "powershell.exe", "-NoProfile", "-Command", command,
                 stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.PIPE
+                stderr=asyncio.subprocess.PIPE,
+                env=env
             )
             try:
                 stdout, stderr = await asyncio.wait_for(

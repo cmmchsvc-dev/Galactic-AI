@@ -55,14 +55,11 @@ class GeminiCLIBridge(GalacticSkill):
         # --yolo automatically approves file edits.
         # --prompt runs it in non-interactive mode.
         cmd = [
-            "gemini", 
+            "gemini.cmd" if os.name == "nt" else "gemini", 
             "--yolo", 
             "--prompt", 
             prompt
         ]
-        
-        # Use shell=True on Windows because 'gemini' is usually a .cmd or .bat file wrapper for npm
-        use_shell = (os.name == 'nt')
         
         try:
             # We use an asyncio timeout because the CLI can sometimes hang or take a very long time
@@ -71,8 +68,7 @@ class GeminiCLIBridge(GalacticSkill):
                 cwd=working_dir,
                 env=env,
                 stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.PIPE,
-                shell=use_shell
+                stderr=asyncio.subprocess.PIPE
             )
             
             try:

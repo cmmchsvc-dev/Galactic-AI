@@ -2131,8 +2131,14 @@ class GalacticGateway:
                     continue
 
                 # Schema A: standard Galactic format {"tool": "name", "args": {...}}
-                if "tool" in obj and "args" in obj:
-                    return obj["tool"], obj["args"]
+                if "tool" in obj:
+                    args = obj.get("args")
+                    if args is None:
+                        # Synthesize args from remaining keys if model put them at root level
+                        args = {k: v for k, v in obj.items() if k != "tool"}
+                    elif not isinstance(args, dict):
+                        args = {}
+                    return obj["tool"], args
 
                 # Schema B: LangChain-style {"action": "name", "action_input": {...}}
                 if "action" in obj and "action_input" in obj:
@@ -3009,7 +3015,7 @@ class GalacticGateway:
         'browser_type': 15, 'browser_wait': 60, 'browser_extract': 30,
         'browser_snapshot': 30, 'browser_fill_form': 30,
         'browser_execute_js': 30, 'browser_pdf': 30,
-        'desktop_screenshot': 15, 'desktop_click': 10, 'desktop_type': 15,
+        'desktop_screenshot': 60, 'desktop_click': 10, 'desktop_type': 15,
         'generate_image': 180, 'generate_image_sd35': 180,
         'generate_image_imagen': 180, 'analyze_image': 60,
         'text_to_speech': 30, 'spawn_subagent': 5, 'memory_search': 10,
@@ -3457,6 +3463,8 @@ class GalacticGateway:
 
     def _get_provider_base_url(self, provider):
         """Return the base URL for an OpenAI-compatible provider from config."""
+        if provider and provider.startswith("openrouter-"):
+            provider = "openrouter"
         providers_cfg = self.core.config.get('providers', {})
         default_urls = {
             "openai":       "https://api.openai.com/v1",
@@ -3481,6 +3489,8 @@ class GalacticGateway:
 
     def _get_provider_api_key(self, provider):
         """Return the API key for a provider, falling back to config providers section."""
+        if provider and provider.startswith("openrouter-"):
+            provider = "openrouter"
         # Use the live llm.api_key if it's set and not placeholder
         key = self.llm.api_key
         if key and key not in ("NONE", ""):
