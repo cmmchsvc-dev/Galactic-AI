@@ -20,7 +20,7 @@ class MdImprover(GalacticSkill):
                     },
                     "required": ["file_path"]
                 },
-                "handler": self.audit_markdown
+                "fn": self.audit_markdown
             }
         }
 
