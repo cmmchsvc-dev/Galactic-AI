@@ -92,7 +92,9 @@ def sync_versions(new_version):
         "index.html",
         "README.md",
         "FEATURES.md",
-        "PROJECT_STATE.md"
+        "PROJECT_STATE.md",
+        "install.ps1",
+        "install.sh"
     ]
     
     # Add all skill files
