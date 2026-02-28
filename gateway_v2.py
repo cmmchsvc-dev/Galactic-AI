@@ -2597,7 +2597,7 @@ class GalacticGateway:
         turn_count = 0
         last_tool_call = None  # Track last (tool_name, json_args_str) to prevent duplicate calls
         # Tools that are legitimately called repeatedly with same args (snapshots, reads, etc.)
-        _DUPLICATE_EXEMPT = {'browser_snapshot', 'web_search', 'read_file', 'memory_search', 'generate_image'}
+        _DUPLICATE_EXEMPT = {'browser_snapshot', 'web_search', 'read_file', 'memory_search', 'generate_image', 'exec_shell'}
 
         # ── Anti-spin guardrails ──
         consecutive_failures = 0   # Consecutive tool errors/timeouts
@@ -2753,7 +2753,7 @@ class GalacticGateway:
 
                         # ── Anti-spin: track tool-type repetition ──
                         recent_tools.append(tool_name)
-                        if len(recent_tools) > 6:
+                        if len(recent_tools) > 10:
                             recent_tools.pop(0)
                             
                         # ── Resumable Checkpoints ──
@@ -2801,11 +2801,11 @@ class GalacticGateway:
                             break  # Hard break out of the ReAct loop
 
                         # ── Tool-type repetition guard ──
-                        if len(recent_tools) >= 5:
+                        if len(recent_tools) >= 9:
                             from collections import Counter
                             tool_counts = Counter(recent_tools)
                             most_common_tool, most_common_count = tool_counts.most_common(1)[0]
-                            if most_common_count >= 4 and most_common_tool not in _DUPLICATE_EXEMPT:
+                            if most_common_count >= 8 and most_common_tool not in _DUPLICATE_EXEMPT:
                                 await self.core.log(
                                     f"🔄 Tool repetition guard: {most_common_tool} called "
                                     f"{most_common_count}x in last {len(recent_tools)} turns",
