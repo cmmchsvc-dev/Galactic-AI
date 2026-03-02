@@ -4,6 +4,21 @@ All notable changes to Galactic AI are documented here.
 
 ---
 
+## v1.3.0 — The Intelligence Update (2026-03-02)
+
+### Added
+- **`grep_search` Tool**: Powerful recursive file content searching with regex support. Allows the AI to navigate even the largest codebases by searching for function calls, variable usages, or logic patterns.
+- **`code_outline` Tool**: Native Python AST parsing to show the structure of files (classes, functions, methods) with line numbers, enabling precise navigation.
+- **Advanced Agentic Protocol**: Replaced the basic tool instructions with a comprehensive Research → Plan → Implement → Verify methodology in `SOUL.md`.
+- **Few-Shot Intelligence Examples**: Updated system prompt templates with clear examples of how to use deep-research tools strategically.
+
+### Fixed
+- **Ollama Thinking Injection**: Fixed a bug where `reasoning_effort` was being sent to Ollama (causing 400 errors). It now correctly injects `"think": true` into Ollama's `options` payload.
+- **Metadata Synchronization**: Fixed a bug where Telegram and the Control Deck were showing different thinking levels; now both read from a single gateway source.
+- **Skill Categorization**: Fixed missing category metadata in community skills (e.g., Gemini CLI) preventing them from showing up correctly in UI menus.
+
+---
+
 ## v1.2.1 — The Control Update (2026-02-27)
 
 ### Added

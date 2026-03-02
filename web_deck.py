@@ -85,6 +85,7 @@ class GalacticWebDeck:
         self.app.router.add_post('/api/settings/models', self.handle_settings_models)
         self.app.router.add_post('/api/settings/voice', self.handle_settings_voice)
         self.app.router.add_post('/api/settings/system', self.handle_settings_system)
+        self.app.router.add_post('/api/settings/thinking', self.handle_settings_thinking)
         # Voice API endpoints
         self.app.router.add_post('/api/tts', self.handle_tts)
         self.app.router.add_post('/api/stt', self.handle_stt)
@@ -1257,6 +1258,16 @@ body.glow-max .status-dot{box-shadow:0 0 14px var(--green),0 0 28px rgba(0,255,1
               <span>Streaming</span>
             </label>
           </div>
+          <div style="margin-top:16px;padding-top:14px;border-top:1px solid var(--border)">
+            <div style="font-size:0.82em;color:var(--dim);margin-bottom:8px;letter-spacing:1px;text-transform:uppercase">🧠 Thinking Level</div>
+            <div style="font-size:0.72em;color:var(--dim);margin-bottom:10px">Sets <code style="font-size:0.95em;background:var(--bg3);padding:1px 5px;border-radius:4px">reasoning_effort</code> — how deeply the model thinks before responding.</div>
+            <div id="thinking-level-btns" style="display:flex;gap:0;border:1px solid var(--border);border-radius:8px;overflow:hidden">
+              <button class="think-btn" data-level="off" onclick="setThinkingLevel('off')" style="flex:1;padding:9px 0;background:var(--bg3);border:none;color:var(--dim);cursor:pointer;font-size:0.82em;font-weight:600;transition:all .2s">OFF</button>
+              <button class="think-btn active" data-level="low" onclick="setThinkingLevel('low')" style="flex:1;padding:9px 0;background:linear-gradient(135deg,var(--cyan),var(--green));border:none;color:#000;cursor:pointer;font-size:0.82em;font-weight:700;transition:all .2s">LOW ⚡</button>
+              <button class="think-btn" data-level="medium" onclick="setThinkingLevel('medium')" style="flex:1;padding:9px 0;background:var(--bg3);border:none;color:var(--dim);cursor:pointer;font-size:0.82em;font-weight:600;transition:all .2s">MEDIUM</button>
+              <button class="think-btn" data-level="high" onclick="setThinkingLevel('high')" style="flex:1;padding:9px 0;background:var(--bg3);border:none;color:var(--dim);cursor:pointer;font-size:0.82em;font-weight:600;transition:all .2s">HIGH 🧠</button>
+            </div>
+          </div>
           <div style="margin-top:12px">
             <button class="btn primary" onclick="saveModelSettings()">Save Model Settings</button>
           </div>
@@ -1463,6 +1474,12 @@ const ORB_JOKES = [
 
 function startOrb() {
   _orbActiveCount++;
+  const tBtn = document.getElementById('thinking-tab-btn');
+  if (tBtn && !tBtn.classList.contains('active')) {
+    tBtn.style.color = 'var(--pink)';
+    tBtn.style.textShadow = '0 0 10px var(--pink)';
+  }
+
   const el = document.getElementById('thinking-orb');
   if (!el || _orbActiveCount > 1) return;
   
@@ -1493,6 +1510,9 @@ function stopOrb() {
   if (_orbActiveCount < 0) _orbActiveCount = 0;
   if (_orbActiveCount > 0) return;
 
+  const tBtn = document.getElementById('thinking-tab-btn');
+  if (tBtn) { tBtn.style.color = ''; tBtn.style.textShadow = ''; }
+
   const el = document.getElementById('thinking-orb');
   if (el) el.style.display = 'none';
   clearInterval(_orbInterval);
@@ -1500,6 +1520,10 @@ function stopOrb() {
 
 function resetOrb() {
   _orbActiveCount = 0;
+  
+  const tBtn = document.getElementById('thinking-tab-btn');
+  if (tBtn) { tBtn.style.color = ''; tBtn.style.textShadow = ''; }
+
   const el = document.getElementById('thinking-orb');
   if (el) el.style.display = 'none';
   clearInterval(_orbInterval);
@@ -2020,9 +2044,9 @@ function connectWS() {
       sb._rawText = (sb._rawText || '') + p.data;
       sb.innerHTML = formatMsg(sb._rawText);
       if (autoScroll) document.getElementById('chat-log').scrollTop = document.getElementById('chat-log').scrollHeight;
+    } else if (p.type === 'bot_msg') {
+      appendBotMsg(p.data.content, p.data.ts);
     } else if (p.type === 'log') {
-      const sb = document.getElementById('stream-bubble');
-      sb.style.display = 'none'; sb.textContent = '';
       addLog(p.data);
     } else if (p.type === 'telemetry') {
       document.getElementById('token-counter').textContent = '↑' + p.data.tin + ' ↓' + p.data.tout + ' tokens';
@@ -2049,13 +2073,6 @@ function connectWS() {
       // optional alert sound
     } else if (p.type === 'agent_trace') {
       handleAgentTrace(p.data);
-      // Flash the Thinking tab button pink when it's not the active tab
-      const tBtn = document.getElementById('thinking-tab-btn');
-      if (tBtn && !tBtn.classList.contains('active')) {
-        tBtn.style.color = 'var(--pink)';
-        tBtn.style.textShadow = '0 0 8px var(--pink)';
-        setTimeout(() => { tBtn.style.color = ''; tBtn.style.textShadow = ''; }, 1800);
-      }
     } else if (p.type === 'model_fallback') {
       // Fallback activation toast — show when primary model fails and chain kicks in
       const fb = p.data || {};
@@ -2920,6 +2937,23 @@ async function refreshStatus() {
     el('st-primary').textContent = d.primary_model || '--';
     el('st-fallback').textContent = d.fallback_model || '--';
 
+    // Init thinking level buttons
+    if (d.thinking_level) {
+      document.querySelectorAll('#thinking-level-btns .think-btn').forEach(btn => {
+        if (btn.dataset.level === d.thinking_level) {
+          btn.classList.add('active');
+          btn.style.background = 'linear-gradient(135deg,var(--cyan),var(--green))';
+          btn.style.color = '#000';
+          btn.style.fontWeight = '700';
+        } else {
+          btn.classList.remove('active');
+          btn.style.background = 'var(--bg3)';
+          btn.style.color = 'var(--dim)';
+          btn.style.fontWeight = '600';
+        }
+      });
+    }
+
     // Update topbar
     currentModelId = d.model?.model || '';
     currentProvider = d.model?.provider || '';
@@ -3456,6 +3490,34 @@ async function saveSystemSettings() {
   } catch(e) { showToast('Error: ' + e.message, 'error', 4000); }
 }
 
+// ── Thinking Level ────────────────────────────────────────────────────
+async function setThinkingLevel(level) {
+  // Update button visuals
+  document.querySelectorAll('#thinking-level-btns .think-btn').forEach(btn => {
+    if (btn.dataset.level === level) {
+      btn.classList.add('active');
+      btn.style.background = 'linear-gradient(135deg,var(--cyan),var(--green))';
+      btn.style.color = '#000';
+      btn.style.fontWeight = '700';
+    } else {
+      btn.classList.remove('active');
+      btn.style.background = 'var(--bg3)';
+      btn.style.color = 'var(--dim)';
+      btn.style.fontWeight = '600';
+    }
+  });
+  // Save to server
+  try {
+    const r = await authFetch('/api/settings/thinking', {
+      method: 'POST', headers: {'Content-Type':'application/json'},
+      body: JSON.stringify({level})
+    });
+    const d = await r.json();
+    if (d.ok) showToast(`Thinking: ${level.toUpperCase()}`, 'success', 2000);
+    else showToast(d.error || 'Failed', 'error', 3000);
+  } catch(e) { showToast('Error: ' + e.message, 'error', 3000); }
+}
+
 // ── Update Banner ─────────────────────────────────────────────────────
 function showUpdateBanner(info) {
   if (document.getElementById('update-banner')) return;
@@ -3726,6 +3788,7 @@ function handleAgentTrace(data) {
   } else if (phase === 'tool_result') {
     label = data.success ? 'TOOL RESULT' : 'TOOL ERROR';
     html = '<span class="trace-tool-badge">' + escHtml(data.tool || '') + '</span>\n' + escHtml(data.result || '');
+    if (data.success === false) stopOrb();
   } else if (phase === 'session_abort') {
     stopOrb();
     label = 'ABORTED';
@@ -4322,6 +4385,7 @@ try {
             'streaming': models_cfg.get('streaming', True),
             'max_turns': models_cfg.get('max_turns', 50),
             'speak_timeout': models_cfg.get('speak_timeout', 600),
+            'thinking_level': getattr(self.core.gateway, 'thinking_level', models_cfg.get('thinking_level', 'low')),
 
             # Fallback chain + health
             'fallback_chain': fallback_status.get('chain', []),
@@ -4613,6 +4677,38 @@ try {
             self._save_config(cfg)
             await self.core.log("⚙️ System settings updated via Settings tab", priority=2)
             return web.json_response({'ok': True})
+        except Exception as e:
+            return web.json_response({'ok': False, 'error': str(e)})
+
+    async def handle_settings_thinking(self, request):
+        """POST /api/settings/thinking — set thinking/reasoning level."""
+        try:
+            data = await request.json()
+        except Exception:
+            return web.json_response({'error': 'Invalid JSON'}, status=400)
+
+        level = str(data.get('level', 'low')).lower().strip()
+        if level not in ('off', 'low', 'medium', 'high'):
+            return web.json_response({'error': f'Invalid level: {level}'}, status=400)
+
+        # Update gateway runtime
+        gw = getattr(self.core, 'gateway', None)
+        if gw:
+            gw.thinking_level = level
+
+        # Also update Telegram bridge if present
+        tb = getattr(self.core, 'telegram_bridge', None)
+        if tb:
+            tb.thinking_level = level.upper()
+
+        # Persist to config.yaml
+        cfg = self.core.config
+        cfg.setdefault('models', {})
+        cfg['models']['thinking_level'] = level
+        try:
+            self._save_config(cfg)
+            await self.core.log(f"🧠 Thinking level set to: {level.upper()}", priority=2)
+            return web.json_response({'ok': True, 'level': level})
         except Exception as e:
             return web.json_response({'ok': False, 'error': str(e)})
 

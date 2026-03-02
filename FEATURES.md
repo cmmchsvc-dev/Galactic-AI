@@ -1,6 +1,6 @@
 # Galactic AI — Feature Reference
 
-Complete feature reference for Galactic AI Automation Suite **v1.2.1**.
+Complete feature reference for Galactic AI Automation Suite **v1.3.0**.
 
 ---
 
@@ -146,6 +146,26 @@ Two community skills reduce "amnesia" after restarts without running heavy retri
   - Prints the last N hot-buffer messages at boot and writes: `logs/conversations/boot_recall_banner.txt`
   - Config: `conversation.boot_recall_messages: 10`
   - Tool: `boot_recall_show`
+
+---
+
+## Agentic Code Intelligence (v1.3.0)
+
+### Deep Codebase Research
+Galactic AI now possesses "eyes" for complex codebases. Instead of reading files one-by-one, it can use surgical search tools:
+- **`grep_search`**: Recursively searches for symbol usage, logic patterns, or configuration keys across thousands of files instantly.
+- **`code_outline`**: Uses Python's Abstract Syntax Tree (AST) to generate a "map" of any file, showing exactly where classes and functions defined.
+
+### Advanced Agentic Protocol (SOUL.md)
+The core reasoning loop has been upgraded from simple tool use to a structured **Research → Plan → Implement → Verify** cycle.
+1. **Empirical Research**: Use `grep_search` and `code_outline` to gather facts about the codebase.
+2. **Strategic Planning**: Draft an `implementation_plan.md` (or equivalent internal thought) before touching code.
+3. **Precision Implementation**: Use `read_file` with `start_line`/`end_line` and `edit_file` for non-destructive changes.
+4. **Verification**: Run tests or verify side-effects before declaring the task complete.
+
+### Surgical File Interaction
+- **`read_file` (Line Ranges)**: Efficiently read only the relevant parts of large files, saving tokens and reducing noise.
+- **`edit_file` (Search & Replace)**: Precise, atomic edits that ensure code integrity without rewriting entire files.
 
 ---
 

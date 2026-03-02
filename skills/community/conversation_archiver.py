@@ -174,10 +174,10 @@ class ConversationArchiverSkill(GalacticSkill):
             self._orig_log_chat = gw._log_chat
             orig = self._orig_log_chat
 
-            def patched(self_gateway, role, content, source='web'):
+            async def patched(self_gateway, role, content, source='web'):
                 try:
                     # orig is already a bound method
-                    orig(role, content, source=source)
+                    await orig(role, content, source=source)
                 finally:
                     try:
                         self.record(role=role, content=content, source=source)

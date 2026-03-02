@@ -7,6 +7,7 @@ import asyncio
 import os
 import json
 import re
+import ast
 import tempfile
 import time
 import hashlib
@@ -350,7 +351,7 @@ class SystemSkill(GalacticSkill):
                 "fn": self.tool_git_commit
             },
             "process_start": {
-                "description": "Start a background process and track it.",
+                "description": "Start a background process and track it. CRITICAL: If you need to wait for the result before replying to the user to avoid 'hanging up' on them, you MUST immediately call process_wait after this.",
                 "parameters": {
                     "type": "object",
                     "properties": {
@@ -382,6 +383,18 @@ class SystemSkill(GalacticSkill):
                     "required": ["session_id"]
                 },
                 "fn": self.tool_process_kill
+            },
+            "process_wait": {
+                "description": "Wait for a background process to finish and return its final output.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "session_id": {"type": "string", "description": "Process session ID."},
+                        "timeout": {"type": "integer", "description": "Maximum seconds to wait (default 120, max 600)."}
+                    },
+                    "required": ["session_id"]
+                },
+                "fn": self.tool_process_wait
             },
             "memory_search": {
                 "description": "Search memory for relevant context using semantic search.",
@@ -420,7 +433,7 @@ class SystemSkill(GalacticSkill):
                 "fn": self.tool_text_to_speech
             },
             "execute_python": {
-                "description": "Execute Python code in a subprocess and return stdout/stderr.",
+                "description": "Execute Python code and return stdout/stderr. MANDATE: NEVER use subprocess.Popen or 'start' commands here to 'background' a task to bypass turn limits. All code MUST be synchronous or use await. If you need backgrounding, you MUST use process_start.",
                 "parameters": {"type": "object", "properties": {
                     "code": {"type": "string", "description": "Python code to execute"},
                     "timeout": {"type": "integer", "description": "Timeout seconds (default: 60, max: 300)"},
@@ -442,103 +455,186 @@ class SystemSkill(GalacticSkill):
                     "image_path": {"type": "string", "description": "Optional image path"},
                 }, "required": ["message"]},
                 "fn": self.tool_send_telegram
+            },
+            "grep_search": {
+                "description": "Search file contents for a text or regex pattern. Returns matching lines with filenames and line numbers.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "pattern": {"type": "string", "description": "Text or regex pattern to find."},
+                        "path": {"type": "string", "description": "Root directory to search (default: current workspace)."},
+                        "file_pattern": {"type": "string", "description": "Optional glob to filter files (e.g. '*.py')."},
+                        "max_results": {"type": "integer", "description": "Max matches to return (default: 50)."}
+                    },
+                    "required": ["pattern"]
+                },
+                "fn": self.tool_grep_search
+            },
+            "code_outline": {
+                "description": "Show the structure of a Python code file: classes, functions, and methods with line numbers.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "path": {"type": "string", "description": "Path to the Python file to analyze."}
+                    },
+                    "required": ["path"]
+                },
+                "fn": self.tool_code_outline
             }
         }
 
     # --- Implementations ---
 
     async def tool_list_dir(self, args):
+        """List directory contents (non-blocking)."""
         path    = args.get('path', '.') or '.'
         pattern = args.get('pattern', '*')
         recurse = bool(args.get('recurse', False))
-        try:
-            base = os.path.abspath(path)
-            if not os.path.isdir(base):
-                return f"[ERROR] list_dir FAILED: {base}"
-            search = os.path.join(base, '**', pattern) if recurse else os.path.join(base, pattern)
-            entries = glob.glob(search, recursive=recurse)
-            if not entries: return f"No files match '{pattern}' in {base}"
-            lines = [f"{'TYPE':<5} {'SIZE':>10}  {'MODIFIED':<20}  NAME", '-' * 70]
-            for e in sorted(entries)[:500]:
-                st = os.stat(e)
-                kind = 'DIR ' if os.path.isdir(e) else 'FILE'
-                size = '' if os.path.isdir(e) else f"{st.st_size:,}"
-                mtime = datetime.fromtimestamp(st.st_mtime).strftime('%Y-%m-%d %H:%M:%S')
-                lines.append(f"{kind:<5} {size:>10}  {mtime:<20}  {os.path.relpath(e, base)}")
-            return '\n'.join(lines)
-        except Exception as e: return f"[ERROR] list_dir: {e}"
+        
+        def _list_sync():
+            try:
+                base = os.path.abspath(path)
+                if not os.path.isdir(base):
+                    return f"[ERROR] list_dir FAILED: {base}"
+                search = os.path.join(base, '**', pattern) if recurse else os.path.join(base, pattern)
+                import glob
+                entries = glob.glob(search, recursive=recurse)
+                if not entries: return f"No files match '{pattern}' in {base}"
+                lines = [f"{'TYPE':<5} {'SIZE':>10}  {'MODIFIED':<20}  NAME", '-' * 70]
+                for e in sorted(entries)[:500]:
+                    try:
+                        st = os.stat(e)
+                        kind = 'DIR ' if os.path.isdir(e) else 'FILE'
+                        size = '' if os.path.isdir(e) else f"{st.st_size:,}"
+                        mtime = datetime.fromtimestamp(st.st_mtime).strftime('%Y-%m-%d %H:%M:%S')
+                        name = os.path.relpath(e, base)
+                        flag = ""
+                        if not os.path.isdir(e):
+                            ext = os.path.splitext(e)[1].lower()
+                            if ext in ('.onnx', '.engine', '.7z', '.zip') and st.st_size < 1000:
+                                flag = " [CRITICAL WARNING: FILE IS SUSPICIOUSLY SMALL / LIKELY CORRUPT]"
+                        lines.append(f"{kind:<5} {size:>10}  {mtime:<20}  {name}{flag}")
+                    except: continue
+                return '\n'.join(lines)
+            except Exception as e: return f"[ERROR] list_sync: {e}"
+
+        loop = asyncio.get_running_loop()
+        return await loop.run_in_executor(None, _list_sync)
 
     async def tool_find_files(self, args):
-        path, pattern, limit = args.get('path', '.') or '.', args.get('pattern', '*'), int(args.get('limit', 100))
-        try:
-            base = os.path.abspath(path)
-            search = os.path.join(base, pattern) if any(c in pattern for c in '*/\\') else os.path.join(base, '**', pattern)
-            results = [os.path.relpath(r, base) for r in sorted(glob.glob(search, recursive=True))]
-            total = len(results)
-            results = results[:limit]
-            if not results: return f"No files found matching '{pattern}' under {base}"
-            out = '\n'.join(results)
-            if total > limit: out += f"\n... ({total - limit} more results)"
-            return f"Found {total} file(s):\n{out}"
-        except Exception as e: return f"[ERROR] find_files: {e}"
+        """Find files matching a glob pattern (non-blocking)."""
+        path    = args.get('path', '.') or '.'
+        pattern = args.get('pattern', '*')
+        limit   = int(args.get('limit', 100))
+        
+        def _find_sync():
+            try:
+                base = os.path.abspath(path)
+                search = os.path.join(base, '**', pattern) if '**' not in pattern else os.path.join(base, pattern)
+                import glob
+                results = sorted(glob.glob(search, recursive=True))
+                found = [os.path.relpath(r, base) for r in results[:limit]]
+                if not found: return f"No files found matching '{pattern}' under {base}"
+                out = "\n".join(found)
+                if len(results) > limit: out += f"\n... ({len(results) - limit} more)"
+                return f"Found {len(results)} file(s):\n{out}"
+            except Exception as e: return f"[ERROR] find_sync: {e}"
+
+        loop = asyncio.get_running_loop()
+        return await loop.run_in_executor(None, _find_sync)
 
     async def tool_hash_file(self, args):
+        """Compute file hash (non-blocking)."""
         path, algo = args.get('path', ''), args.get('algorithm', 'sha256').lower()
         algos = {'sha256': hashlib.sha256, 'md5': hashlib.md5, 'sha1': hashlib.sha1}
         if algo not in algos: return f"[ERROR] Unsupported algo: {algo}"
+        
+        def _hash_sync():
+            try:
+                h = algos[algo]()
+                with open(path, 'rb') as f:
+                    for chunk in iter(lambda: f.read(65536), b''): h.update(chunk)
+                return h.hexdigest(), os.path.getsize(path)
+            except Exception as e: return str(e), 0
+
         try:
-            h = algos[algo]()
-            with open(path, 'rb') as f:
-                for chunk in iter(lambda: f.read(65536), b''): h.update(chunk)
-            return f"{algo.upper()}: {h.hexdigest()}\nFile: {path}\nSize: {os.path.getsize(path):,} bytes"
+            loop = asyncio.get_running_loop()
+            digest, size = await loop.run_in_executor(None, _hash_sync)
+            if size == 0 and digest != hashlib.sha256(b"").hexdigest(): # Basic error check
+                 return f"[ERROR] hash_file: {digest}"
+            return f"{algo.upper()}: {digest}\nFile: {path}\nSize: {size:,} bytes"
         except Exception as e: return f"[ERROR] hash_file: {e}"
 
     async def tool_diff_files(self, args):
+        """Unified diff (non-blocking)."""
         path_a, path_b, text_b, context = args.get('path_a', ''), args.get('path_b', ''), args.get('text_b'), int(args.get('context', 3))
-        try:
-            with open(path_a, 'r', encoding='utf-8', errors='replace') as f: l_a = f.readlines()
-            if path_b:
-                with open(path_b, 'r', encoding='utf-8', errors='replace') as f: l_b = f.readlines()
-                lab_b = path_b
-            elif text_b is not None:
-                l_b = [l + '\n' for l in text_b.splitlines()]; lab_b = '<new content>'
-            else: return "[ERROR] Provide path_b or text_b"
-            diff = list(difflib.unified_diff(l_a, l_b, fromfile=path_a, tofile=lab_b, n=context))
-            return ''.join(diff) if diff else "✅ Files are identical."
-        except Exception as e: return f"[ERROR] diff_files: {e}"
+        
+        def _diff_sync():
+            try:
+                with open(path_a, 'r', encoding='utf-8', errors='replace') as f: l_a = f.readlines()
+                if path_b:
+                    with open(path_b, 'r', encoding='utf-8', errors='replace') as f: l_b = f.readlines()
+                    lab_b = path_b
+                elif text_b is not None:
+                    l_b = [l + '\n' for l in text_b.splitlines()]; lab_b = '<new content>'
+                else: return "[ERROR] Provide path_b or text_b"
+                import difflib
+                diff = list(difflib.unified_diff(l_a, l_b, fromfile=path_a, tofile=lab_b, n=context))
+                return ''.join(diff) if diff else "✅ Files are identical."
+            except Exception as e: return f"[ERROR] diff_sync: {e}"
+
+        loop = asyncio.get_running_loop()
+        return await loop.run_in_executor(None, _diff_sync)
 
     async def tool_zip_create(self, args):
+        """Create a ZIP archive (non-blocking)."""
         source, dest = args.get('source', ''), args.get('destination', '') or args.get('source', '').rstrip('/\\') + '.zip'
-        try:
-            source, dest = os.path.abspath(source), os.path.abspath(dest)
-            with zipfile.ZipFile(dest, 'w', zipfile.ZIP_DEFLATED) as zf:
-                if os.path.isdir(source):
-                    for root, _, files in os.walk(source):
-                        for f in files:
-                            fp = os.path.join(root, f)
-                            zf.write(fp, os.path.relpath(fp, os.path.dirname(source)))
-                else: zf.write(source, os.path.basename(source))
-            return f"✅ Created: {dest} ({os.path.getsize(dest):,} bytes)"
-        except Exception as e: return f"[ERROR] zip_create: {e}"
+        def _zip_sync():
+            try:
+                src, dst = os.path.abspath(source), os.path.abspath(dest)
+                import zipfile
+                with zipfile.ZipFile(dst, 'w', zipfile.ZIP_DEFLATED) as zf:
+                    if os.path.isdir(src):
+                        for root, _, files in os.walk(src):
+                            for f in files:
+                                fp = os.path.join(root, f)
+                                zf.write(fp, os.path.relpath(fp, os.path.dirname(src)))
+                    else: zf.write(src, os.path.basename(src))
+                return f"✅ Created: {dst} ({os.path.getsize(dst):,} bytes)"
+            except Exception as e: return f"[ERROR] zip_create sync: {e}"
+
+        loop = asyncio.get_running_loop()
+        return await loop.run_in_executor(None, _zip_sync)
 
     async def tool_zip_extract(self, args):
+        """Extract a ZIP archive (non-blocking)."""
         source, dest = args.get('source', ''), args.get('destination', '') or os.path.dirname(os.path.abspath(args.get('source','')))
-        try:
-            source, dest = os.path.abspath(source), os.path.abspath(dest)
-            os.makedirs(dest, exist_ok=True)
-            with zipfile.ZipFile(source, 'r') as zf:
-                names = zf.namelist(); zf.extractall(dest)
-            return f"✅ Extracted {len(names)} files to: {dest}"
-        except Exception as e: return f"[ERROR] zip_extract: {e}"
+        def _extract_sync():
+            try:
+                src, dst = os.path.abspath(source), os.path.abspath(dest)
+                os.makedirs(dst, exist_ok=True)
+                import zipfile
+                with zipfile.ZipFile(src, 'r') as zf:
+                    names = zf.namelist(); zf.extractall(dst)
+                return f"✅ Extracted {len(names)} files to: {dst}"
+            except Exception as e: return f"[ERROR] zip_extract sync: {e}"
+
+        loop = asyncio.get_running_loop()
+        return await loop.run_in_executor(None, _extract_sync)
 
     async def tool_image_info(self, args):
+        """Get image info (non-blocking)."""
         path = args.get('path', '')
-        try:
-            from PIL import Image
-            with Image.open(path) as img:
-                w, h = img.size
-                return f"File: {path}\nFormat: {img.format}\nDimensions: {w}x{h} px\nSize: {os.path.getsize(path):,} bytes"
-        except Exception as e: return f"File: {path}\n(Install Pillow for full metadata)"
+        def _img_sync():
+            try:
+                from PIL import Image
+                with Image.open(path) as img:
+                    w, h = img.size
+                    return f"File: {path}\nFormat: {img.format}\nDimensions: {w}x{h} px\nSize: {os.getsize(path):,} bytes"
+            except Exception as e: return f"File: {path}\n(Error: {e})"
+
+        loop = asyncio.get_running_loop()
+        return await loop.run_in_executor(None, _img_sync)
 
     async def tool_clipboard_get(self, args):
         try:
@@ -636,14 +732,19 @@ class SystemSkill(GalacticSkill):
         except Exception as e: return f"[ERROR] http_request: {e}"
 
     async def tool_qr_generate(self, args):
+        """Generate a QR code image (non-blocking)."""
         text = args.get('text', '')
-        try:
-            import qrcode
-            img = qrcode.make(text)
-            path = os.path.join('logs', f"qr_{int(time.time())}.png")
-            img.save(path)
-            return f"✅ QR Code saved to: {path}"
-        except Exception as e: return f"[ERROR] qr_generate: {e}"
+        def _qr_sync():
+            try:
+                import qrcode
+                img = qrcode.make(text)
+                path = os.path.join('logs', f"qr_{int(time.time())}.png")
+                img.save(path)
+                return f"✅ QR Code saved to: {path}"
+            except Exception as e: return f"[ERROR] qr_sync: {e}"
+
+        loop = asyncio.get_running_loop()
+        return await loop.run_in_executor(None, _qr_sync)
 
     async def tool_env_get(self, args):
         name = args.get('name', '')
@@ -654,22 +755,37 @@ class SystemSkill(GalacticSkill):
         os.environ[args['name']] = args['value']; return f"✅ Set {args['name']}"
 
     async def tool_kill_process_by_name(self, args):
+        """Kill all running processes matching a name (non-blocking)."""
         name = args.get('name', '').lower()
-        try:
-            import psutil
-            killed = []
-            for p in psutil.process_iter(['pid', 'name']):
-                if name in p.info['name'].lower():
-                    p.kill(); killed.append(f"{p.info['name']} ({p.pid})")
-            return f"✅ Killed: {', '.join(killed)}" if killed else "No matching processes."
-        except Exception as e: return f"[ERROR] kill_process: {e}"
+        def _kill_sync():
+            try:
+                import psutil
+                killed = []
+                for p in psutil.process_iter(['pid', 'name']):
+                    if name in (p.info['name'] or "").lower():
+                        try:
+                            p.kill(); killed.append(f"{p.info['name']} ({p.pid})")
+                        except: continue
+                return f"✅ Killed: {', '.join(killed)}" if killed else "No matching processes."
+            except Exception as e: return f"[ERROR] kill_sync: {e}"
+
+        loop = asyncio.get_running_loop()
+        return await loop.run_in_executor(None, _kill_sync)
 
     async def tool_color_pick(self, args):
+        """Sample the pixel color at exact screen coordinates (non-blocking)."""
         try:
-            import pyautogui
-            x, y = args.get('x',0), args.get('y',0)
-            c = pyautogui.screenshot().getpixel((x, y))
-            return f"Color at ({x},{y}): RGB{c}"
+            x, y = int(args.get('x', 0)), int(args.get('y', 0))
+            def _color_sync():
+                try:
+                    import pyautogui
+                    # Sample color at x, y
+                    c = pyautogui.screenshot().getpixel((x, y))
+                    return f"Color at ({x},{y}): RGB{c}"
+                except Exception as e: return f"[ERROR] color_sync: {e}"
+
+            loop = asyncio.get_running_loop()
+            return await loop.run_in_executor(None, _color_sync)
         except Exception as e: return f"[ERROR] color_pick: {e}"
 
     async def tool_text_transform(self, args):
@@ -680,34 +796,59 @@ class SystemSkill(GalacticSkill):
         return f"[ERROR] Unknown operation: {op}"
 
     async def tool_read_pdf(self, args):
+        """Extract text from PDF (non-blocking)."""
         path = args.get('path', '')
-        try:
-            import pdfplumber
-            with pdfplumber.open(path) as pdf:
-                return "\n".join([p.extract_text() for p in pdf.pages])
-        except Exception as e: return f"[ERROR] read_pdf: {e}"
+        def _pdf_sync():
+            try:
+                import pdfplumber
+                with pdfplumber.open(path) as pdf:
+                    return "\n".join([p.extract_text() or "" for p in pdf.pages])
+            except Exception as e: return f"[ERROR] pdf_sync: {e}"
+
+        loop = asyncio.get_running_loop()
+        return await loop.run_in_executor(None, _pdf_sync)
 
     async def tool_read_csv(self, args):
-        import csv
-        try:
-            with open(args['path'], 'r') as f:
-                return json.dumps(list(csv.DictReader(f)), indent=2)
-        except Exception as e: return f"[ERROR] read_csv: {e}"
+        """Read CSV (non-blocking)."""
+        path, limit = args.get('path', ''), args.get('limit', 100)
+        def _csv_sync():
+            try:
+                import csv
+                with open(path, 'r', encoding='utf-8', errors='replace') as f:
+                    rows = list(csv.DictReader(f))
+                    return json.dumps(rows[:limit], indent=2)
+            except Exception as e: return f"[ERROR] csv_sync: {e}"
+
+        loop = asyncio.get_running_loop()
+        return await loop.run_in_executor(None, _csv_sync)
 
     async def tool_write_csv(self, args):
-        import csv
-        try:
-            with open(args['path'], 'w', newline='') as f:
-                w = csv.DictWriter(f, fieldnames=args['rows'][0].keys())
-                w.writeheader(); w.writerows(args['rows'])
-            return "✅ Wrote CSV."
-        except Exception as e: return f"[ERROR] write_csv: {e}"
+        """Write JSON rows to a CSV file (non-blocking)."""
+        path, rows = args.get('path', ''), args.get('rows', [])
+        def _csv_write_sync():
+            try:
+                if not rows: return "[ERROR] No rows to write."
+                import csv
+                with open(path, 'w', newline='', encoding='utf-8') as f:
+                    w = csv.DictWriter(f, fieldnames=rows[0].keys())
+                    w.writeheader(); w.writerows(rows)
+                return f"✅ Wrote {len(rows)} rows to {path}"
+            except Exception as e: return f"[ERROR] csv_write_sync: {e}"
+
+        loop = asyncio.get_running_loop()
+        return await loop.run_in_executor(None, _csv_write_sync)
 
     async def tool_read_excel(self, args):
-        try:
-            import pandas as pd
-            return pd.read_excel(args['path']).to_json(orient='records')
-        except Exception as e: return f"[ERROR] read_excel: {e}"
+        """Read Excel file (.xlsx) and return contents as JSON rows (non-blocking)."""
+        path = args.get('path', '')
+        def _excel_sync():
+            try:
+                import pandas as pd
+                return pd.read_excel(path).to_json(orient='records')
+            except Exception as e: return f"[ERROR] excel_sync: {e}"
+
+        loop = asyncio.get_running_loop()
+        return await loop.run_in_executor(None, _excel_sync)
 
     async def _git_exec(self, cmd, path=None):
         cwd = path or self.core.config.get('paths', {}).get('workspace', '.')
@@ -726,17 +867,110 @@ class SystemSkill(GalacticSkill):
     async def tool_process_start(self, args):
         cmd = args.get('command', '')
         sid = args.get('session_id', str(uuid.uuid4())[:8])
+        if not hasattr(self, '_active_processes'):
+            self._active_processes = {}
+            
+        if sid in self._active_processes and self._active_processes[sid]['process'].returncode is None:
+            return f"[ERROR] Session ID {sid} is already running."
+            
         try:
             p = await asyncio.create_subprocess_exec('powershell', '-Command', cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-            return f"✅ Process started. SID: {sid}"
+            
+            out_buf = []
+            err_buf = []
+            
+            async def read_stream(stream, buf):
+                while True:
+                    line = await stream.readline()
+                    if not line: break
+                    buf.append(line.decode('utf-8', errors='replace'))
+                    if len(buf) > 1000: buf.pop(0)
+            
+            t_out = asyncio.create_task(read_stream(p.stdout, out_buf))
+            t_err = asyncio.create_task(read_stream(p.stderr, err_buf))
+            
+            p_info = {
+                'process': p,
+                'cmd': cmd,
+                'out_buf': out_buf,
+                'err_buf': err_buf,
+                'tasks': [t_out, t_err],
+                'start_time': time.time()
+            }
+            self._active_processes[sid] = p_info
+            self._active_processes['latest'] = p_info # Alias for easier waiting
+            
+            return f"✅ Process started in background. SID: {sid}\nUse process_status or process_wait with SID 'latest' to check output."
         except Exception as e: return f"[ERROR] process_start: {e}"
 
     async def tool_process_status(self, args):
-        return "Process status tracking not implemented in this skill yet."
+        sid = args.get('session_id', '') or 'latest'
+        if not hasattr(self, '_active_processes') or sid not in self._active_processes:
+            return f"[ERROR] No active process found with SID: {sid}"
+
+        p_info = self._active_processes[sid]
+        p = p_info['process']
+
+        status = "RUNNING"
+        if p.returncode is not None:
+            status = f"EXITED with code {p.returncode}"
+            if p.returncode != 0:
+                status += " [FAILED]"
+
+        out_tail = "".join(p_info['out_buf'][-50:])
+        err_tail = "".join(p_info['err_buf'][-50:])
+
+        res = f"--- Process Status for {sid} ---\nCommand: {p_info['cmd'][:100]}\nStatus: {status}\nUptime: {int(time.time() - p_info['start_time'])}s\n"
+        if out_tail: res += f"\n--- STDOUT (Last 50 lines) ---\n{out_tail.strip()}"
+        if err_tail: res += f"\n--- STDERR (Last 50 lines) ---\n{err_tail.strip()}"
+        if not out_tail and not err_tail: res += "\n(No output captured yet)"
+
+        return res
 
     async def tool_process_kill(self, args):
-        return "Process kill by SID not implemented in this skill yet."
+        sid = args.get('session_id', '') or 'latest'
+        if not hasattr(self, '_active_processes') or sid not in self._active_processes:
+            return f"[ERROR] No active process found with SID: {sid}"
 
+        p_info = self._active_processes[sid]
+        p = p_info['process']
+        if p.returncode is not None:
+            return f"Process {sid} already exited with code {p.returncode}."
+
+        try:
+            if platform.system() == 'Windows':
+                # Kill process tree on Windows to prevent orphaned children (like nested powershells)
+                subprocess.run(['taskkill', '/F', '/T', '/PID', str(p.pid)], capture_output=True)
+            else:
+                p.kill()
+            return f"✅ Killed process {sid} (and any child processes)."
+        except Exception as e:
+            return f"[ERROR] Failed to kill {sid}: {e}"
+
+    async def tool_process_wait(self, args):
+        sid = args.get('session_id', '') or 'latest'
+        timeout = int(args.get('timeout', 120))
+        timeout = min(timeout, 600)  # Max 10 minutes
+
+        if not hasattr(self, '_active_processes') or sid not in self._active_processes:
+            return f"[ERROR] No active process found with SID: {sid}"
+
+        p_info = self._active_processes[sid]
+        p = p_info['process']
+
+        start_wait = time.time()
+        while p.returncode is None:
+            if time.time() - start_wait > timeout:
+                return f"[TIMEOUT] Process {sid} is still running after {timeout} seconds.\nConsider using process_status to check progress, or process_kill if it's stuck."
+            await asyncio.sleep(1)
+
+        # Give a moment for the output buffers to catch up
+        await asyncio.sleep(0.5)
+        status_report = await self.tool_process_status({'session_id': sid})
+
+        if p.returncode != 0:
+            return f"⚠️ PROCESS FAILED (Exit Code {p.returncode})\n\n{status_report}"
+        return f"✅ PROCESS COMPLETED SUCCESSFULLY\n\n{status_report}"
     async def tool_memory_search(self, args):
         query = args.get('query', '')
         try:
@@ -771,3 +1005,87 @@ class SystemSkill(GalacticSkill):
         try:
             return await self.core.gateway.tool_send_telegram({'message': msg})
         except: return "[ERROR] Core send_telegram failed."
+
+    async def tool_grep_search(self, args):
+        """Search file contents (non-blocking)."""
+        pattern = args.get('pattern')
+        path = args.get('path', '.') or '.'
+        file_pattern = args.get('file_pattern', '*')
+        max_results = int(args.get('max_results', 50))
+
+        def _grep_sync():
+            try:
+                import fnmatch
+                base = os.path.abspath(path)
+                regex = re.compile(pattern, re.IGNORECASE)
+                matches = []
+                
+                # Directories to skip
+                skip_dirs = {'.git', '__pycache__', 'node_modules', 'venv', '.venv'}
+                
+                for root, dirs, files in os.walk(base):
+                    # Skip unwanted directories
+                    dirs[:] = [d for d in dirs if d not in skip_dirs]
+                    
+                    for filename in files:
+                        if not fnmatch.fnmatch(filename, file_pattern):
+                            continue
+                            
+                        file_path = os.path.join(root, filename)
+                        
+                        # Skip binary files/large files
+                        if os.path.getsize(file_path) > 1_000_000: # 1MB limit for grep
+                            continue
+                            
+                        try:
+                            with open(file_path, 'r', encoding='utf-8', errors='ignore') as f:
+                                for i, line in enumerate(f, 1):
+                                    if regex.search(line):
+                                        rel_path = os.path.relpath(file_path, base)
+                                        matches.append(f"{rel_path}:{i}: {line.strip()}")
+                                        if len(matches) >= max_results:
+                                            return matches
+                        except: continue
+                return matches
+            except Exception as e: return [f"[ERROR] grep_sync: {e}"]
+
+        loop = asyncio.get_running_loop()
+        results = await loop.run_in_executor(None, _grep_sync)
+        if isinstance(results, str): return results
+        if not results:
+            return f"No matches found for '{pattern}' in {path}"
+        
+        output = "\n".join(results)
+        if len(results) >= max_results:
+            output += f"\n\n--- (Reached limit of {max_results} results) ---"
+        return f"Found {len(results)} match(es):\n{output}"
+
+    async def tool_code_outline(self, args):
+        """Analyze Python file structure using AST (non-blocking)."""
+        path = args.get('path')
+        if not path: return "[ERROR] Provide a path."
+        
+        def _outline_sync():
+            try:
+                with open(path, "r", encoding="utf-8") as f:
+                    tree = ast.parse(f.read())
+                
+                outline = []
+                for node in ast.walk(tree):
+                    if isinstance(node, ast.ClassDef):
+                        outline.append(f"CLASS: {node.name} (line {node.lineno})")
+                    elif isinstance(node, ast.FunctionDef):
+                        # Simple way to check if it's a method
+                        outline.append(f"  FUNC: {node.name} (line {node.lineno})")
+                
+                # Sort by line number for better readability
+                def get_line(s):
+                    m = re.search(r"line (\d+)", s)
+                    return int(m.group(1)) if m else 0
+                
+                outline.sort(key=get_line)
+                return "\n".join(outline) if outline else "No classes or functions found."
+            except Exception as e: return f"[ERROR] code_outline: {e}"
+
+        loop = asyncio.get_running_loop()
+        return await loop.run_in_executor(None, _outline_sync)

@@ -55,7 +55,7 @@ class OllamaManager:
             return self._cached_health
 
         try:
-            async with httpx.AsyncClient(timeout=3.0) as client:
+            async with httpx.AsyncClient(timeout=10.0) as client:
                 resp = await client.get(f"{self.base_url}/api/version")
                 healthy = resp.status_code == 200
         except Exception:

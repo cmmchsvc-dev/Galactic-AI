@@ -43,7 +43,9 @@ class TelegramBridge:
         self.offset = 0
         self.client = httpx.AsyncClient(timeout=60.0)
         self.start_time = time.time()
-        self.thinking_level = "LOW"
+        # Sync thinking_level from gateway/config on startup
+        gw = getattr(core, 'gateway', None)
+        self.thinking_level = (getattr(gw, 'thinking_level', 'low') if gw else 'low').upper()
         self.verbose = False
         self.pending_api_key = {}  # {chat_id: {"provider": str, "model": str}}
         self._active_tasks = []  # Track spawned asyncio tasks for /stop
@@ -254,7 +256,10 @@ class TelegramBridge:
 
     async def get_think_menu(self):
         text = f"🧠 **Cognitive Control**\nCurrent: `{self.thinking_level}`\nChoose reasoning depth:"
-        buttons = [[{"text": "Low (Fast) ⚡️", "callback_data": "think_low"}, {"text": "High (Deep) 🧠", "callback_data": "think_high"}]]
+        buttons = [
+            [{"text": "OFF", "callback_data": "think_off"}, {"text": "LOW ⚡️", "callback_data": "think_low"}],
+            [{"text": "MEDIUM", "callback_data": "think_medium"}, {"text": "HIGH 🧠", "callback_data": "think_high"}],
+        ]
         return text, {"inline_keyboard": buttons}
 
     async def get_model_menu(self, provider=None):
@@ -444,6 +449,19 @@ class TelegramBridge:
         elif data.startswith("think_"):
             level = data.split("_")[1].upper()
             self.thinking_level = level
+            # Sync with gateway
+            gw = getattr(self.core, 'gateway', None)
+            if gw:
+                gw.thinking_level = level.lower()
+            # Persist to config
+            try:
+                cfg = self.core.config
+                cfg.setdefault('models', {})
+                cfg['models']['thinking_level'] = level.lower()
+                if hasattr(self.core, 'web_deck') and hasattr(self.core.web_deck, '_save_config'):
+                    self.core.web_deck._save_config(cfg)
+            except Exception:
+                pass
             text, markup = await self.get_think_menu()
             await self.client.post(
                 f"{self.api_url}/editMessageText",
