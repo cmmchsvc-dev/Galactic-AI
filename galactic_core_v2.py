@@ -101,7 +101,7 @@ class GalacticCore:
                         migrated = True
 
         # Ensure system section has newer keys
-        sys_defaults = {'update_check_interval': 21600, 'version': '1.1.2'}
+        sys_defaults = {'update_check_interval': 21600, 'version': '1.3.0'}
         if 'system' not in config:
             config['system'] = {'name': 'Galactic AI', 'port': 9999}
             config['system'].update(sys_defaults)
@@ -124,7 +124,7 @@ class GalacticCore:
 
     async def setup_systems(self):
         """Initialize core sub-systems."""
-        from gateway_v2 import GalacticGateway
+        from gateway_v3 import GalacticGateway
         from memory_module_v2 import GalacticMemory
         from telegram_bridge import TelegramBridge
         from web_deck import GalacticWebDeck
@@ -134,7 +134,7 @@ class GalacticCore:
         self.memory = GalacticMemory(self)
         self.gateway = GalacticGateway(self)
         # Cost tracking (persistent JSONL)
-        from gateway_v2 import CostTracker
+        from gateway_v3 import CostTracker
         logs_dir = self.config.get('paths', {}).get('logs', './logs')
         self.cost_tracker = CostTracker(logs_dir)
         self.model_manager = ModelManager(self)
@@ -208,6 +208,7 @@ class GalacticCore:
 
         # Core skills — add entries here as plugins are migrated
         CORE_SKILLS = [
+            ('skills.core.watchdog',         'WatchdogSkill'),
             ('skills.core.shell_executor',   'ShellSkill'),
             ('skills.core.desktop_tool',     'DesktopSkill'),
             ('skills.core.chrome_bridge',    'ChromeBridgeSkill'),   # Phase 3

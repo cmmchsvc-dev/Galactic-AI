@@ -23,39 +23,6 @@ ERROR_UNKNOWN    = "UNKNOWN"
 TRANSIENT_ERRORS = {ERROR_RATE_LIMIT, ERROR_SERVER, ERROR_TIMEOUT, ERROR_NETWORK, ERROR_EMPTY}
 PERMANENT_ERRORS = {ERROR_AUTH, ERROR_QUOTA}
 
-# ── Provider capability tiers (lower = more capable, try first) ──────
-# Format: provider -> (tier, default_model)
-PROVIDER_TIERS = {
-    'anthropic':   (1, 'claude-sonnet-4-20250514'),
-    'google':      (1, 'gemini-2.5-flash'),
-    'openai':      (1, 'gpt-4o'),
-    'xai':         (2, 'grok-3'),
-    'groq':        (2, 'llama-4-scout-17b-16e-instruct'),
-    'nvidia':      (2, 'meta/llama-3.1-405b-instruct'),
-    'mistral':     (2, 'mistral-large-latest'),
-    'deepseek':    (2, 'deepseek-chat'),
-    'cerebras':    (3, 'llama3.1-70b'),
-    'openrouter':  (3, 'anthropic/claude-sonnet-4.6'),
-    'huggingface': (3, 'Qwen/Qwen3-235B-A22B'),
-    'kimi':        (3, 'moonshotai/kimi-k2.5'),
-    'zai':         (3, 'z-ai/glm5'),
-    'minimax':     (3, 'minimaxai/minimax-m2.1'),
-    'ollama':      (9, None),   # Local fallback — always last resort
-}
-
-# Default cooldown durations (seconds) per error type
-DEFAULT_COOLDOWNS = {
-    ERROR_RATE_LIMIT: 60,
-    ERROR_SERVER:     30,
-    ERROR_TIMEOUT:    10,
-    ERROR_AUTH:       86400,
-    ERROR_QUOTA:      3600,
-    ERROR_NETWORK:    15,
-    ERROR_EMPTY:      5,
-    ERROR_UNKNOWN:    10,
-}
-
-
 class ModelManager:
     """
     Manages model selection with primary/fallback system.
@@ -63,12 +30,49 @@ class ModelManager:
     Provides an intelligent multi-level fallback chain.
     """
 
+    # Default cooldown durations (seconds) per error type
+    DEFAULT_COOLDOWNS = {
+        ERROR_RATE_LIMIT: 60,
+        ERROR_SERVER:     30,
+        ERROR_TIMEOUT:    10,
+        ERROR_AUTH:       86400,
+        ERROR_QUOTA:      3600,
+        ERROR_NETWORK:    15,
+        ERROR_EMPTY:      5,
+        ERROR_UNKNOWN:    10,
+    }
+
     def __init__(self, core):
         self.core = core
         self.config_path = core.config_path
+        
+        # Initialize PROVIDER_TIERS with safe defaults
+        self.provider_tiers = {
+            'google':      (1, 'gemini-2.5-flash'),
+            'openai':      (1, 'gpt-4o'),
+            'deepseek':    (2, 'deepseek-chat'),
+            'mistral':     (2, 'mistral-large-latest'),
+            'openrouter':  (3, 'google/gemini-2.5-flash'),
+            'ollama':      (9, None),
+        }
+        
+        # Mapping: task_type -> (provider, model_or_None)
+        # model=None means "use best available discovered Ollama model"
+        self.smart_routing_table = {
+            "coding":    ("deepseek",  "deepseek-chat"),
+            "reasoning": ("deepseek",  "deepseek-reasoner"),
+            "creative":  ("openai",    "gpt-4.1"),
+            "local":     ("ollama",    None),
+            "quick":     ("google",    "gemini-2.5-flash"),
+            "vision":    ("google",    "gemini-2.5-flash"),
+            "math":      ("openai",    "o3-mini"),
+            "chat":      ("google",    "gemini-2.5-flash"),
+        }
+        
+        self._load_fallback_policy_from_yaml()
 
         # Load model config
-        model_config = core.config.get('models', {})
+        model_config = self.core.config.get('models', {})
 
         self.primary_provider = model_config.get('primary_provider', 'google')
         self.primary_model = model_config.get('primary_model', 'gemini-2.5-flash')
@@ -107,6 +111,52 @@ class ModelManager:
         # ── Smart routing state (restored after each speak() call) ──
         self._routed = False           # True if auto_route() switched the model
         self._pre_route_state = None   # {'provider', 'model', 'api_key'} before routing
+
+    def _load_fallback_policy_from_yaml(self):
+        """Load fallback tiers and smart routing from config/models.yaml if available."""
+        models_yaml_path = os.path.join(os.path.dirname(self.config_path), 'config', 'models.yaml')
+        if not os.path.exists(models_yaml_path):
+            return
+            
+        try:
+            with open(models_yaml_path, 'r', encoding='utf-8') as f:
+                models_data = yaml.safe_load(f)
+                
+            # 1. Load Fallback Tiers
+            policy = models_data.get('fallback_policy', {})
+            tiers_config = policy.get('tiers', {})
+            
+            if tiers_config:
+                new_tiers = {}
+                for provider, cfg in tiers_config.items():
+                    if isinstance(cfg, dict):
+                        new_tiers[provider] = (cfg.get('tier', 3), cfg.get('default_model'))
+                    elif isinstance(cfg, (list, tuple)) and len(cfg) == 2:
+                        new_tiers[provider] = tuple(cfg)
+                
+                if new_tiers:
+                    self.provider_tiers = new_tiers
+                    import logging
+                    logging.info(f"Loaded {len(new_tiers)} provider tiers from models.yaml")
+                    
+            # 2. Load Smart Routing Table
+            smart_cfg = models_data.get('smart_routing', {})
+            if smart_cfg:
+                new_routing = {}
+                for task, cfg in smart_cfg.items():
+                    if isinstance(cfg, dict):
+                        new_routing[task] = (cfg.get('provider'), cfg.get('model'))
+                    elif isinstance(cfg, (list, tuple)) and len(cfg) == 2:
+                        new_routing[task] = tuple(cfg)
+                
+                if new_routing:
+                    self.smart_routing_table = new_routing
+                    import logging
+                    logging.info(f"Loaded {len(new_routing)} smart routing entries from models.yaml")
+                    
+        except Exception as e:
+            import logging
+            logging.error(f"Error loading policy from models.yaml: {e}")
 
     # ─────────────────────────────────────────────────────────────────
     # Error Classification
@@ -177,7 +227,7 @@ class ModelManager:
         providers_cfg = self.core.config.get('providers', {})
         chain = []
 
-        for provider, (tier, default_model) in sorted(PROVIDER_TIERS.items(), key=lambda x: x[1][0]):
+        for provider, (tier, default_model) in sorted(self.provider_tiers.items(), key=lambda x: x[1][0]):
             # Skip primary and configured fallback — they're handled before the chain
             if provider == self.primary_provider:
                 continue
@@ -250,7 +300,7 @@ class ModelManager:
 
         # Set cooldown based on error type
         cooldown_secs = self.cooldown_config.get(
-            error_type, DEFAULT_COOLDOWNS.get(error_type, 10)
+            error_type, self.DEFAULT_COOLDOWNS.get(error_type, 10)
         )
         health['cooldown_until'] = datetime.now() + timedelta(seconds=cooldown_secs)
 
@@ -483,61 +533,6 @@ class ModelManager:
     # Smart Model Routing (Galactic Exclusive)
     # ─────────────────────────────────────────────────────────────────
 
-    # Mapping: task_type -> (provider, model_or_None)
-    # model=None means "use best available discovered Ollama model"
-    SMART_ROUTING_TABLE = {
-        "coding":    ("nvidia",    "qwen/qwen3-coder-480b-a35b-instruct"),
-        "reasoning": ("nvidia",    "deepseek-ai/deepseek-v3.2"),
-        "creative":  ("xai",       "grok-4"),
-        "local":     ("ollama",    None),
-        "quick":     ("groq",      "llama-4-scout-17b-16e-instruct"),
-        "vision":    ("google",    "gemini-2.5-flash"),
-        "math":      ("openai",    "o3-mini"),
-        "chat":      ("google",    "gemini-2.5-flash"),
-    }
-
-    SMART_ROUTING_KEYWORDS = {
-        "coding": ["write code", "debug", "python", "javascript", "typescript", "script",
-                   "function", "class", "implement", "fix this code", "refactor", "compile"],
-        "reasoning": ["analyze", "reason through", "step by step", "think about", "evaluate",
-                      "compare", "pros and cons", "should i", "logical"],
-        "creative": ["write a story", "poem", "creative", "fiction", "imagine", "brainstorm",
-                     "generate ideas", "song lyrics"],
-        "local": ["local", "offline", "private", "no cloud", "on-device", "ollama"],
-        "quick": ["quick", "fast", "briefly", "short answer", "tldr", "summarize in one",
-                  "one sentence", "brief"],
-        "vision": ["image", "screenshot", "picture", "photo", "analyze this image", "what do you see"],
-    }
-
-    def classify_task(self, user_input: str) -> str:
-        """Classify a user message into a task type for smart routing.
-
-        Strips attached file content (Telegram documents, pasted code blocks)
-        so classification is based on the user's intent, not file contents.
-        """
-        text = user_input
-
-        # Strip Telegram-style attached file blocks: "[Attached file: X]\n---\n...\n---"
-        import re
-        text = re.sub(
-            r'\[Attached file:[^\]]*\]\s*\n-{3,}\n.*?\n-{3,}',
-            '', text, flags=re.DOTALL
-        )
-
-        # Strip markdown code blocks (``` ... ```)
-        text = re.sub(r'```[\s\S]*?```', '', text)
-
-        # If nothing left after stripping, default (don't classify based on file content)
-        text = text.strip()
-        if not text:
-            return "default"
-
-        lower = text.lower()
-        for task_type, keywords in self.SMART_ROUTING_KEYWORDS.items():
-            if any(kw in lower for kw in keywords):
-                return task_type
-        return "default"
-
     async def auto_route(self, user_input: str):
         """
         Temporarily switch to the best model for the detected task type.
@@ -547,7 +542,7 @@ class ModelManager:
             return  # Feature is opt-in
 
         task_type = self.classify_task(user_input)
-        routing = self.SMART_ROUTING_TABLE.get(task_type)
+        routing = self.smart_routing_table.get(task_type)
         if not routing or task_type == "default":
             return  # No change for unclassified tasks
 
