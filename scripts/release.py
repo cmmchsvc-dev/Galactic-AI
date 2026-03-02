@@ -62,7 +62,9 @@ INCLUDE_LIST = [
     "spinner.py",
     "splash.py",
     "autopatch.py",
-    "fix_ollama.py"
+    "fix_ollama.py",
+    "launcher_desktop.py",
+    "build_exe.ps1",
 ]
 
 def sync_versions(new_version):
@@ -277,9 +279,24 @@ def build_packages(version, release_target_dir):
                 zipf.write(file_path, arcname)
     packages.append(zip_path)
     
-    # 2. Windows Zip (Copy of universal)
+    # 2. Windows Zip — universal files + GalacticAI.exe
     win_zip = os.path.join(release_target_dir, f"{zip_base}-windows.zip")
-    shutil.copy2(zip_path, win_zip)
+    exe_src = os.path.join(ROOT_DIR, "dist", "GalacticAI.exe")
+    if os.path.isfile(exe_src):
+        print(f"Creating Windows archive (with GalacticAI.exe): {os.path.basename(win_zip)}...")
+        with zipfile.ZipFile(win_zip, 'w', zipfile.ZIP_DEFLATED) as zipf:
+            # Include all the same project files
+            for root, _, files in os.walk(BUILD_DIR):
+                for file in files:
+                    file_path = os.path.join(root, file)
+                    arcname = os.path.relpath(file_path, BUILD_DIR)
+                    zipf.write(file_path, arcname)
+            # Bundle the exe at the root of the zip
+            zipf.write(exe_src, "GalacticAI.exe")
+        print(f"  Bundled GalacticAI.exe into Windows package.")
+    else:
+        print(f"  Warning: GalacticAI.exe not found in dist/ — Windows zip will mirror universal.")
+        shutil.copy2(zip_path, win_zip)
     packages.append(win_zip)
     
     # 3. macOS Zip (Copy of universal)
