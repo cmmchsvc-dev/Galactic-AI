@@ -97,6 +97,10 @@ class GalacticWebDeck:
         self.app.router.add_post('/api/resume/{uuid}', self.handle_resume)
         # Cancellation
         self.app.router.add_post('/api/cancel_task', self.handle_cancel_task)
+        # Subagent Hive Mind API
+        self.app.router.add_get('/api/subagents', self.handle_subagents)
+        self.app.router.add_delete('/api/subagents/{session_id}', self.handle_cancel_subagent)
+        self.app.router.add_post('/api/subagents/chain', self.handle_spawn_chain)
         # Chrome Bridge WebSocket — connects the Galactic Browser extension
         self.app.router.add_get('/ws/chrome_bridge', self.handle_chrome_bridge_ws)
         self.trace_buffer = []  # last 500 agent trace entries for persistence
@@ -160,6 +164,46 @@ class GalacticWebDeck:
             await self.core.log(f"🚫 User clicked CANCEL in Control Deck. Aborting {count} task(s)...", priority=2)
             return web.json_response({'ok': True, 'message': f'Cancellation requested for {count} task(s)'})
         return web.json_response({'ok': False, 'message': 'No active task to cancel'})
+
+    # ── Subagent Hive Mind API ───────────────────────────────────────────────
+
+    def _get_subagent_mgr(self):
+        for s in self.core.skills:
+            if s.skill_name == 'subagent_manager' and s.enabled:
+                return s
+        return None
+
+    async def handle_subagents(self, request):
+        """GET /api/subagents - List all active subagents."""
+        mgr = self._get_subagent_mgr()
+        if not mgr:
+            return web.json_response({'error': 'Subagent manager skill string not loaded/enabled'}, status=404)
+        return web.json_response(mgr.get_all_sessions())
+
+    async def handle_cancel_subagent(self, request):
+        """DELETE /api/subagents/{session_id}"""
+        mgr = self._get_subagent_mgr()
+        session_id = request.match_info.get('session_id')
+        if not mgr or not session_id:
+            return web.json_response({'error': 'Invalid request'}, status=400)
+        ok = mgr.cancel_session(session_id)
+        return web.json_response({'ok': ok})
+
+    async def handle_spawn_chain(self, request):
+        """POST /api/subagents/chain"""
+        mgr = self._get_subagent_mgr()
+        if not mgr:
+            return web.json_response({'error': 'Subagent manager strictly disabled'}, status=404)
+        try:
+            data = await request.json()
+            steps = data.get('steps', [])
+            if not steps:
+                return web.json_response({'error': 'No steps provided'}, status=400)
+            chain_id = await mgr.spawn_chain(steps)
+            return web.json_response({'ok': True, 'chain_id': chain_id})
+        except Exception as e:
+            return web.json_response({'error': str(e)}, status=500)
+
 
     async def handle_index(self, request):
         html = r"""<!DOCTYPE html>
@@ -437,6 +481,21 @@ body{background:var(--bg);color:var(--text);font-family:var(--font);height:100vh
 .trace-expand-btn:hover{color:var(--cyan)}
 .trace-tool-badge{display:inline-block;padding:2px 8px;background:rgba(241,250,140,0.13);border-radius:5px;font-size:0.82rem;color:var(--yellow);margin-right:5px;font-family:var(--mono)}
 .trace-ts{font-size:0.66rem;color:var(--dim);position:absolute;top:7px;right:9px}
+
+/* ── SUBAGENTS / CHAIN BUILDER ───────────────────────────────────────────── */
+.subagent-card { background:var(--bg3); border:1px solid var(--border); border-radius:10px; padding:12px; margin-bottom:10px; font-size:0.85rem; }
+.subagent-card .header { display:flex; justify-content:space-between; align-items:center; margin-bottom:8px; }
+.subagent-card .sid { font-family:var(--mono); color:var(--cyan); font-size:0.8rem; }
+.subagent-card .status { font-weight:bold; padding:2px 8px; border-radius:12px; font-size:0.75rem; text-transform:uppercase; }
+.subagent-card .status.running { background:rgba(0,243,255,0.1); color:var(--cyan); }
+.subagent-card .status.done { background:rgba(0,255,136,0.1); color:var(--green); }
+.subagent-card .status.error, .subagent-card .status.cancelled { background:rgba(255,69,69,0.1); color:var(--red); }
+.subagent-card .task { color:var(--text); margin-bottom:8px; line-height:1.4; }
+.subagent-card .progress { color:var(--dim); font-size:0.8rem; margin-bottom:8px; }
+.subagent-card .logs { background:var(--bg2); border:1px solid var(--border); border-radius:6px; padding:8px; font-family:var(--mono); font-size:0.75rem; max-height:100px; overflow-y:auto; color:var(--dim); }
+.subagent-card .actions { margin-top:10px; display:flex; gap:8px; justify-content:flex-end; }
+.chain-step { background:var(--bg2); border:1px solid var(--border); border-radius:8px; padding:10px; margin-bottom:10px; position:relative; }
+.chain-step-remove { position:absolute; top:8px; right:8px; cursor:pointer; color:var(--red); font-size:1.2em; line-height:1; }
 
 /* ── CRT SCANLINES (toggled via body.crt class) ──────────────────────────── */
 body.crt::after{content:"";position:fixed;inset:0;background:repeating-linear-gradient(0deg,transparent,transparent 2px,rgba(0,0,0,0.18) 2px,rgba(0,0,0,0.18) 4px);pointer-events:none;z-index:9000;animation:flicker 8s infinite}
@@ -1363,30 +1422,47 @@ body.glow-max .status-dot{box-shadow:0 0 14px var(--green),0 0 28px rgba(0,255,1
     </div>
 
     <div class="tab-pane" id="tab-thinking">
-      <div id="thinking-pane">
-        <div id="thinking-controls" style="border-bottom:1px solid rgba(255,255,255,0.05); padding-bottom: 8px;">
-          <input id="thinking-filter" type="text" placeholder="Filter traces..." oninput="filterTraces()">
-          <select id="thinking-phase-filter" onchange="filterTraces()">
-            <option value="">All Phases</option>
-            <option value="thinking">Thinking</option>
-            <option value="tool_call">Tool Calls</option>
-            <option value="tool_result">Tool Results</option>
-            <option value="final_answer">Final Answers</option>
-            <option value="llm_response">LLM Response</option>
-          </select>
-          <button class="btn secondary" onclick="clearTraces()">Clear</button>
-          <button class="btn secondary" id="thinking-auto-scroll-btn" onclick="toggleThinkingAutoScroll()">Auto-scroll: ON</button>
-          <span id="thinking-turn-counter">Turns: 0</span>
+      <div style="display:flex; height:100%; overflow:hidden;">
+        <!-- TRACES -->
+        <div id="thinking-pane" style="flex:1; display:flex; flex-direction:column; border-right:1px solid var(--border);">
+          <div id="thinking-controls" style="border-bottom:1px solid rgba(255,255,255,0.05); padding-bottom: 8px;">
+            <input id="thinking-filter" type="text" placeholder="Filter traces..." oninput="filterTraces()">
+            <select id="thinking-phase-filter" onchange="filterTraces()">
+              <option value="">All Phases</option>
+              <option value="thinking">Thinking</option>
+              <option value="tool_call">Tool Calls</option>
+              <option value="tool_result">Tool Results</option>
+              <option value="final_answer">Final Answers</option>
+              <option value="llm_response">LLM Response</option>
+            </select>
+            <button class="btn secondary" onclick="clearTraces()">Clear</button>
+            <button class="btn secondary" id="thinking-auto-scroll-btn" onclick="toggleThinkingAutoScroll()">Auto-scroll: ON</button>
+            <span id="thinking-turn-counter">Turns: 0</span>
+          </div>
+          <div id="thinking-controls" style="background:var(--bg3); padding: 8px 16px;">
+            <span style="font-size: 0.85em; color: var(--dim);">Resumable Workflows:</span>
+            <select id="runs-list" style="padding:4px 8px;background:var(--bg);border:1px solid var(--border);border-radius:4px;color:var(--text);font-size:0.8em;flex:1;">
+              <option value="">-- No runs found --</option>
+            </select>
+            <button class="btn secondary" style="padding:4px 10px; font-size: 0.8em;" onclick="resumeWorkflow()">▶ Resume</button>
+            <button class="btn secondary" style="padding:4px 10px; font-size: 0.8em;" onclick="loadRuns()">↻ Refresh</button>
+          </div>
+          <div id="thinking-scroll"></div>
         </div>
-        <div id="thinking-controls" style="background:var(--bg3); padding: 8px 16px;">
-          <span style="font-size: 0.85em; color: var(--dim);">Resumable Workflows:</span>
-          <select id="runs-list" style="padding:4px 8px;background:var(--bg);border:1px solid var(--border);border-radius:4px;color:var(--text);font-size:0.8em;flex:1;">
-            <option value="">-- No runs found --</option>
-          </select>
-          <button class="btn secondary" style="padding:4px 10px; font-size: 0.8em;" onclick="resumeWorkflow()">▶ Resume</button>
-          <button class="btn secondary" style="padding:4px 10px; font-size: 0.8em;" onclick="loadRuns()">↻ Refresh</button>
+        
+        <!-- HIVE MIND / SUBAGENTS -->
+        <div id="hive-mind-pane" style="width:380px; display:flex; flex-direction:column; background:var(--bg2);">
+          <div style="padding:16px; border-bottom:1px solid var(--border); display:flex; justify-content:space-between; align-items:center;">
+            <h3 style="color:var(--cyan); font-size:1rem; margin:0; letter-spacing:1px;">🕸️ HIVE MIND</h3>
+            <div>
+              <button class="btn secondary" style="padding:6px 10px; font-size:0.75rem;" onclick="refreshSubagents()">↻</button>
+              <button class="btn primary" style="padding:6px 10px; font-size:0.75rem;" onclick="openChainModal()">+ Chain</button>
+            </div>
+          </div>
+          <div id="subagents-list" style="flex:1; overflow-y:auto; padding:16px;">
+            <div style="color:var(--dim); font-size:0.85rem; text-align:center; margin-top:20px;">No active subagents.</div>
+          </div>
         </div>
-        <div id="thinking-scroll"></div>
       </div>
     </div>
 
@@ -1405,6 +1481,23 @@ body.glow-max .status-dot{box-shadow:0 0 14px var(--green),0 0 28px rgba(0,255,1
 
   </div><!-- /content -->
 </div><!-- /main -->
+
+<!-- CHAIN BUILDER MODAL -->
+<div id="chain-modal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,0.85);z-index:5000;align-items:center;justify-content:center;backdrop-filter:blur(4px)">
+  <div style="background:var(--bg2);border:1px solid var(--cyan);border-radius:16px;padding:28px;width:600px;max-width:95vw;max-height:90vh;display:flex;flex-direction:column;box-shadow:0 0 40px rgba(0,243,255,0.15)">
+    <h3 style="color:var(--cyan);margin-bottom:10px;font-size:1.1rem">⛓️ SPfAWN AGENT CHAIN</h3>
+    <p style="color:var(--dim);font-size:0.85rem;margin-bottom:16px">Define a sequence of subagents. Each agent's result is passed as context to the next.</p>
+    
+    <div id="chain-steps-container" style="flex:1;overflow-y:auto;padding-right:10px;margin-bottom:16px;"></div>
+    
+    <button class="btn secondary" style="margin-bottom:20px;width:100%;border-style:dashed;" onclick="addChainStep()">+ Add Step</button>
+    
+    <div class="modal-btns" style="flex-shrink:0;">
+      <button class="btn secondary" onclick="document.getElementById('chain-modal').style.display='none'">Cancel</button>
+      <button class="btn primary" onclick="submitChain()">Launch Chain 🚀</button>
+    </div>
+  </div>
+</div>
 
 <!-- TOOL MODAL -->
 <div id="tool-modal" onclick="closeToolModal(event)">
@@ -2102,6 +2195,10 @@ function connectWS() {
     } else if (p.type === 'chat_from_extension') {
       const ext = p.data || {};
       if (ext.data) appendUserMsg('[Browser] ' + ext.data);
+    } else if (p.type === 'subagent_update') {
+      updateSubagentUI(p.data);
+    } else if (p.type === 'subagent_done') {
+      updateSubagentUI(p.data);
     } else if (p.type === 'update_available') {
       const u = p.data || {};
       showToast(`🆕 Update available: v${u.latest} — Run ./update.ps1`, 'info', 30000);
@@ -3816,15 +3913,22 @@ function handleAgentTrace(data) {
     if (data.success === false) stopOrb();
   } else if (phase === 'session_abort') {
     stopOrb();
+    resetOrb(); // Force aggressive stop on abort
     label = 'ABORTED';
     html = escHtml(data.reason || 'max turns exceeded');
   } else if (phase === 'final_answer') {
     stopOrb();
+    resetOrb(); // Force aggressive stop on final answer
     label = 'FINAL ANSWER';
     html = escHtml((data.content || '').substring(0, 2000));
+  } else if (phase === 'error' || data.success === false) {
+    stopOrb();
   } else {
     html = escHtml(JSON.stringify(data).substring(0, 500));
   }
+
+  // Double check cleanup if error class attached
+  if (cls.includes('error')) stopOrb();
 
   entry.innerHTML =
     '<span class="trace-ts">' + ts + '</span>' +
@@ -3918,6 +4022,136 @@ async function resumeWorkflow() {
     }
   } catch (e) {
     showToast('Error resuming workflow', 'error', 3000);
+  }
+}
+
+// ── SUBAGENTS / HIVE MIND ──────────────────────────────────────────────────
+async function refreshSubagents() {
+  try {
+    const r = await authFetch('/api/subagents');
+    const dict = await r.json();
+    if (dict.error) {
+      document.getElementById('subagents-list').innerHTML = `<div style="padding:10px;color:var(--red);font-size:0.85em;">${dict.error}</div>`;
+      return;
+    }
+    
+    const list = Object.values(dict);
+    list.sort((a,b) => b.start_time - a.start_time);
+    
+    renderSubagents(list);
+  } catch(e) { console.error('refreshSubagents error:', e); }
+}
+
+function renderSubagents(list) {
+  const container = document.getElementById('subagents-list');
+  if (!list.length) {
+    container.innerHTML = `<div style="color:var(--dim); font-size:0.85rem; text-align:center; margin-top:20px;">No active subagents.</div>`;
+    return;
+  }
+  
+  let html = '';
+  for (const s of list) {
+    const logText = (s.log_lines || []).join('\n');
+    let chainInfo = '';
+    if (s.chain_id) {
+      chainInfo = `<div style="font-size:0.75rem; color:var(--pink); margin-bottom:5px;">⛓️ Chain ${s.chain_id.substring(0,6)} - Step ${s.chain_step + 1}</div>`;
+    }
+    
+    html += `
+      <div class="subagent-card" id="subagent-${s.session_id}">
+        <div class="header">
+          <div class="sid">${s.session_id.substring(0,8)}</div>
+          <div class="status ${s.status}">${s.status}</div>
+        </div>
+        ${chainInfo}
+        <div class="task">${escHtml(s.task)}</div>
+        <div class="progress">Progress: ${escHtml(s.progress || 'Initializing...')}</div>
+        <div class="logs" id="slog-${s.session_id}">${escHtml(logText)}</div>
+        <div class="actions">
+          ${s.status === 'running' ? `<button class="btn secondary" style="padding:4px 8px; font-size:0.75rem;" onclick="cancelSubagent('${s.session_id}')">Cancel</button>` : ''}
+        </div>
+      </div>
+    `;
+  }
+  container.innerHTML = html;
+  
+  // auto-scroll logs
+  list.forEach(s => {
+    const l = document.getElementById(`slog-${s.session_id}`);
+    if (l) l.scrollTop = l.scrollHeight;
+  });
+}
+
+function updateSubagentUI(s) {
+  // If the pane isn't visible, don't spam DOM updates.
+  const pane = document.getElementById('hive-mind-pane');
+  if (pane && pane.offsetParent !== null) {
+      refreshSubagents();
+  }
+}
+
+async function cancelSubagent(id) {
+  showToast('Cancelling subagent...', 'info');
+  try {
+    await authFetch('/api/subagents/' + id, {method: 'DELETE'});
+    setTimeout(refreshSubagents, 500);
+  } catch(e) { console.error(e); }
+}
+
+// ── CHAIN BUILDER ────────────────────────────────────────────────────────
+let chainStepCount = 0;
+
+function openChainModal() {
+  document.getElementById('chain-modal').style.display = 'flex';
+  document.getElementById('chain-steps-container').innerHTML = '';
+  chainStepCount = 0;
+  addChainStep();
+}
+
+function addChainStep() {
+  chainStepCount++;
+  const div = document.createElement('div');
+  div.className = 'chain-step';
+  div.id = `chain-step-${chainStepCount}`;
+  div.innerHTML = `
+    <div class="chain-step-remove" onclick="this.parentElement.remove()">&times;</div>
+    <div style="font-weight:bold; color:var(--cyan); margin-bottom:8px; font-size:0.85rem;">STEP <span class="step-num">${chainStepCount}</span></div>
+    <label style="display:block; font-size:0.75rem; color:var(--dim); margin-bottom:4px;">Task Definition (Prompt):</label>
+    <textarea class="step-task" rows="3" style="width:100%; padding:8px; border-radius:6px; background:var(--bg3); border:1px solid var(--border); color:var(--text); resize:vertical; font-family:var(--font); font-size:0.85rem;" placeholder="e.g. Research the latest news on..."></textarea>
+  `;
+  document.getElementById('chain-steps-container').appendChild(div);
+  updateStepNumbers();
+}
+
+function updateStepNumbers() {
+  const steps = document.querySelectorAll('.chain-step .step-num');
+  steps.forEach((el, idx) => el.textContent = idx + 1);
+}
+
+async function submitChain() {
+  const tasks = Array.from(document.querySelectorAll('.chain-step .step-task')).map(el => el.value.trim()).filter(v => v);
+  if (!tasks.length) {
+    showToast('Add at least one step with a task description.', 'error');
+    return;
+  }
+  
+  try {
+    const res = await authFetch('/api/subagents/chain', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ steps: tasks })
+    });
+    const data = await res.json();
+    if (data.ok) {
+      document.getElementById('chain-modal').style.display = 'none';
+      showToast(`Chain spawned: ${data.chain_id}`, 'success');
+      setTimeout(refreshSubagents, 500);
+    } else {
+      showToast('Chain failed: ' + data.error, 'error');
+    }
+  } catch(e) {
+    console.error(e);
+    showToast('Error spawning chain.', 'error');
   }
 }
 
@@ -4272,8 +4506,23 @@ try {
             if source == 'extension':
                 await self.core.relay.emit(3, "chat_from_extension", {"data": user_msg or '(no text)'})
 
-            # Forward to gateway — pass images to speak() if present
-            if attached_images:
+            # Non-blocking chat: if the main agent is busy, route to a quick-reply model
+            if getattr(self.core.gateway, '_speaking', False):
+                busy_task = getattr(self.core.gateway, '_current_task_desc', 'a background task')
+                quick_ctx  = (
+                    f"The main AI agent is currently busy working on: {busy_task}. "
+                    f"Give a brief, helpful quick reply to the following message. "
+                    f"Mention that the main agent is still working if relevant."
+                )
+                try:
+                    quick_reply = await self.core.gateway.speak_isolated(
+                        full_msg or f"[User attached {len(attached_images)} image(s)].",
+                        context=quick_ctx
+                    )
+                    response = f"⚡ **Quick Reply** *(main agent busy)*\n\n{quick_reply}"
+                except Exception:
+                    response = "⚡ *The main agent is busy — please wait for it to finish before sending this.*"
+            elif attached_images:
                 response = await self.core.gateway.speak(
                     full_msg or f"[User attached {len(attached_images)} image(s). Please describe and analyse them.]",
                     images=attached_images
@@ -4402,7 +4651,7 @@ try {
             'uptime_formatted': _fmt_uptime(uptime),
             'version': self.core.config.get('system', {}).get('version', '0.9.2'),
             'system_name': self.core.config.get('system', {}).get('name', 'Galactic AI'),
-            'personality': self.core.config.get('personality', {}).get('name', '--'),
+            'personality': getattr(self.core.gateway, 'personality', None).name if getattr(self.core.gateway, 'personality', None) else self.core.config.get('personality', {}).get('name', '--'),
             'tokens_in': self.core.gateway.total_tokens_in,
             'tokens_out': self.core.gateway.total_tokens_out,
 
@@ -5693,6 +5942,16 @@ try {
             return web.json_response({'error': 'Transcription failed — no Whisper API key configured'}, status=500)
         except Exception as e:
             return web.json_response({'error': str(e)}, status=500)
+
+    async def _broadcast(self, msg_dict):
+        """Send a JSON payload to all connected stream clients."""
+        import json
+        payload = json.dumps(msg_dict).encode('utf-8')
+        for adapter in self.core.clients:
+            try:
+                adapter.write(payload)
+            except Exception:
+                pass
 
     async def run(self):
         runner = web.AppRunner(self.app, access_log=None)
