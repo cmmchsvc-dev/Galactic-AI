@@ -11,6 +11,9 @@ All notable changes to Galactic AI are documented here.
 - **`code_outline` Tool**: Native Python AST parsing to show the structure of files (classes, functions, methods) with line numbers, enabling precise navigation.
 - **Advanced Agentic Protocol**: Replaced the basic tool instructions with a comprehensive Research → Plan → Implement → Verify methodology in `SOUL.md`.
 - **Few-Shot Intelligence Examples**: Updated system prompt templates with clear examples of how to use deep-research tools strategically.
+- **🖥️ Desktop GUI (`launcher_desktop.py`)**: Standalone Windows desktop application wrapping the Control Deck in a native window via `pywebview`. No browser needed — double-click `GalacticAI.exe` to launch. Includes auto-login so the password prompt is skipped on every subsequent launch.
+- **📦 Windows Standalone EXE (`GalacticAI.exe`)**: PyInstaller-packaged single-file executable for Windows. Built with `build_exe.ps1`. Ships as a dedicated asset on the GitHub Windows release. Console window included for real-time backend log visibility.
+- **Smart Config Discovery**: The desktop launcher automatically searches for `config.yaml` in the exe's directory and parent directory, so the exe works from `dist/` without needing to move files.
 
 ### Fixed
 - **Smart Model Routing Crash**: Restored the missing `classify_task` method in the `ModelManager` which was causing crashes when `smart_routing` was enabled. Added robust input cleaning to prevent attached files and code blocks from distorting the heuristic task classification.
@@ -19,6 +22,13 @@ All notable changes to Galactic AI are documented here.
 - **Ollama Thinking Injection**: Fixed a bug where `reasoning_effort` was being sent to Ollama (causing 400 errors). It now correctly injects `"think": true` into Ollama's `options` payload.
 - **Metadata Synchronization**: Fixed a bug where Telegram and the Control Deck were showing different thinking levels; now both read from a single gateway source.
 - **Skill Categorization**: Fixed missing category metadata in community skills (e.g., Gemini CLI) preventing them from showing up correctly in UI menus.
+- **Fallback Model Priority**: Fixed fallback mechanism not respecting `fallback_model` configured in `config.yaml` — now correctly prioritized in `gateway_v3._walk_fallback_chain`.
+- **Browser Extension Chat Relay**: Fixed Chrome Extension sidepanel chat not appearing in the Control Deck; added `chat_from_extension` WebSocket event relay.
+- **Smart Scroll (Chat/Logs/Thinking)**: All three tabs now use smart auto-scroll — stays at bottom unless you manually scroll up, then resumes when you scroll back down.
+- **Empty Logs Tab**: Fixed a critical bug where `addLog()` was writing to a non-existent DOM element (`log-window`) instead of the correct `logs-scroll` container. Logs now display in all modes.
+- **Version String Consistency**: Fixed hardcoded `v1.1.0` and `v1.2.1` version strings in `web_deck.py` login screen and topbar — now correctly shows `v1.3.0`.
+- **Signal Handler in GUI Mode**: Wrapped `signal.signal()` registration in a try/except to prevent `ValueError` crash when the backend runs in a non-main thread (required for desktop mode).
+- **Config Auto-Migration**: Added missing default sections/keys to `config.yaml` on startup for backward compatibility across all subsystems.
 
 ---
 
