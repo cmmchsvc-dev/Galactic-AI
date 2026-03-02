@@ -1,13 +1,41 @@
 # Centralized Models Configuration for Galactic AI
 # You can add new models here or set 'enabled: false' to hide them from the UI.
+
+# ── Fallback Policy ────────────────────────────────────────────────
+# Controls the automatic fallback behavior when the primary model fails.
+fallback_policy:
+  # Models listed here will be tried in order by tier (1 is highest).
+  # Only providers with valid API keys in config.yaml will be included.
+  tiers:
+    google:      { tier: 1, default_model: "gemini-2.5-flash" }
+    openai:      { tier: 1, default_model: "gpt-4o" }
+    deepseek:    { tier: 2, default_model: "deepseek-chat" }
+    mistral:     { tier: 2, default_model: "mistral-large-latest" }
+    openrouter:  { tier: 3, default_model: "google/gemini-2.5-flash" }
+    huggingface: { tier: 3, default_model: "Qwen/Qwen3-235B-A22B" }
+    kimi:        { tier: 3, default_model: "moonshotai/kimi-k2.5" }
+    ollama:      { tier: 9, default_model: null } # Local fallback
+
+# ── Smart Routing ──────────────────────────────────────────────────
+# Mapping: task_type -> (provider, model_or_None)
+smart_routing:
+  coding:    { provider: "deepseek", model: "deepseek-chat" } # Replaced nvidia
+  reasoning: { provider: "deepseek", model: "deepseek-reasoner" } # Replaced nvidia
+  creative:  { provider: "openai",   model: "gpt-4.1" } # Replaced xai
+  math:      { provider: "openai",   model: "o3-mini" }
+  vision:    { provider: "google",   model: "gemini-2.5-flash" }
+  chat:      { provider: "google",   model: "gemini-2.5-flash" }
+  quick:     { provider: "google",   model: "gemini-2.5-flash" } # Replaced groq
+  local:     { provider: "ollama",   model: null } # Picks best discovered model
+
 providers:
   anthropic:
     - id: "claude-opus-4-6"
       name: "Claude Opus 4.6 👑"
-      enabled: true
-    - id: "claude-sonnet-4-6"
-      name: "Claude Sonnet 4.6 🌟"
-      enabled: true
+      enabled: false # Disabled per user request
+    - id: "claude-sonnet-4.6"
+      name: "Claude Sonnet 4.6 🚀"
+      enabled: false # Disabled per user request
     - id: "claude-haiku-4-5"
       name: "Claude Haiku 4.5 ⚡"
       enabled: true

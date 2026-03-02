@@ -1,9 +1,9 @@
 # PROJECT STATE
 
-**Last Updated:** 2026-02-26 23:30
+**Last Updated:** 2026-03-02 23:30
 **Owner:** Chesley McDaniel (techno-hippie / Ches)
 **Repo Path:** C:\Users\Chesley\Galactic AI
-**Current Version:** v1.2.1 (The Control Update)
+**Current Version:** v1.3.0 (The Intelligence Update)
 
 ---
 
@@ -30,6 +30,7 @@ Galactic AI: Self-evolving AI platform w/ 155+ tools, skills ecosystem, Resumabl
 ---
 
 ## Milestones
+- [x] v1.3.0 The Intelligence Update (Agentic Code Intelligence, SOUL v2, Surgical Editing)
 - [x] v1.2.1 The Control Update (Centralized Model Manager, OpenClaw provider parity)
 - [x] v1.2.0 The Hivemind Update (Resumables, Oracle, CLI Bridge)
 - [x] v1.1.9 core reliability & streaming fixes
