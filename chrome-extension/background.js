@@ -37,6 +37,9 @@ function connect(token) {
   clearTimeout(reconnectTimer);
   reconnectDelay = 1000;
 
+  /* Reset storage immediately so pollers see the new state */
+  chrome.storage.local.set({ galactic_auth_failed: false });
+
   updateStoredStatus();
 
   const url = buildWsUrl(token);
@@ -172,31 +175,31 @@ chrome.storage.local.get(['galactic_token', 'galactic_auth_failed'], (data) => {
 
 async function handleCommand(id, command, args) {
   switch (command) {
-    case 'screenshot':    return await cmdScreenshot(args);
-    case 'navigate':      return await cmdNavigate(args);
-    case 'read_page':     return await cmdReadPage(args);
-    case 'find_element':  return await cmdFindElement(args);
-    case 'wait_for':      return await cmdWaitFor(args);
-    case 'click':         return await cmdClick(args);
-    case 'type':          return await cmdType(args);
-    case 'scroll':        return await cmdScroll(args);
-    case 'form_input':    return await cmdFormInput(args);
-    case 'execute_js':    return await cmdExecuteJS(args);
+    case 'screenshot': return await cmdScreenshot(args);
+    case 'navigate': return await cmdNavigate(args);
+    case 'read_page': return await cmdReadPage(args);
+    case 'find_element': return await cmdFindElement(args);
+    case 'wait_for': return await cmdWaitFor(args);
+    case 'click': return await cmdClick(args);
+    case 'type': return await cmdType(args);
+    case 'scroll': return await cmdScroll(args);
+    case 'form_input': return await cmdFormInput(args);
+    case 'execute_js': return await cmdExecuteJS(args);
     case 'get_page_text': return await cmdGetPageText(args);
-    case 'tabs_list':     return await cmdTabsList(args);
-    case 'tabs_create':   return await cmdTabsCreate(args);
-    case 'key_press':     return await cmdKeyPress(args);
-    case 'read_console':  return await cmdReadConsole(args);
-    case 'read_network':  return await cmdReadNetwork(args);
+    case 'tabs_list': return await cmdTabsList(args);
+    case 'tabs_create': return await cmdTabsCreate(args);
+    case 'key_press': return await cmdKeyPress(args);
+    case 'read_console': return await cmdReadConsole(args);
+    case 'read_network': return await cmdReadNetwork(args);
     case 'get_network_body': return await cmdGetNetworkBody(args);
-    case 'hover':         return await cmdHover(args);
-    case 'zoom':          return await cmdZoom(args);
-    case 'drag':          return await cmdDrag(args);
-    case 'right_click':   return await cmdRightClick(args);
-    case 'triple_click':  return await cmdTripleClick(args);
-    case 'upload_file':   return await cmdUploadFile(args);
+    case 'hover': return await cmdHover(args);
+    case 'zoom': return await cmdZoom(args);
+    case 'drag': return await cmdDrag(args);
+    case 'right_click': return await cmdRightClick(args);
+    case 'triple_click': return await cmdTripleClick(args);
+    case 'upload_file': return await cmdUploadFile(args);
     case 'resize_window': return await cmdResizeWindow(args);
-    default:              return { error: `Unknown command: ${command}` };
+    default: return { error: `Unknown command: ${command}` };
   }
 }
 
@@ -514,7 +517,7 @@ async function cmdUploadFile(args) {
             if (el) el.removeAttribute('data-galactic-uid');
           },
           args: [uid]
-        }).catch(() => {}); // best-effort cleanup
+        }).catch(() => { }); // best-effort cleanup
       }
     }
 
@@ -531,7 +534,7 @@ async function cmdUploadFile(args) {
             if (el) el.removeAttribute('data-galactic-uid');
           },
           args: [uid]
-        }).catch(() => {}); // best-effort cleanup
+        }).catch(() => { }); // best-effort cleanup
       }
     }
     return { error: `File upload failed: ${err.message || String(err)}` };
