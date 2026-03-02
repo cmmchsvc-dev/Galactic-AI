@@ -522,15 +522,19 @@ class GalacticCore:
             shutdown_event.set()
 
         # Windows uses signal.signal(); Unix can use loop.add_signal_handler()
-        if sys.platform == 'win32':
-            # On Windows, asyncio signal handling is limited — use signal module
-            def _win_handler(sig, frame):
-                _signal_handler()
-            signal.signal(signal.SIGINT, _win_handler)
-            signal.signal(signal.SIGTERM, _win_handler)
-        else:
-            for sig in (signal.SIGINT, signal.SIGTERM):
-                self.loop.add_signal_handler(sig, _signal_handler)
+        try:
+            if sys.platform == 'win32':
+                # On Windows, asyncio signal handling is limited — use signal module
+                def _win_handler(sig, frame):
+                    _signal_handler()
+                signal.signal(signal.SIGINT, _win_handler)
+                signal.signal(signal.SIGTERM, _win_handler)
+            else:
+                for sig in (signal.SIGINT, signal.SIGTERM):
+                    self.loop.add_signal_handler(sig, _signal_handler)
+        except ValueError:
+            # Expected if not running in the main thread (e.g. GUI launcher)
+            pass
 
         # GALACTIC AI SPLASH SCREEN
         ver = self.config.get('system',{}).get('version','?')
