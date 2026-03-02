@@ -1,1 +1,0 @@
-# Galactic AI Skills Framework

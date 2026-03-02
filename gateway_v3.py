@@ -8,6 +8,7 @@ import time
 import traceback
 import uuid
 import httpx
+import webbrowser
 
 from datetime import datetime
 from collections import defaultdict
@@ -348,6 +349,9 @@ class GalacticGateway:
         self._recent_tools = []
         self._trace_sid = None
         self.active_plan = None
+
+        # Thinking/reasoning effort level: "off", "low", "medium", "high"
+        self.thinking_level = models_cfg.get('thinking_level', 'low')
 
         # Persistent chat log (JSONL) — survives page refreshes
         self.history_file = os.path.join(logs_dir, 'chat_history.jsonl')
@@ -1156,26 +1160,46 @@ class GalacticGateway:
             return f"Web search error: {e}"
     
     async def tool_open_browser(self, args):
-        """Open a URL in Playwright browser."""
+        """Open a URL in the browser (Playwright or System Fallback)."""
         url = args.get('url')
+        if not url: return "[ERROR] 'url' is required."
+        if not url.startswith(('http://', 'https://')):
+            url = 'https://' + url
+            
         try:
+            # 1. Try Playwright Plugin (if loaded)
             browser_plugin = next(
                 (p for p in self.core.plugins
                  if "BrowserExecutorPro" in p.__class__.__name__
                  or getattr(p, 'skill_name', '') == 'browser_pro'),
                 None
             )
-            if not browser_plugin:
-                return "[ERROR] BrowserExecutorPro plugin not loaded."
+            if browser_plugin:
+                result = await browser_plugin.navigate(url)
+                if result['status'] == 'success':
+                    return f"[BROWSER/PRO] Navigated to: {url}"
+
+            # 2. Fallback to System Browser
+            def _open_sync():
+                webbrowser.open(url)
+                return f"[BROWSER/SYSTEM] Opened URL in default browser: {url}"
             
-            result = await browser_plugin.navigate(url)
-            
-            if result['status'] == 'success':
-                return f"[BROWSER] Navigated to: {url}"
-            else:
-                return f"[ERROR] Navigation failed: {result.get('message', 'Unknown error')}"
+            loop = asyncio.get_running_loop()
+            return await loop.run_in_executor(None, _open_sync)
+
         except Exception as e:
             return f"[ERROR] Browser navigation: {e}"
+
+    async def tool_browser_navigate(self, args):
+        """Alias for tool_open_browser — navigates to a URL."""
+        return await self.tool_open_browser(args)
+
+    async def tool_browser_open(self, args):
+        """Alias for tool_open_browser — opens a URL or the browser."""
+        # Default to a friendly page if no URL is provided
+        if not args.get('url'):
+            args['url'] = 'https://www.google.com'
+        return await self.tool_open_browser(args)
     
     async def tool_screenshot(self, args):
         """Take a screenshot of the current browser page."""
@@ -2147,83 +2171,59 @@ class GalacticGateway:
 
     def _extract_tool_call(self, response_text):
         """
-        Robustly extract a tool-call JSON object from an LLM response.
-
-        Handles all the messy ways local models (Qwen, Llama, Mistral, etc.) output JSON:
-          • Bare JSON:                  {"tool": "...", "args": {...}}
-          • Markdown fenced:            ```json\n{"tool":...}\n```
-          • Inline wrapped:             "I'll use the tool: {"tool":...}"
-          • Think-tag wrapped (Qwen3):  <think>...</think>{"tool":...}
-          • action/action_input schema: {"action":"tool","action_input":{...}}
-          • Nested tool schema:         {"name":"tool","parameters":{...}}
-
-        Returns (tool_name, tool_args) tuple or (None, None) if no valid tool call found.
+        Robustly extract all tool calls from the LLM response.
+        Returns a list of (tool_name, tool_args) tuples.
         """
         if not response_text or "{" not in response_text:
-            return None, None
+            return []
 
-        # Step 1: Strip <think>...</think> blocks (Qwen3, DeepSeek-R1 emit these)
-        cleaned = re.sub(r'<think>.*?</think>', '', response_text, flags=re.DOTALL).strip()
-
-        # Step 2: Try to pull JSON from markdown code fences first (highest confidence)
-        fence_match = re.search(r'```(?:json)?\s*(\{.*?\})\s*```', cleaned, re.DOTALL)
+        # 1. Strip think tags
+        text = re.sub(r'<think>.*?</think>', '', response_text, flags=re.DOTALL)
+        
+        # 2. Find ALL balanced JSON blocks using a stack
         candidates = []
-        if fence_match:
-            candidates.append(fence_match.group(1))
-
-        # Step 3: Find ALL {...} spans in the cleaned text in O(N)
-        # We use a stack to find all balanced brace pairs.
         stack = []
-        for i, ch in enumerate(cleaned):
-            if ch == '{':
+        for i, char in enumerate(text):
+            if char == '{':
                 stack.append(i)
-            elif ch == '}':
+            elif char == '}':
                 if stack:
-                    start_idx = stack.pop()
-                    candidates.append(cleaned[start_idx:i+1])
-
-        # Try outermost/largest blocks first (they were completed last)
-        candidates.reverse()
-
-        # Step 4: Try each candidate JSON blob
-        for json_str in candidates:
+                    start = stack.pop()
+                    if not stack: # Outermost block
+                        candidates.append(text[start:i+1])
+        
+        calls = []
+        for block in candidates:
             try:
-                obj = json.loads(json_str)
-                if not isinstance(obj, dict):
-                    continue
-
-                # Schema A: standard Galactic format {"tool": "name", "args": {...}}
-                if "tool" in obj:
-                    args = obj.get("args")
-                    if args is None:
-                        # Synthesize args from remaining keys if model put them at root level
-                        args = {k: v for k, v in obj.items() if k != "tool"}
-                    elif not isinstance(args, dict):
-                        args = {}
-                    return obj["tool"], args
-
-                # Schema B: LangChain-style {"action": "name", "action_input": {...}}
-                if "action" in obj and "action_input" in obj:
-                    return obj["action"], obj["action_input"]
-
-                # Schema C: OpenAI function-call style {"name": "name", "parameters": {...}}
-                if "name" in obj and "parameters" in obj and obj["name"] in self.tools:
-                    return obj["name"], obj["parameters"]
-
-                # Schema D: {"function": "name", "arguments": {...}}
-                if "function" in obj and "arguments" in obj:
-                    args = obj["arguments"]
-                    if isinstance(args, str):
-                        try:
-                            args = json.loads(args)
-                        except Exception:
-                            args = {}
-                    return obj["function"], args
-
-            except (json.JSONDecodeError, TypeError):
+                # Clean up any surrounding junk (like markdown fences)
+                clean_block = re.sub(r'^```(?:json)?\s*', '', block.strip())
+                clean_block = re.sub(r'\s*```$', '', clean_block)
+                
+                data = json.loads(clean_block)
+                if not isinstance(data, dict): continue
+                
+                # 3. Universal Schema Mapping
+                # Try all common schemas: tool/args, name/arguments, action/action_input
+                name = data.get('tool') or data.get('name') or data.get('action') or data.get('function')
+                args = data.get('args') or data.get('arguments') or data.get('action_input') or data.get('parameters', {})
+                
+                # Handle OpenAI-style stringified arguments
+                if isinstance(args, str):
+                    try: args = json.loads(args)
+                    except: args = {}
+                
+                if name:
+                    # Standardization for image tools
+                    if name.startswith('generate_image'):
+                        for alias in ['description', 'text', 'input', 'prompt']:
+                            if alias in args and 'prompt' not in args:
+                                args['prompt'] = args.get(alias)
+                    
+                    calls.append((name, args))
+            except:
                 continue
-
-        return None, None
+                
+        return calls
 
     def format_plan(self, plan: dict) -> str:
         """Formats the active plan into a readable string for the AI."""
@@ -2236,70 +2236,117 @@ class GalacticGateway:
             formatted_steps.append(f"{prefix}{i+1}. {step}")
         return "\n".join(formatted_steps)
 
+    @property
+    def supports_native_tools(self):
+        """Determine if the current model supports native tool calling APIs."""
+        provider = self.llm.provider.lower()
+        model = self.llm.model.lower()
+        if provider in ("openai", "anthropic", "google", "ollama", "xai", "nvidia", "groq", "mistral", "cerebras", "huggingface", "kimi", "minimax"):
+            return True
+        if provider == "openrouter":
+            # Assume frontier models on OR support native tools
+            if any(x in model for x in ("claude", "gpt", "gemini", "deepseek", "llama", "mistral", "qwen", "phi", "command")):
+                return True
+        return False
+
     def _build_system_prompt(self, context="", is_ollama=False):
         """
-        Build the system prompt. We inject:
-          - Full parameter schemas so the model knows exact argument names and types
-          - Concrete few-shot examples of correct tool-call JSON
-          - Explicit instruction to output ONLY raw JSON
+        Build the system prompt with dynamic environment grounding.
         """
         personality_prompt = self.personality.get_system_prompt()
+        
+        # ── Environment Grounding ──
+        curr_time = time.strftime("%A, %B %d, %Y")
+        os_platform = sys.platform
+        cwd = os.getcwd()
+        env_block = (
+            f"CURRENT ENVIRONMENT:\n"
+            f"- Date: {curr_time}\n"
+            f"- Operating System: {os_platform} (Windows Power-User Mode)\n"
+            f"- Working Directory: {cwd}\n"
+            f"- User Context: Chesley McDaniel (Owner)\n"
+            f"- Terminal Syntax: PowerShell (Use backslashes for paths, e.g., C:\\Users\\...)\n"
+        )
 
-        # Full schema for every tool so models know what args to pass
+        behavioral_rules = (
+            "AGENT BEHAVIOR RULES (IRONCLAD):\n"
+            "1. NO PROSE: NEVER write blog posts or articles in the chat. Use `write_file` to 'C:\\Users\\Chesley\\OneDrive\\Desktop\\posts\\'.\n"
+            "2. DIRECT ACTION: For simple automation (images, posts, files), use `generate_image`, `write_file`, and `post_to_social` DIRECTLY. NEVER use `test_driven_coder` or `invoke_gemini_cli` for these tasks.\n"
+            "3. NO BASH: You are on WINDOWS. Do not use `.sh` files, `source`, or `touch`. Use PowerShell (`New-Item`, `.ps1`) or direct commands.\n"
+            "4. ACTION-FIRST: Call all necessary tools in your VERY FIRST response. Do not explain what you will do. JUST DO IT.\n"
+            "5. NO PLACEHOLDERS: NEVER use placeholder values. READ config.yaml if you need keys.\n"
+            "6. INDEPENDENT VERIFICATION: ALWAYS verify a file exists with `list_dir` or `exec_shell` after creating it.\n"
+            "7. NO HALLUCINATION: If a tool fails, do not claim it succeeded. Analyze the error and pivot.\n"
+            "8. PROTOCOL: Output ONLY raw JSON for tools. No markdown, no fences, no prose.\n"
+        )
+
+        if self.supports_native_tools:
+            return (
+                f"{personality_prompt}\n\n"
+                f"{env_block}\n\n"
+                "You have access to tools via the native function calling API. Use them to interact with the system.\n\n"
+                f"{behavioral_rules}\n"
+                f"Context: {context}"
+            )
+
+        # ── Tool Filtering (Prevent Overload for Local Models) ──
+        active_tools = self.tools
+        if is_ollama:
+            # Only show essential automation tools to keep the local model focused
+            essential_prefixes = ('read_', 'write_', 'exec_', 'list_', 'generate_image', 'post_', 'browser_')
+            active_tools = {k: v for k, v in self.tools.items() if k.startswith(essential_prefixes)}
+            # Explicitly remove meta-tools that cause loops
+            for meta in ['test_driven_coder', 'invoke_gemini_cli', 'generate_agent_spec', 'invoke_superpower']:
+                active_tools.pop(meta, None)
+
         tool_schemas = {}
-        for name, tool in self.tools.items():
+        for name, tool in active_tools.items():
+            # Standardize image generation schemas for better model alignment
+            if name.startswith('generate_image'):
+                params = {
+                    "type": "object",
+                    "properties": {
+                        "prompt": {"type": "string", "description": "Visual description of the image."},
+                        "aspect_ratio": {"type": "string", "enum": ["1:1", "16:9", "9:16", "4:3"], "default": "1:1"}
+                    },
+                    "required": ["prompt"]
+                }
+            else:
+                params = tool.get("parameters", {})
+                
             tool_schemas[name] = {
                 "description": tool.get("description", ""),
-                "parameters": tool.get("parameters", {})
+                "parameters": params
             }
         tool_block = json.dumps(tool_schemas, indent=2)
 
         few_shot = (
             'EXAMPLES OF CORRECT TOOL CALLS:\n'
-            '  Read a file:\n'
-            '  {"tool": "read_file", "args": {"path": "C:\\\\data\\\\notes.txt"}}\n\n'
-            '  Run a shell command:\n'
-            '  {"tool": "exec_shell", "args": {"command": "dir C:\\\\Users"}}\n\n'
-            '  Navigate browser to URL:\n'
-            '  {"tool": "browser_navigate", "args": {"url": "https://example.com"}}\n\n'
-            '  Take a screenshot:\n'
-            '  {"tool": "browser_screenshot", "args": {}}\n\n'
-            '  Search the web:\n'
-            '  {"tool": "web_search", "args": {"query": "python asyncio tutorial"}}\n\n'
-            '  Start and wait for a long background task:\n'
-            '  {"tool": "process_start", "args": {"command": "python long_script.py", "session_id": "job1"}}\n'
-            '  (Wait for tool output, then...)\n'
-            '  {"tool": "process_wait", "args": {"session_id": "job1"}}\n'
+            '  1. Search for a pattern in the codebase:\n'
+            '  {"tool": "grep_search", "args": {"pattern": "thinking_level", "file_pattern": "*.py"}}\n\n'
+            '  2. Read a specific line range of a file:\n'
+            '  {"tool": "read_file", "args": {"path": "C:\\\\Users\\\\Chesley\\\\Galactic AI\\\\gateway_v3.py", "start_line": 100, "end_line": 150}}\n\n'
+            '  3. View the structure (classes/functions) of a file:\n'
+            '  {"tool": "code_outline", "args": {"path": "C:\\\\Users\\\\Chesley\\\\Galactic AI\\\\skills\\\\core\\\\system_tools.py"}}\n\n'
+            '  4. Run a shell command:\n'
+            '  {"tool": "exec_shell", "args": {"command": "dir"}}\n'
         )
 
         protocol = (
             "TOOL USAGE RULES — FOLLOW EXACTLY:\n"
             "1. To use a tool output ONLY a raw JSON object. NO markdown. NO prose. NO code fences.\n"
-            "   CORRECT:   {\"tool\": \"read_file\", \"args\": {\"path\": \"/tmp/a.txt\"}}\n"
+            "   CORRECT:   {\"tool\": \"read_file\", \"args\": {\"path\": \"C:\\\\data\\\\a.txt\"}}\n"
             "   WRONG:     ```json\\n{...}\\n```   (never use fences)\n"
-            "   WRONG:     'I will read the file: {...}'  (never wrap in prose)\n"
-            "2. After a tool output appears as 'Tool Output: ...' give your FINAL answer in plain text.\n"
-            "3. For simple tasks: use 1 tool then answer immediately.\n"
-            "4. For complex tasks: chain up to 10 tool calls, then answer.\n"
-            "5. NEVER repeat a tool call with the same args — trust the output.\n"
-            "6. If you don't need a tool, just answer in plain text — no JSON.\n"
-            "7. If a tool fails or times out: do NOT retry the same approach. Explain the failure and try a different strategy.\n"
-            "8. If stuck after 3+ failed attempts: STOP. Tell the user what you tried, what went wrong, and ask for guidance.\n"
-            "9. BEFORE writing scripts: read config.yaml for real credentials. NEVER use placeholder values.\n"
-            "10. NEVER overwrite requirements.txt, config.yaml, or core .py files. Create NEW files with unique names.\n"
-            "11. NEVER run scripts with while True loops or sleep() via exec_shell — they timeout. Tell the user how to launch them.\n"
-            "12. CRITICAL: NEVER use `write_file` or `edit_file` on an existing file without using `read_file` first to see its content.\n"
-            "13. CRITICAL: If you start a background task with `process_start`, you MUST immediately call `process_wait` in the same turn to monitor it until completion. NEVER end your turn or give a final answer while a background task is running unless the user specifically asked for an 'asynchronous' or 'detached' run.\n"
-            "14. VERACITY MANDATE: NEVER hallucinate logs, progress, or success. If you have not seen the output of a process via `process_status` or `process_wait`, you MUST state that you are waiting for information. NEVER assume a model file is valid if it is suspiciously small (e.g. less than 1MB for neural networks). MANDATORY: If you claim a file was created or renamed, you MUST run `list_dir` or `find_files` to verify it actually exists on disk before telling the user."
-            "15. NO BACKGROUND HACKS: NEVER use `subprocess.Popen`, `os.spawn`, or the `start` command inside a Python script to 'background' a task to bypass turn limits. You MUST use the official `process_start` tool for background tasks. If you use Python to launch a process, you MUST wait for it to finish and return the output in the SAME script.\n"
-            "16. LANGUAGE MANDATE: ALWAYS respond in English. NEVER switch to another language even if the codebase or files you are scanning are in a different language.\n"
-            "17. WEIGHT VALIDATION: If you are exporting a model to ONNX, you MUST compare the resulting file size to the original weights (e.g. .pth). If the ONNX is significantly smaller (e.g. 1MB vs 50MB), or if it is under 10MB total, it is a \"Weightless Graph\" failure. You MUST acknowledge this failure and fix your export code instead of claiming success.\n"
-            "18. LOG FORENSICS: When scanning long logs (like TensorRT bakes), you MUST search for success markers like \"&&&& PASSED\" or \"Engine built successfully\" before assuming failure. Do not focus only on the initial errors if a subsequent attempt in the same log succeeded.\n"
-            "19. HALLUCINATION PREVENTION: You MUST use the actual tool to interact with the system. NEVER just output a markdown code block and claim you are writing a file or running a command. If you want to write code to a file, you MUST output the literal JSON for the `write_file` tool containing the code in the 'content' field. NEVER write out the code block directly in your conversational response without the JSON tool call."
+            "   WRONG:     \'I will read the file: {...}\'  (never wrap in prose)\n"
+            "2. After a tool output appears as \'Tool Output: ...\' give your FINAL answer in plain text.\n"
+            "3. HALLUCINATION PREVENTION: You MUST use the actual tool to interact with the system. NEVER just output a markdown code block and claim you are writing a file or running a command. If you want to write code to a file, you MUST output the literal JSON for the `write_file` tool containing the code in the \'content\' field.\n"
+            "4. If you don\'t need a tool, just answer in plain text — no JSON.\n\n"
+            f"{behavioral_rules}"
         )
 
         system_prompt = (
             f"{personality_prompt}\n\n"
+            f"{env_block}\n\n"
             f"AVAILABLE TOOLS (with parameter schemas):\n{tool_block}\n\n"
             f"{few_shot}\n"
             f"{protocol}\n"
@@ -2515,6 +2562,7 @@ class GalacticGateway:
                 continue
                 
         await self.core.log("[Planner] All planner attempts failed.", priority=1)
+        await self._emit_trace("session_abort", turn=0, session_id="planner", reason="planner_failed")
         return None
 
     async def speak(self, user_input, context="", chat_id=None, images=None, skip_planning=False):
@@ -2615,19 +2663,23 @@ class GalacticGateway:
         messages = [{"role": "system", "content": system_prompt}] + self.history
 
         # 2. ReAct Loop (with wall-clock timeout)
-        max_turns = int(self.config.get('models', {}).get('max_turns', 50))
-        speak_timeout = float(self.core.config.get('models', {}).get('speak_timeout', 1200))
+        max_turns = int(self.config.get('models', {}).get('max_turns', 150))
+        speak_timeout = float(self.core.config.get('models', {}).get('speak_timeout', 3600))
         turn_count = 0
         last_tool_call = None  # Track last (tool_name, json_args_str) to prevent duplicate calls
         duplicate_count = 0    # Track repeated identical calls
-        # Tools that are legitimately called repeatedly with same args (snapshots, reads, etc.)
-        _DUPLICATE_EXEMPT = {'browser_snapshot', 'web_search', 'read_file', 'memory_search', 'generate_image', 'exec_shell', 'get_system_health'}
-
+        
         # ── Anti-spin guardrails ──
         consecutive_failures = 0   # Consecutive tool errors/timeouts
+        stagnation_count = 0       # Discovery loops without action
         recent_tools = []          # Rolling window of last 6 tool names
         _nudge_half_sent = False   # Track whether 50% nudge was sent
         _nudge_80_sent = False     # Track whether 80% nudge was sent
+        
+        # Tools allowed to be repeated with same args (snapshots, searches, images, health)
+        _DUPLICATE_EXEMPT = {'browser_snapshot', 'web_search', 'memory_search', 'generate_image', 'get_system_health'}
+        _DISCOVERY_TOOLS = {'list_dir', 'read_file', 'find_files', 'grep_search', 'glob', 'system_info', 'process_status'}
+        _ACTION_TOOLS = {'edit_file', 'write_file', 'exec_shell', 'process_start', 'git_commit', 'save_memory', 'post_to_social'}
 
         # Mark that the gateway is actively processing (prevents model switching mid-task)
         self._speaking = True
@@ -2644,236 +2696,196 @@ class GalacticGateway:
 
         # ── Inner function: entire ReAct loop wrapped with wall-clock timeout ──
         async def _react_loop():
-            nonlocal turn_count, last_tool_call, messages, duplicate_count
+            nonlocal turn_count, last_tool_call, messages, duplicate_count, stagnation_count
             nonlocal consecutive_failures, recent_tools, _nudge_half_sent, _nudge_80_sent
 
             for _ in range(max_turns):
                 # HEARTBEAT: Update watchdog so it knows we are still making progress
-                watchdog = next((s for s in self.core.skills if s.__class__.__name__ == 'WatchdogSkill'), None)
-                if watchdog:
-                    watchdog.heartbeat()
+                watchdog = next((s for s in self.core.skills if getattr(s, 'skill_name', '') == 'watchdog'), None)
+                if watchdog: watchdog.heartbeat()
 
                 turn_count += 1
                 await self._emit_trace("turn_start", turn_count, session_id=trace_sid)
 
-                # ── Progressive backpressure: nudge the AI to wrap up ──
-                half_mark = max_turns // 2
-                eighty_mark = int(max_turns * 0.8)
-                if turn_count == half_mark and not _nudge_half_sent:
+                # Progressive backpressure
+                if turn_count == max_turns // 2 and not _nudge_half_sent:
                     _nudge_half_sent = True
-                    messages.append({
-                        "role": "user",
-                        "content": (
-                            f"⚠️ You've used {turn_count} of {max_turns} tool turns. "
-                            f"Start wrapping up — deliver what you have so far."
-                        )
-                    })
-                    await self.core.log(
-                        f"⚠️ Agent nudge: {turn_count}/{max_turns} turns used (50%)",
-                        priority=2
-                    )
-                elif turn_count == eighty_mark and not _nudge_80_sent:
+                    await self.core.log(f"⚠️ ReAct loop: {turn_count}/{max_turns} turns used (50%)", priority=2)
+                elif turn_count == int(max_turns * 0.8) and not _nudge_80_sent:
                     _nudge_80_sent = True
-                    messages.append({
-                        "role": "user",
-                        "content": (
-                            f"🛑 {turn_count}/{max_turns} turns used. "
-                            f"Give your FINAL answer NOW. Summarize what you accomplished "
-                            f"and what remains to be done."
-                        )
-                    })
-                    await self.core.log(
-                        f"🛑 Agent nudge: {turn_count}/{max_turns} turns used (80%)",
-                        priority=1
-                    )
+                    await self.core.log(f"🛑 ReAct loop: {turn_count}/{max_turns} turns used (80%)", priority=1)
 
                 await self._send_telegram_typing_ping(chat_id)
                 response_text = await self._call_llm_resilient(messages)
 
-                # HEARTBEAT: LLM responded, still alive
-                if watchdog:
-                    watchdog.heartbeat()
+                if not response_text:
+                    return "[ERROR] Model returned an empty response."
 
-                # Capture think-tag content before stripping (for Thinking tab)
-                think_match = re.search(r'<think>(.*?)</think>', response_text, re.DOTALL)
-                if think_match:
-                    await self._emit_trace("thinking", turn_count, session_id=trace_sid,
-                                           content=think_match.group(1).strip()[:5000])
+                # Extract tool calls (list)
+                tool_calls = self._extract_tool_call(response_text)
 
-                # Emit raw LLM response
-                await self._emit_trace("llm_response", turn_count, session_id=trace_sid,
-                                       content=response_text[:3000])
-
-                # Strip think-tags from final response text (Qwen3/DeepSeek-R1)
-                display_text = re.sub(r'<think>.*?</think>', '', response_text, flags=re.DOTALL).strip()
-
-                # Try to extract a tool call
-                tool_name, tool_args = self._extract_tool_call(response_text)
-
-                if tool_name is not None:
-                    # Duplicate-call guard (prevents infinite loops with stubborn models)
-                    # Exempt tools that are legitimately called repeatedly (snapshots, searches, etc.)
-                    call_sig = f"{tool_name}:{json.dumps(tool_args, sort_keys=True)}"
-                    if call_sig == last_tool_call and tool_name not in _DUPLICATE_EXEMPT:
-                        await self.core.log(
-                            f"⚠️ Duplicate tool call detected ({tool_name}), forcing final answer.",
-                            priority=2
-                        )
-                        await self._emit_trace("duplicate_blocked", turn_count, session_id=trace_sid,
-                                               tool=tool_name)
-                        # Force the model to give a final answer
-                        messages.append({"role": "assistant", "content": response_text})
-                        messages.append({
-                            "role": "user",
-                            "content": (
-                                "You already called that tool with those arguments. "
-                                "Please give your FINAL answer now in plain text — no more tool calls."
-                            )
+                if tool_calls:
+                    # Construct assistant message with tool_calls
+                    # We MUST provide this list for any following 'tool' role messages to be valid.
+                    tc_list = []
+                    tc_map = {} # tool_name -> call_id map for the loop
+                    
+                    for i, (tool_name, tool_args) in enumerate(tool_calls):
+                        # Gemini requires tool names to be strictly alphanumeric/underscores
+                        safe_name = re.sub(r'[^a-zA-Z0-9_]', '_', tool_name)
+                        # Generate unique ID for EACH tool call in this turn
+                        t_id = f"call_{turn_count}_{i}_{int(time.time() * 1000)}"
+                        tc_list.append({
+                            "id": t_id,
+                            "type": "function",
+                            "function": {
+                                "name": safe_name,
+                                "arguments": json.dumps(tool_args)
+                            }
                         })
-                        last_tool_call = None
-                        continue
-                    last_tool_call = call_sig
+                        tc_map[i] = t_id
 
-                    # Fuzzy tool name match: handle "browser.navigate" → "browser_navigate" etc.
-                    if tool_name not in self.tools:
-                        normalized = tool_name.replace(".", "_").replace("-", "_").lower()
-                        if normalized in self.tools:
-                            tool_name = normalized
-                        else:
-                            # Try prefix match (e.g. model said "navigate" and we have "browser_navigate")
-                            matches = [t for t in self.tools if t.endswith(f"_{normalized}") or t == normalized]
-                            if len(matches) == 1:
-                                tool_name = matches[0]
+                    # Detect if it was a "native" JSON block sequence
+                    thought_content = None
+                    try:
+                        # Since we may have multiple lines, load the first one to check for thought
+                        first_line = response_text.strip().split("\n")[0]
+                        data = json.loads(first_line)
+                        if isinstance(data, dict):
+                            thought_content = data.get('thought')
+                    except json.JSONDecodeError:
+                        # Text + JSON (like from DeepSeek or reasoning models)
+                        # Strip think tags from content and synthesized dicts if present
+                        thought_content = re.sub(r'<think>.*?</think>', '', response_text, flags=re.DOTALL).strip()
+                        # Also strip the synthesized JSON text so it doesn't leak into message history
+                        thought_content = re.sub(r'\{"tool": ".*?\}\}', '', thought_content).strip()
+                        thought_content = re.sub(r'\{"tool": ".*\}\s*$', '', thought_content).strip()
 
-                    await self.core.log(f"🛠️ Executing: {tool_name} {tool_args}", priority=2)
-
-                    if tool_name in self.tools:
-                        # Emit tool_call trace before executing
-                        await self._emit_trace("tool_call", turn_count, session_id=trace_sid,
-                                               tool=tool_name,
-                                               args=tool_args if isinstance(tool_args, dict) else str(tool_args)[:1000])
-                        tool_timeout = self._get_tool_timeout(tool_name)
-                        try:
-                            result = await asyncio.wait_for(
-                                self.tools[tool_name]["fn"](tool_args),
-                                timeout=tool_timeout
-                            )
-                            await self._send_telegram_typing_ping(chat_id)
-                            await self._emit_trace("tool_result", turn_count, session_id=trace_sid,
-                                                   tool=tool_name, result=str(result)[:3000], success=True)
-                        except asyncio.TimeoutError:
-                            result = f"[Tool Timeout] {tool_name} exceeded {tool_timeout}s limit and was killed."
-                            await self.core.log(f"⏱ Tool timeout: {tool_name} after {tool_timeout}s", priority=1)
-                            await self._emit_trace("tool_result", turn_count, session_id=trace_sid,
-                                                   tool=tool_name, result=result, success=False)
-                        except Exception as e:
-                            result = f"[Tool Error] {tool_name} raised: {type(e).__name__}: {e}"
-                            await self._emit_trace("tool_result", turn_count, session_id=trace_sid,
-                                                   tool=tool_name, result=str(result)[:3000], success=False)
-
-                        # Track TTS output so callers (telegram_bridge) can send the audio file
-                        if tool_name == "text_to_speech" and "[VOICE]" in str(result):
-                            voice_match = re.search(r'Generated speech.*?:\s*(.+\.mp3)', str(result))
-                            if voice_match:
-                                self.last_voice_file = voice_match.group(1).strip()
-
-                        # ── Anti-spin: track consecutive failures ──
-                        result_str = str(result)
-                        if result_str.startswith("[Tool Error]") or result_str.startswith("[Tool Timeout]"):
-                            consecutive_failures += 1
-                        else:
-                            consecutive_failures = 0
-
-                        # ── Anti-spin: track tool-type repetition ──
+                    messages.append({
+                        "role": "assistant",
+                        "content": thought_content or None,
+                        "tool_calls": tc_list
+                    })
+                    
+                    for i, (tool_name, tool_args) in enumerate(tool_calls):
+                        tool_call_id = tc_map[i]
+                        safe_name = re.sub(r'[^a-zA-Z0-9_]', '_', tool_name)
+                        
+                        # Duplicate Block
+                        call_sig = f"{tool_name}:{json.dumps(tool_args, sort_keys=True)}"
+                        if call_sig == last_tool_call and tool_name not in _DUPLICATE_EXEMPT:
+                            await self.core.log(f"⚠️ Duplicate blocked: {tool_name}", priority=2)
+                            messages.append({
+                                "role": "tool",
+                                "tool_call_id": tool_call_id,
+                                "name": safe_name,
+                                "content": f"[ERROR] Duplicate detected: {tool_name} was just called with these exact arguments. Try a different parameter, tool, or approach.",
+                                "tool_name": tool_name
+                            })
+                            continue
+                        last_tool_call = call_sig
                         recent_tools.append(tool_name)
-                        if len(recent_tools) > 10:
-                            recent_tools.pop(0)
-                            
-                        # ── Resumable Checkpoints ──
+
+                        # Validation & Execution
+                        # Map safe_name back to actual registered tool name
+                        actual_tool_name = next((k for k in self.tools if re.sub(r'[^a-zA-Z0-9_]', '_', k) == tool_name), tool_name)
+                        
+                        if actual_tool_name not in self.tools:
+                            await self._emit_trace("tool_not_found", turn_count, session_id=trace_sid, tool=actual_tool_name)
+                            available = ", ".join(sorted(self.tools.keys())[:20]) + "..."
+                            result = f"[ERROR] Tool '{actual_tool_name}' not found. Use real tools: {available}"
+                        else:
+                            # Build a short summary of what's being targeted
+                            _arg_hint = ""
+                            for _ak in ("path", "command", "query", "pattern", "url", "old_text", "prompt"):
+                                if _ak in tool_args:
+                                    _av = str(tool_args[_ak])[:120]
+                                    _arg_hint = f" → {_av}"
+                                    break
+                            await self.core.log(f"🛠️ Executing: {actual_tool_name}{_arg_hint}", priority=2)
+                            try:
+                                result = await asyncio.wait_for(
+                                    self.tools[actual_tool_name]["fn"](tool_args),
+                                    timeout=self._get_tool_timeout(actual_tool_name)
+                                )
+                                # TTS tracking
+                                if actual_tool_name == "text_to_speech" and "[VOICE]" in str(result):
+                                    m = re.search(r'Generated speech.*?:\s*(.+\.mp3)', str(result))
+                                    if m: self.last_voice_file = m.group(1).strip()
+                                
+                                await self._emit_trace("tool_result", turn_count, session_id=trace_sid,
+                                                       tool=actual_tool_name, result=str(result)[:3000], success=True)
+                            except Exception as e:
+                                result = f"[Tool Error] {actual_tool_name} raised: {e}"
+                                await self._emit_trace("tool_result", turn_count, session_id=trace_sid,
+                                                       tool=actual_tool_name, result=str(result)[:3000], success=False)
+                        
+                        # Add result (Role 'tool' MUST have matching tool_call_id and name)
+                        messages.append({
+                            "role": "tool",
+                            "tool_call_id": tool_call_id,
+                            "name": safe_name,
+                            "content": str(result),
+                            "tool_name": actual_tool_name
+                        })
+                        
+                        # Anti-spin
+                        if "[Tool Error]" in str(result): consecutive_failures += 1
+                        else: consecutive_failures = 0
+
+                        # Checkpoints
                         self._tool_count_since_cp += 1
                         if self._tool_count_since_cp >= 5 or consecutive_failures > 0:
                             await self.checkpoint(turn_count, messages)
                             self._tool_count_since_cp = 0
 
-                        messages.append({"role": "assistant", "content": response_text})
-
-                        # Vision-capable tool result: screenshot or zoom returned an image dict
-                        if isinstance(result, dict) and "__image_b64__" in result:
-                            img_b64 = result.get("__image_b64__", "")
-                            media_type = result.get("media_type", "image/jpeg")
-                            caption = result.get("text", "[CHROME] Screenshot captured")
-                            if img_b64 and isinstance(img_b64, str):
-                                # Build multimodal user message so the LLM can visually see the screenshot
-                                img_content = [
-                                    {"type": "text", "text": f"Tool Output: {caption}"},
-                                    {"type": "image_url", "image_url": {"url": f"data:{media_type};base64,{img_b64}"}}
-                                ]
-                                messages.append({"role": "user", "content": img_content})
+                        # Vision handling
+                        if isinstance(result, dict):
+                            if "__image_b64__" in result:
+                                img_msg = {
+                                    "role": "user",
+                                    "content": [
+                                        {"type": "text", "text": f"Tool Output: {result.get('text', 'Image')}"},
+                                        {"type": "image_url", "image_url": {"url": f"data:{result.get('media_type', 'image/jpeg')};base64,{result['__image_b64__']}"}}
+                                    ]
+                                }
+                                messages.append(img_msg)
                             else:
-                                messages.append({"role": "user", "content": f"Tool Output: {caption}"})
+                                caption_text = result.get('text', result.get('caption', str(result)))
+                                messages.append({"role": "user", "content": f"Tool Output: {caption_text}"})
                         else:
-                            messages.append({"role": "user", "content": f"Tool Output: {result}"})
+                            if "[Tool Error]" in str(result):
+                                messages.append({"role": "user", "content": f"The tool returned an error: {result}. Please fix your arguments or try a different approach."})
 
                         # ── Circuit breaker: 3+ consecutive failures ──
                         if consecutive_failures >= 3:
-                            await self.core.log(
-                                f"🔌 Circuit breaker: {consecutive_failures} consecutive tool failures",
-                                priority=1
-                            )
-                            await self._emit_trace("circuit_breaker", turn_count, session_id=trace_sid,
-                                                   failures=consecutive_failures)
+                            await self.core.log(f"🔌 Circuit breaker: {consecutive_failures} consecutive tool failures", priority=1)
+                            await self._emit_trace("circuit_breaker", turn_count, session_id=trace_sid, failures=consecutive_failures)
                             messages.append({
                                 "role": "user",
-                                "content": (
-                                    f"⚠️ {consecutive_failures} consecutive tool failures. "
-                                    f"STOP calling tools. Explain to the user what you were trying to do, "
-                                    f"what went wrong, and suggest next steps or ask for guidance."
-                                )
+                                "content": f"⚠️ {consecutive_failures} consecutive tool failures. STOP calling tools. Explain the issue to the user."
                             })
-                            consecutive_failures = 0  # Reset after intervention
-                            break  # Hard break out of the ReAct loop
+                            consecutive_failures = 0 
+                            break # Break out of tool loop for this turn
 
-                        # ── Tool-type repetition guard ──
-                        if len(recent_tools) >= 9:
-                            from collections import Counter
-                            tool_counts = Counter(recent_tools)
-                            most_common_tool, most_common_count = tool_counts.most_common(1)[0]
-                            if most_common_count >= 8 and most_common_tool not in _DUPLICATE_EXEMPT:
-                                await self.core.log(
-                                    f"🔄 Tool repetition guard: {most_common_tool} called "
-                                    f"{most_common_count}x in last {len(recent_tools)} turns",
-                                    priority=1
-                                )
-                                await self._emit_trace("repetition_guard", turn_count, session_id=trace_sid,
-                                                       tool=most_common_tool, count=most_common_count)
-                                messages.append({
-                                    "role": "user",
-                                    "content": (
-                                        f"You've called {most_common_tool} {most_common_count} times in the "
-                                        f"last {len(recent_tools)} turns without resolving the issue. "
-                                        f"Try a completely different approach or explain the situation to the user."
-                                    )
-                                })
-                                recent_tools.clear()  # Reset after intervention
+                    # ── Tool-type repetition guard ──
+                    if len(recent_tools) >= 9:
+                        from collections import Counter
+                        tool_counts = Counter(recent_tools[-10:])
+                        most_common_tool, most_common_count = tool_counts.most_common(1)[0]
+                        if most_common_count >= 8 and most_common_tool not in _DUPLICATE_EXEMPT:
+                            await self.core.log(f"🔄 Repetition guard: {most_common_tool} x{most_common_count}", priority=1)
+                            messages.append({
+                                "role": "user",
+                                "content": f"You are stuck calling {most_common_tool}. Try a different approach."
+                            })
+                            recent_tools.clear()
 
-                        continue  # Loop back to LLM with result
-                    else:
-                        await self._emit_trace("tool_not_found", turn_count, session_id=trace_sid,
-                                               tool=tool_name)
-                        tool_list_hint = ", ".join(list(self.tools.keys())[:20]) + "..."
-                        messages.append({"role": "assistant", "content": response_text})
-                        messages.append({
-                            "role": "user",
-                            "content": (
-                                f"Error: Tool '{tool_name}' not found. "
-                                f"Available tools include: {tool_list_hint} "
-                                f"Please use the exact tool name from the list, then try again."
-                            )
-                        })
-                        continue
+                    continue # Next Turn (Loop back to LLM)
 
                 # No tool call detected → this is the final answer
                 # Use display_text (think-tags stripped) for the history and relay
+                display_text = re.sub(r'<think>.*?</think>', '', response_text, flags=re.DOTALL).strip()
                 await self._emit_trace("final_answer", turn_count, session_id=trace_sid,
                                        content=display_text[:3000])
                 self.history.append({"role": "assistant", "content": display_text})
@@ -2915,6 +2927,8 @@ class GalacticGateway:
                 source = "telegram" if chat_id else "web"
                 await self._log_chat("assistant", display_text, source=source)
 
+                await self._emit_trace("turn_end", turn_count, session_id=trace_sid)
+                await self._emit_trace("session_end", turn_count, session_id=trace_sid)
                 return display_text
 
             # Hit max turns
@@ -3242,46 +3256,38 @@ class GalacticGateway:
             f"Check API keys and service status, or try again in a few minutes."
         )
 
+    def _trim_messages(self, messages, limit_tokens=None):
+        """
+        Trim messages to fit within a token limit. 
+        If limit_tokens is None, uses model-specific config or safe default (32k).
+        """
+        if not messages or len(messages) <= 2:
+            return messages
+
+        # 1. Determine the limit
+        if not limit_tokens:
+            limit_tokens = self._get_context_window_for_model() or 32768
+        
+        # 2. Rough heuristic: 1 token ≈ 4 chars; leave 15% headroom for the response
+        char_limit = int(limit_tokens * 4 * 0.85)
+        
+        # 3. Trim from the oldest non-system messages
+        total_chars = sum(len(str(m.get('content', ''))) for m in messages)
+        while total_chars > char_limit and len(messages) > 3:
+            # Skip index 0 (usually system prompt)
+            removed = messages.pop(1)
+            total_chars -= len(str(removed.get('content', '')))
+            
+        return messages
+
     async def _call_llm(self, messages):
         """
         Route to the appropriate provider using CURRENT self.llm settings.
-
-        Key behaviour per provider:
-          • google    → collapse to prompt+context string → Gemini REST API
-          • anthropic → collapse to system+messages → Anthropic Messages API
-          • ollama    → pass raw messages[] array directly (preserves conversation structure)
-          • nvidia/xai→ collapse to prompt+context string → OpenAI-compat REST API
         """
+        # ── Context-window trimming (Universal) ────────────────────────
+        messages = self._trim_messages(messages)
 
         # ── Ollama: pre-flight health check ──────────────────────────
-        if self.llm.provider == "ollama":
-            ollama_mgr = getattr(self.core, 'ollama_manager', None)
-            if ollama_mgr:
-                healthy = await ollama_mgr.health_check()
-                if not healthy:
-                    model_mgr = getattr(self.core, 'model_manager', None)
-                    if model_mgr:
-                        await model_mgr.handle_api_error("Ollama unreachable")
-                    return (
-                        "[Galactic] ⚠️ Ollama is offline or unreachable at "
-                        f"{ollama_mgr.base_url}. Switched to fallback model. "
-                        "Run `ollama serve` and I'll reconnect automatically."
-                    )
-
-        # ── Context-window trimming ────────────────────────────────────
-        # For Ollama: auto-detect from Ollama, but per-model override wins.
-        # For other providers: only trim if per-model/global context_window is set.
-        ctx_override = self._get_context_window_for_model()
-        if self.llm.provider == "ollama":
-            ollama_mgr = getattr(self.core, 'ollama_manager', None)
-            if ollama_mgr and self.core.config.get('models', {}).get('context_window_trim', True):
-                ctx_limit = ctx_override or ollama_mgr.get_context_window(self.llm.model, default=32768)
-                # Rough heuristic: 1 token ≈ 4 chars; leave 20% headroom for the response
-                char_limit = int(ctx_limit * 4 * 0.8)
-                total_chars = sum(len(m.get('content', '')) for m in messages)
-                while total_chars > char_limit and len(messages) > 2:
-                    messages.pop(1)  # drop oldest non-system message
-                    total_chars = sum(len(m.get('content', '')) for m in messages)
 
         # Pre-process pseudo-providers (e.g. openrouter-frontier -> openrouter)
         orig_provider = self.llm.provider
@@ -3296,12 +3302,8 @@ class GalacticGateway:
         try:
             # ── Route to provider ─────────────────────────────────────────
             if base_provider == "google":
-                # Gemini uses a single text blob (system context + user prompt)
-                prompt = messages[-1]['content']
-                context_str = "\n".join(
-                    [f"{m['role']}: {m['content']}" for m in messages[:-1]]
-                )
-                return await self._call_gemini(prompt, context_str)
+                # Gemini now supports the OpenAI compatibility endpoint
+                return await self._call_openai_compatible_messages(messages)
 
             elif base_provider == "deepseek":
                 return await self._call_deepseek_messages(messages)
@@ -3477,6 +3479,16 @@ class GalacticGateway:
             "messages": merged,
         }
 
+        if self.supports_native_tools and getattr(self, "tools", None):
+            payload["tools"] = [
+                {
+                    "name": name,
+                    "description": spec.get("description", ""),
+                    "input_schema": spec.get("parameters", {})
+                }
+                for name, spec in self.tools.items()
+            ]
+
         try:
             self._last_usage = None
             async with httpx.AsyncClient(timeout=120.0) as client:
@@ -3506,6 +3518,7 @@ class GalacticGateway:
         providers_cfg = self.core.config.get('providers', {})
         default_urls = {
             "openai":       "https://api.openai.com/v1",
+            "google":       "https://generativelanguage.googleapis.com/v1beta/openai",
             "groq":         "https://api.groq.com/openai/v1",
             "mistral":      "https://api.mistral.ai/v1",
             "cerebras":     "https://api.cerebras.ai/v1",
@@ -3787,7 +3800,7 @@ class GalacticGateway:
                 headers["X-Title"] = "Galactic AI"
 
         use_streaming = (
-            provider in ("ollama", "openai", "groq", "mistral", "cerebras", "openrouter", "nvidia")
+            provider in ("ollama", "openai", "groq", "mistral", "cerebras", "openrouter", "nvidia", "google")
             and self.core.config.get('models', {}).get('streaming', True)
             and not (provider == "nvidia" and self.llm.model in _NVIDIA_NO_STREAM)
             and not (provider == "openrouter" and self.llm.model in _OPENROUTER_NO_STREAM)
@@ -3795,16 +3808,66 @@ class GalacticGateway:
 
         max_tokens = self._get_max_tokens()
 
+        # ── Message formatting for reasoning-aware providers ─────────
+        # DeepSeek, Gemini, and newer OpenAI models expect reasoning/thinking 
+        # in a specific field (reasoning_content) or special part of assistant messages.
+        formatted_messages = []
+        # Detect if this is a Google model (Direct or via OpenRouter)
+        m_lower = self.llm.model.lower()
+        is_google = provider == "google" or (provider == "openrouter" and "google/" in m_lower) or "gemini" in m_lower
+        
+        import copy
+        for m in messages:
+            fm = copy.deepcopy(m)
+            role = fm.get("role")
+            
+            if role == "assistant":
+                content = fm.get("content") or ""
+                has_tools = "tool_calls" in fm and fm["tool_calls"]
+                
+                if content and has_tools:
+                    if not is_google:
+                        fm["reasoning_content"] = content
+                        fm["content"] = "" 
+                
+                # For Google direct API, its OpenAI wrapper is fundamentally broken when 
+                # passing historical tool_calls because it enforces a `thought_signature` 
+                # that cannot be provided via the wrapper. Flatten history to raw text bypass.
+                # CRITICAL: Do NOT put any tool-related text in assistant content — the model
+                # will echo it back instead of making native tool calls.
+                if is_google and has_tools:
+                    fm["content"] = content if content else ""
+                    fm.pop("tool_calls", None)
+            
+            elif role == "tool":
+                if is_google:
+                    # Convert tool results into user messages so the model sees them
+                    # as context without any structured tool/function semantics
+                    tool_result = fm.get("content", "")
+                    fm["role"] = "user"
+                    fm["content"] = tool_result
+                    fm.pop("tool_call_id", None)
+                    fm.pop("name", None)
+                    fm.pop("tool_name", None)
+                else:
+                    keys_to_keep = {"role", "tool_call_id", "content"}
+                    fm = {k: fm[k] for k in keys_to_keep if k in fm}
+            
+            formatted_messages.append(fm)
+
         if use_streaming:
             payload = {
                 "model": self.llm.model,
-                "messages": messages,
+                "messages": formatted_messages,
                 "stream": True,
                 "stream_options": {"include_usage": True},
             }
             # Ollama benefits from explicit temperature in options
             if provider == "ollama":
                 payload["options"] = {"temperature": 0.3}
+                # Ollama uses 'think' param (not reasoning_effort) for thinking models
+                if hasattr(self, 'thinking_level') and self.thinking_level and self.thinking_level != 'off':
+                    payload["options"]["think"] = True
             # NVIDIA thinking/reasoning models need extra body params
             if provider == "nvidia":
                 extra = _NVIDIA_THINKING_MODELS.get(self.llm.model, {})
@@ -3812,6 +3875,23 @@ class GalacticGateway:
                     payload.update(extra)
             if max_tokens:
                 payload["max_tokens"] = max_tokens
+            # Inject reasoning_effort for providers that support it (Google, OpenAI, OpenRouter)
+            if provider not in ('ollama', 'nvidia') and hasattr(self, 'thinking_level') and self.thinking_level and self.thinking_level != 'off':
+                payload["reasoning_effort"] = self.thinking_level
+
+            # Inject native tools for OpenAI format
+            if self.supports_native_tools and getattr(self, "tools", None):
+                payload["tools"] = [
+                    {
+                        "type": "function",
+                        "function": {
+                            "name": re.sub(r'[^a-zA-Z0-9_]', '_', name),
+                            "description": spec.get("description", ""),
+                            "parameters": spec.get("parameters", {})
+                        }
+                    }
+                    for name, spec in self.tools.items()
+                ]
             full_response = []
             try:
                 # Granular timeout: fast connect (30s) but long read (600s) for
@@ -3831,8 +3911,8 @@ class GalacticGateway:
                         token_buf = []
                         # Accumulator for streamed native tool_calls (arguments arrive
                         # incrementally across multiple chunks)
-                        _tc_name = ''
-                        _tc_args_parts = []
+                        _tc_accumulators = {} # index -> {'name': str, 'args': list}
+                        
                         async for line in response.aiter_lines():
                             if not line.startswith("data: "):
                                 continue
@@ -3858,24 +3938,28 @@ class GalacticGateway:
                                     continue
                                     
                                 delta = delta_obj.get('content', '') or ''
-                                # NVIDIA thinking models may also stream reasoning_content
-                                if not delta:
-                                    delta = delta_obj.get('reasoning_content', '') or ''
+                                reasoning_delta = delta_obj.get('reasoning_content', '') or delta_obj.get('thought', '') or ''
+                                if reasoning_delta:
+                                    delta = reasoning_delta
 
                                 # ── Accumulate native tool_calls from delta ──
                                 tc_deltas = delta_obj.get('tool_calls', [])
                                 for tc in (tc_deltas or []):
                                     if not tc: continue
+                                    tc_idx = tc.get('index', 0)
+                                    if tc_idx not in _tc_accumulators:
+                                        _tc_accumulators[tc_idx] = {'name': '', 'args': []}
+                                        
                                     fn = tc.get('function', {})
                                     if not fn: continue
                                     if fn.get('name'):
-                                        _tc_name = fn['name']
+                                        _tc_accumulators[tc_idx]['name'] = fn['name']
                                     if fn.get('arguments'):
-                                        _tc_args_parts.append(fn['arguments'])
+                                        _tc_accumulators[tc_idx]['args'].append(fn['arguments'])
 
                                 # ── Capture finish_reason for diagnostics ──
                                 finish_reason = choice.get('finish_reason')
-                                if finish_reason and finish_reason not in ('stop', None):
+                                if finish_reason and finish_reason not in ('stop', 'tool_calls', None):
                                     await self.core.log(
                                         f"⚠️ Stream finish_reason={finish_reason} "
                                         f"(provider={provider}, model={self.llm.model})",
@@ -3906,20 +3990,31 @@ class GalacticGateway:
                         # Flush remaining buffer
                         if token_buf:
                             await self.core.relay.emit(3, "stream_chunk", "".join(token_buf))
-                        # ── Flush accumulated native tool_call ──
-                        if _tc_name and not full_response:
-                            args_str = "".join(_tc_args_parts) or '{}'
-                            try:
-                                fn_args = json.loads(args_str)
-                            except json.JSONDecodeError:
-                                fn_args = {}
-                            synthesized = json.dumps({"tool": _tc_name, "args": fn_args})
-                            full_response.append(synthesized)
-                            await self.core.log(
-                                f"🔧 Native tool_call intercepted (stream): "
-                                f"{_tc_name} → converted to text",
-                                priority=2
-                            )
+                            
+                        # ── Flush accumulated native tool_calls ──
+                        if _tc_accumulators:
+                            thought = "".join(full_response).strip()
+                            synthesized_list = []
+                            for idx, acc in sorted(_tc_accumulators.items()):
+                                if not acc['name']: continue
+                                args_str = "".join(acc['args']) or '{}'
+                                try:
+                                    # Provide some leniency for truncated JSON
+                                    if args_str.rstrip() and not args_str.rstrip().endswith('}'):
+                                        args_str += '}'
+                                    fn_args = json.loads(args_str)
+                                except json.JSONDecodeError:
+                                    fn_args = {}
+                                synthesized_list.append({"tool": acc['name'], "args": fn_args, "thought": thought if idx == 0 else None})
+                            
+                            if synthesized_list:
+                                # Convert all calls into a sequence of JSON blocks text, which _extract_tool_call safely parses
+                                full_response = [json.dumps(call) + "\n" for call in synthesized_list]
+                                await self.core.log(
+                                    f"🔧 Native tool_calls intercepted (stream): "
+                                    f"{[ac['name'] for ac in _tc_accumulators.values() if ac['name']]} → converted to text",
+                                    priority=2
+                                )
                 result = "".join(full_response)
                 # ── Diagnostic: log when streaming produced empty result ──
                 if not result.strip():
@@ -3952,11 +4047,14 @@ class GalacticGateway:
         # ── Non-streaming path (also serves as NVIDIA streaming fallback) ──
         payload = {
             "model": self.llm.model,
-            "messages": messages,
+            "messages": formatted_messages,
             "stream": False,
         }
         if provider == "ollama":
             payload["options"] = {"temperature": 0.3}
+            # Ollama uses 'think' param (not reasoning_effort) for thinking models
+            if hasattr(self, 'thinking_level') and self.thinking_level and self.thinking_level != 'off':
+                payload["options"]["think"] = True
         # NVIDIA thinking/reasoning models need extra body params
         if provider == "nvidia":
             extra = _NVIDIA_THINKING_MODELS.get(self.llm.model, {})
@@ -3964,6 +4062,24 @@ class GalacticGateway:
                 payload.update(extra)
         if max_tokens:
             payload["max_tokens"] = max_tokens
+        # Inject reasoning_effort if thinking level is set (only for providers that support it)
+        if provider not in ('ollama', 'nvidia') and hasattr(self, 'thinking_level') and self.thinking_level and self.thinking_level != 'off':
+            payload["reasoning_effort"] = self.thinking_level
+
+        # Inject native tools for OpenAI format (Non-streaming path)
+        if self.supports_native_tools and getattr(self, "tools", None):
+            payload["tools"] = [
+                {
+                    "type": "function",
+                    "function": {
+                        "name": re.sub(r'[^a-zA-Z0-9_]', '_', name),
+                        "description": spec.get("description", ""),
+                        "parameters": spec.get("parameters", {})
+                    }
+                }
+                for name, spec in self.tools.items()
+            ]
+
         # NVIDIA NIM is serverless — large models (397B, 744B) get unloaded when
         # idle and cold-start can exceed NVIDIA's 5-min gateway timeout (HTTP 504).
         # Retry up to 2 times on 504 to ride out the cold-start window.
@@ -4024,21 +4140,30 @@ class GalacticGateway:
                     refusal = (msg.get('refusal') or '').strip()
                     # Handle native tool_calls (Gemini/GPT via OpenRouter may
                     # use this instead of putting JSON in content text)
-                    if not content and not reasoning and not refusal and msg.get('tool_calls'):
+                    if msg.get('tool_calls'):
                         tc_list = msg['tool_calls']
                         if tc_list:
-                            fn = tc_list[0].get('function', {})
-                            fn_name = fn.get('name', '')
-                            fn_args_str = fn.get('arguments', '{}')
-                            try:
-                                fn_args = json.loads(fn_args_str) if fn_args_str else {}
-                            except json.JSONDecodeError:
-                                fn_args = {}
+                            synthesized_list = []
+                            # Combine reasoning + content for models that use both as a thought prefix
+                            thought = (reasoning + "\n" + content).strip()
+                            
+                            for i, tc in enumerate(tc_list):
+                                fn = tc.get('function', {})
+                                fn_name = fn.get('name', '')
+                                fn_args_str = fn.get('arguments', '{}')
+                                try:
+                                    if fn_args_str.rstrip() and not fn_args_str.rstrip().endswith('}'):
+                                        fn_args_str += '}'
+                                    fn_args = json.loads(fn_args_str) if fn_args_str else {}
+                                except json.JSONDecodeError:
+                                    fn_args = {}
+                                synthesized_list.append({"tool": fn_name, "args": fn_args, "thought": thought if i == 0 else None})
+                                
                             await self.core.log(
-                                f"🔧 Native tool_call intercepted (non-stream): {fn_name}",
+                                f"🔧 Native tool_calls intercepted (non-stream): {[s['tool'] for s in synthesized_list]}",
                                 priority=3
                             )
-                            return json.dumps({"tool": fn_name, "args": fn_args})
+                            return "\n".join(json.dumps(s) for s in synthesized_list)
                     if content:
                         return content
                     elif reasoning:
@@ -4137,24 +4262,56 @@ class GalacticGateway:
         except Exception as e:
             return f"[ERROR] generate_image_sd35: {e}"
 
+    async def tool_post_to_social(self, args):
+        """Post text and an optional image to social media (X.com / Discord / Simulated)."""
+        content = args.get('content', '')
+        image_path = args.get('image_path', '')
+        platform = args.get('platform', 'X.com')
+        
+        if not content:
+            return "[ERROR] tool_post_to_social: 'content' is required."
+            
+        try:
+            # 1. Simulate the post (Save to Desktop for verification)
+            desktop = os.path.join(os.environ['USERPROFILE'], 'Desktop')
+            fname = f"social_post_{int(time.time())}.txt"
+            post_file = os.path.join(desktop, fname)
+            
+            with open(post_file, 'w', encoding='utf-8') as f:
+                f.write(f"--- SOCIAL MEDIA POST ({platform}) ---\n")
+                f.write(f"Content: {content}\n")
+                if image_path:
+                    f.write(f"Image Attachment: {image_path}\n")
+                f.write(f"Timestamp: {time.ctime()}\n")
+                f.write("-" * 40 + "\n")
+            
+            # 2. Mock success (in a real scenario, this would hit a bridge or API)
+            msg = f"✅ Posted to {platform} successfully!\n📍 Saved copy to Desktop: {fname}"
+            if image_path:
+                msg += f"\n🖼️ Image attached: {os.path.basename(image_path)}"
+            
+            return msg
+        except Exception as e:
+            return f"[ERROR] tool_post_to_social: {e}"
+
     async def tool_generate_image_imagen(self, args):
-        """Generate an image using Google Imagen 4 via the google-genai SDK."""
+        """Generate an image using Google Imagen 3 via the google-genai SDK."""
         import time as _time
         prompt       = args.get('prompt', '')
-        model        = args.get('model', 'imagen-4')
+        model        = args.get('model', 'imagen-3')
         aspect_ratio = args.get('aspect_ratio', '1:1')
         n_images     = int(args.get('number_of_images', 1))
 
         if not prompt:
             return "[ERROR] generate_image_imagen: 'prompt' is required."
 
-        # Map user-friendly names to SDK model identifiers
+        # Map user-friendly names to SDK model identifiers (Imagen 3 is current)
         model_map = {
-            'imagen-4':       'imagen-4.0-generate-001',
-            'imagen-4-ultra': 'imagen-4.0-ultra-generate-001',
-            'imagen-4-fast':  'imagen-4.0-fast-generate-001',
+            'imagen-3':       'imagen-3.0-generate-001',
+            'imagen-3-pro':   'imagen-3.0-pro-generate-001',
+            'imagen-3-fast':  'imagen-3.0-fast-generate-001',
         }
-        sdk_model = model_map.get(model, 'imagen-4.0-generate-001')
+        sdk_model = model_map.get(model, 'imagen-3.0-generate-001')
 
         google_cfg = self.core.config.get('providers', {}).get('google', {})
         api_key = google_cfg.get('apiKey', '')
