@@ -462,7 +462,7 @@ body.glow-max .status-dot{box-shadow:0 0 14px var(--green),0 0 28px rgba(0,255,1
   <div class="login-box">
     <div style="font-size:2em;margin-bottom:8px">⬡</div>
     <h2>GALACTIC AI</h2>
-    <p>AUTOMATION SUITE v1.1.0</p>
+    <p>AUTOMATION SUITE v1.3.0</p>
     <input id="pw-input" type="password" placeholder="Enter passphrase" autocomplete="off">
     <button id="login-btn" onclick="doLogin()">ACCESS</button>
     <div id="login-err" style="display:none;color:var(--red);font-size:0.8em;margin-top:8px">Invalid passphrase</div>
@@ -784,7 +784,7 @@ body.glow-max .status-dot{box-shadow:0 0 14px var(--green),0 0 28px rgba(0,255,1
   <div id="topbar-left">
     <div class="logo">⬡ GALACTIC AI</div>
     <div style="font-size:0.7em;color:var(--cyan);letter-spacing:2px;opacity:0.7;font-weight:600">CONTROL DECK</div>
-    <div id="version-badge" style="font-size:0.65em;color:var(--dim);letter-spacing:1px;padding:2px 7px;border:1px solid var(--border);border-radius:10px;cursor:default" title="Galactic AI version">v1.2.1</div>
+    <div id="version-badge" style="font-size:0.65em;color:var(--dim);letter-spacing:1px;padding:2px 7px;border:1px solid var(--border);border-radius:10px;cursor:default" title="Galactic AI version">v1.3.0</div>
     <div id='ollama-pill' onclick='switchTab("models")'>
       <div class="status-dot" id="ollama-dot"></div>
       <span id="ollama-label">Ollama</span>
@@ -1976,10 +1976,24 @@ async function swMigrateOpenClaw() {
   }
 }
 
-// Startup: check setup first, then check saved token
+// Startup: check setup first, then check saved token or desktop auto-login
 (async () => {
   const needsSetup = await checkSetup();
   if (needsSetup) return;
+
+  // Desktop auto-login: the launcher passes ?dt=<password_hash> so pywebview
+  // doesn't need to ask for a password on every launch.
+  const urlParams = new URLSearchParams(window.location.search);
+  const desktopToken = urlParams.get('dt');
+  if (desktopToken && !token) {
+    token = desktopToken;
+    localStorage.setItem('gal_token', token);
+    // Clean the token from the URL bar for security
+    if (window.history.replaceState) {
+      window.history.replaceState(null, '', window.location.pathname);
+    }
+  }
+
   if (token) {
     document.getElementById('login-overlay').style.display = 'none';
     init();
@@ -2020,14 +2034,22 @@ async function init() {
   switchTab(savedTab);
 
   // Smart auto-scroll: pause auto-scroll when user scrolls up, resume at bottom
-  document.getElementById('chat-log').addEventListener('scroll', function() {
-    const atBottom = (this.scrollHeight - this.scrollTop - this.clientHeight) < 60;
-    autoScroll = atBottom;
-  });
-  document.getElementById('thinking-scroll').addEventListener('scroll', function() {
-    const atBottom = (this.scrollHeight - this.scrollTop - this.clientHeight) < 60;
-    traceAutoScroll = atBottom;
-  });
+  const _scL = (id, flagSetter) => {
+    const el = document.getElementById(id);
+    if (!el) return;
+    el.addEventListener('scroll', () => {
+      const atBottom = (el.scrollHeight - el.scrollTop - el.clientHeight) < 80;
+      window[flagSetter] = atBottom;
+    });
+  };
+  
+  window.autoScroll = true;
+  window.traceAutoScroll = true;
+  window.logAutoScroll = true;
+  
+  _scL('chat-log', 'autoScroll');
+  _scL('thinking-scroll', 'traceAutoScroll');
+  _scL('logs-scroll', 'logAutoScroll');
 }
 
 
@@ -3580,8 +3602,8 @@ function addLog(msg) {
     div.className = 'log-line' + (msg.includes('ERROR')||msg.includes('Error') ? ' err' : msg.includes('✅')||msg.includes('ONLINE') ? ' ok' : msg.includes('⚠️')||msg.includes('WARN') ? ' warn' : '');
     div.textContent = msg;
     el.append(div);
-    if (autoScroll) el.scrollTop = el.scrollHeight;
-    // Trim DOM for performance — keep max 500 visible entries (remove oldest)
+    if (window.logAutoScroll) el.scrollTop = el.scrollHeight;
+    // Trim DOM for performance — keep max 500 visible entries
     while (el.children.length > 500) el.removeChild(el.firstChild);
   }
 }
@@ -3714,7 +3736,7 @@ function handleAgentTrace(data) {
       '<div class="trace-session-body"></div>';
     scroll.append(sEl);
     traceSessions[sid] = { el: sEl, body: sEl.querySelector('.trace-session-body'), turnEls: {}, maxTurn: 0 };
-    if (traceAutoScroll) scroll.scrollTop = scroll.scrollHeight;
+    if (window.traceAutoScroll) scroll.scrollTop = scroll.scrollHeight;
     return;
   }
 
@@ -3750,7 +3772,7 @@ function handleAgentTrace(data) {
       const ctr = document.getElementById('thinking-turn-counter');
       if (ctr) ctr.textContent = 'Turns: ' + turn;
     }
-    if (traceAutoScroll) scroll.scrollTop = scroll.scrollHeight;
+    if (window.traceAutoScroll) scroll.scrollTop = scroll.scrollHeight;
     return;
   }
 
