@@ -126,11 +126,10 @@ desktop.ini
 __pycache__/
 *.pyc
 *.pyo
-images/desktop/desktop_1772164228.png
-images/imagen/imagen_1772170070_0.png
-images/imagen/imagen_1772170150_0.png
-images/imagen/imagen_1772170385_0.png
-images/imagen/imagen_1772170936_0.png
+# ─── Images ──────────────────────────────────────────────────────────────────
+*.png
+*.jpg
+*.svg
 
 # ─── Archive ──────────────────────────────────────────────────────────────────
 _archive/
