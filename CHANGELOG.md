@@ -13,6 +13,9 @@ All notable changes to Galactic AI are documented here.
 - **Few-Shot Intelligence Examples**: Updated system prompt templates with clear examples of how to use deep-research tools strategically.
 
 ### Fixed
+- **Smart Model Routing Crash**: Restored the missing `classify_task` method in the `ModelManager` which was causing crashes when `smart_routing` was enabled. Added robust input cleaning to prevent attached files and code blocks from distorting the heuristic task classification.
+- **Chrome Extension UI Loop**: Fixed a "Mission Impossible" race condition where the extension popup would auto-clear the passphrase input every 2 seconds after a failed connection attempt.
+- **Chrome Extension Load Error**: Resolved an extension bundle initialization failure by generating and linking high-quality manifest `icons`.
 - **Ollama Thinking Injection**: Fixed a bug where `reasoning_effort` was being sent to Ollama (causing 400 errors). It now correctly injects `"think": true` into Ollama's `options` payload.
 - **Metadata Synchronization**: Fixed a bug where Telegram and the Control Deck were showing different thinking levels; now both read from a single gateway source.
 - **Skill Categorization**: Fixed missing category metadata in community skills (e.g., Gemini CLI) preventing them from showing up correctly in UI menus.

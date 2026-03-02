@@ -1689,14 +1689,14 @@ function showSetupWizard(status) {
 }
 
 const SW_MODEL_HINTS = {
-  google:      {placeholder:'gemini-3.1-pro-preview', link:'Get key: <a href="https://aistudio.google.com/apikey" target="_blank" style="color:var(--cyan)">aistudio.google.com/apikey</a>'},
+  google:      {placeholder:'gemini-2.5-flash', link:'Get key: <a href="https://aistudio.google.com/apikey" target="_blank" style="color:var(--cyan)">aistudio.google.com/apikey</a>'},
   anthropic:   {placeholder:'claude-sonnet-4-6', link:'Get key: <a href="https://console.anthropic.com/keys" target="_blank" style="color:var(--cyan)">console.anthropic.com/keys</a>'},
   openai:      {placeholder:'gpt-4o', link:'Get key: <a href="https://platform.openai.com/api-keys" target="_blank" style="color:var(--cyan)">platform.openai.com/api-keys</a>'},
   xai:         {placeholder:'grok-4', link:'Get key: <a href="https://console.x.ai" target="_blank" style="color:var(--cyan)">console.x.ai</a>'},
   groq:        {placeholder:'llama-4-scout-17b-16e-instruct', link:'Get key: <a href="https://console.groq.com/keys" target="_blank" style="color:var(--cyan)">console.groq.com/keys</a>'},
   mistral:     {placeholder:'mistral-small-latest', link:'Get key: <a href="https://console.mistral.ai/api-keys" target="_blank" style="color:var(--cyan)">console.mistral.ai/api-keys</a>'},
   cerebras:    {placeholder:'llama3.3-70b', link:'Get key: <a href="https://cloud.cerebras.ai" target="_blank" style="color:var(--cyan)">cloud.cerebras.ai</a>'},
-  openrouter:  {placeholder:'google/gemini-3.1-pro-preview', link:'Get key: <a href="https://openrouter.ai/keys" target="_blank" style="color:var(--cyan)">openrouter.ai/keys</a>'},
+  openrouter:  {placeholder:'google/gemini-2.5-flash', link:'Get key: <a href="https://openrouter.ai/keys" target="_blank" style="color:var(--cyan)">openrouter.ai/keys</a>'},
   huggingface: {placeholder:'Qwen/Qwen3-235B-A22B', link:'Get token: <a href="https://huggingface.co/settings/tokens" target="_blank" style="color:var(--cyan)">huggingface.co/settings/tokens</a>'},
   kimi:        {placeholder:'kimi-k2.5', link:'Get key: <a href="https://platform.moonshot.cn/console/api-keys" target="_blank" style="color:var(--cyan)">platform.moonshot.cn</a>'},
   zai:         {placeholder:'glm-4-plus', link:'Get key: <a href="https://open.bigmodel.cn/usercenter/apikeys" target="_blank" style="color:var(--cyan)">open.bigmodel.cn</a>'},
@@ -2077,6 +2077,9 @@ function connectWS() {
       // Fallback activation toast — show when primary model fails and chain kicks in
       const fb = p.data || {};
       showToast(`⚡ Fallback active: ${fb.fallback || '?'} (${fb.reason || 'error'})`, 'warning', 10000);
+    } else if (p.type === 'chat_from_extension') {
+      const ext = p.data || {};
+      if (ext.data) appendUserMsg('[Browser] ' + ext.data);
     } else if (p.type === 'update_available') {
       const u = p.data || {};
       showToast(`🆕 Update available: v${u.latest} — Run ./update.ps1`, 'info', 30000);
@@ -4232,13 +4235,20 @@ try {
                 return web.json_response({'error': 'No message'}, status=400)
 
             # Log cleanly
+            source = data.get('source', 'web') if 'multipart/form-data' not in content_type else 'web'
+            source_label = "Browser" if source == 'extension' else "Web"
+            
             parts_log = []
             if file_context:
                 parts_log.append(f"+{file_context.count('[Attached file:')} file(s)")
             if attached_images:
                 parts_log.append(f"+{len(attached_images)} image(s)")
             suffix = f" [{', '.join(parts_log)}]" if parts_log else ""
-            await self.core.log(f"[Web] User: {user_msg or '(no text)'}{suffix}", priority=2)
+            await self.core.log(f"[{source_label}] User: {user_msg or '(no text)'}{suffix}", priority=2)
+
+            # Broadcast to Web Control Deck UI for real-time sync
+            if source == 'extension':
+                await self.core.relay.emit(3, "chat_from_extension", {"data": user_msg or '(no text)'})
 
             # Forward to gateway — pass images to speak() if present
             if attached_images:

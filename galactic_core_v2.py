@@ -61,14 +61,15 @@ class GalacticCore:
     def load_config(self):
         config_full_path = os.path.abspath(self.config_path)
         if not os.path.exists(config_full_path):
-            default_config = {
-                'system': {'name': 'Galactic Core', 'port': 9999},
+            config = {
+                'system': {'name': 'Galactic AI', 'version': '1.3.0', 'port': 9999},
                 'paths': {'logs': './logs', 'images': './images', 'plugins': './plugins'},
                 'gateway': {'provider': 'placeholder', 'model': 'placeholder'}
             }
-            return default_config
-        with open(config_full_path, 'r') as f:
-            config = yaml.load(f, Loader=yaml.FullLoader) or {}
+            # Still continue to migration to ensure sections like 'models' are added
+        else:
+            with open(config_full_path, 'r') as f:
+                config = yaml.load(f, Loader=yaml.FullLoader) or {}
 
         # ── Auto-migrate: add missing config sections from newer versions ────
         migrated = False

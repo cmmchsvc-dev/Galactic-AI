@@ -25,7 +25,7 @@ smart_routing:
   math:      { provider: "openai",   model: "o3-mini" }
   vision:    { provider: "google",   model: "gemini-2.5-flash" }
   chat:      { provider: "google",   model: "gemini-2.5-flash" }
-  quick:     { provider: "google",   model: "gemini-2.5-flash" } # Replaced groq
+  quick:     { provider: "google",   model: "gemini-2.5-flash" }
   local:     { provider: "ollama",   model: null } # Picks best discovered model
 
 providers:
