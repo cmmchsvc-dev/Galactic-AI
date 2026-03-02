@@ -1793,7 +1793,7 @@ class GalacticGateway:
             if not api_key:
                 return "[ERR] Google API key not configured for image analysis."
 
-            url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash-exp:generateContent?key={api_key}"
+            url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key={api_key}"
             payload = {"contents": [{"parts": [
                 {"text": prompt},
                 {"inline_data": {"mime_type": mime_type, "data": image_data}}
@@ -3149,7 +3149,43 @@ class GalacticGateway:
 
         chain = model_mgr.fallback_chain
         last_error = None
+        # 1. First priority: The user-configured "Secondary" fallback model
+        # Skip if it was the one that just failed (e.g. if we were already in fallback mode)
+        fb_p = model_mgr.fallback_provider
+        fb_m = model_mgr.fallback_model
+        
+        if fb_p and fb_m and not (fb_p == orig_provider and fb_m == orig_model):
+            # Swap to configured fallback
+            self.llm.provider = fb_p
+            self.llm.model = fb_m
+            model_mgr._set_api_key(fb_p)
 
+            await self.core.log(f"🔄 Fallback → trying configured secondary: {fb_p}/{fb_m}...", priority=2)
+            try:
+                result = await self._call_llm(messages)
+                if not isinstance(result, str) or not result.startswith("[ERROR]"):
+                    model_mgr._record_provider_success(fb_p)
+                    model_mgr._last_successful_fallback = (fb_p, fb_m, datetime.now())
+                    await self.core.log(f"✅ Fallback SUCCESS (Secondary): {fb_p}/{fb_m}", priority=1)
+                    await self.core.relay.emit(2, "model_fallback", {
+                        "original": f"{orig_provider}/{orig_model}",
+                        "fallback": f"{fb_p}/{fb_m}",
+                        "reason": original_error_type,
+                    })
+                    # Restore original state
+                    self.llm.provider = orig_provider
+                    self.llm.model = orig_model
+                    self.llm.api_key = orig_key
+                    return result
+                else:
+                    fb_err = model_mgr.classify_error(result)
+                    model_mgr._record_provider_failure(fb_p, fb_err)
+                    last_error = result
+            except Exception as e:
+                last_error = f"[ERROR] Configured Fallback {fb_p}: {e}"
+                model_mgr._record_provider_failure(fb_p, "UNKNOWN")
+
+        # 2. Walk the full multi-provider resilient chain
         async with model_mgr._fallback_lock:
             # Check shortcut cache — if a fallback worked recently, try it first
             if model_mgr._last_successful_fallback:
