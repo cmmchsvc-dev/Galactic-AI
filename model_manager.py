@@ -112,6 +112,23 @@ class ModelManager:
         self._routed = False           # True if auto_route() switched the model
         self._pre_route_state = None   # {'provider', 'model', 'api_key'} before routing
 
+        self.smart_routing_keywords = {
+            "coding": ["write code", "debug", "python", "javascript", "typescript", "script",
+                       "function", "class", "implement", "fix this code", "refactor", "compile"],
+            "reasoning": ["analyze", "reason through", "step by step", "think about", "evaluate",
+                          "compare", "pros and cons", "should i", "logical", "explain"],
+            "creative": ["write a story", "poem", "creative", "fiction", "imagine", "brainstorm",
+                         "generate ideas", "song lyrics", "story", "tell me"],
+            "local": ["local", "offline", "private", "no cloud", "on-device", "ollama"],
+            "quick": ["quick", "fast", "briefly", "short answer", "tldr", "summarize in one",
+                      "one sentence", "brief"],
+            "vision": ["image", "screenshot", "picture", "photo", "analyze this image", "what do you see",
+                        "look at", "describe this", "read this image", "what's in", "ocr", "scan this",
+                        "identify", "vision", "phi", "what is shown", "visual"],
+            "math": ["solve", "equation", "integral", "derivative", "calculate", "math", "formula",
+                     "probability", "statistics", "calculus", "algebra"],
+        }
+
     def _load_fallback_policy_from_yaml(self):
         """Load fallback tiers and smart routing from config/models.yaml if available."""
         models_yaml_path = os.path.join(os.path.dirname(self.config_path), 'config', 'models.yaml')
@@ -532,6 +549,19 @@ class ModelManager:
     # ─────────────────────────────────────────────────────────────────
     # Smart Model Routing (Galactic Exclusive)
     # ─────────────────────────────────────────────────────────────────
+
+    def classify_task(self, user_input: str) -> str:
+        """Classify a user message into a task type for smart routing."""
+        # Clean input: strip code blocks and file-like patterns to focus on user intent
+        clean_input = re.sub(r'```[\s\S]*?```', '', user_input)
+        # Also strip common file header patterns (e.g. "File: ...")
+        clean_input = re.sub(r'File:.*?\n', '', clean_input)
+        
+        lower = clean_input.lower()
+        for task_type, keywords in self.smart_routing_keywords.items():
+            if any(kw in lower for kw in keywords):
+                return task_type
+        return "default"
 
     async def auto_route(self, user_input: str):
         """

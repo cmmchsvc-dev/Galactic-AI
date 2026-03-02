@@ -12,20 +12,20 @@
  */
 
 const BASE_URL = 'http://127.0.0.1:17789';
-const WS_URL   = 'ws://127.0.0.1:17789/stream';
+const WS_URL = 'ws://127.0.0.1:17789/stream';
 
 /* ─── DOM Refs ────────────────────────────────────────────────────────── */
 
-const chatLog   = document.getElementById('sp-chat-log');
-const input     = document.getElementById('sp-input');
-const sendBtn   = document.getElementById('sp-send-btn');
+const chatLog = document.getElementById('sp-chat-log');
+const input = document.getElementById('sp-input');
+const sendBtn = document.getElementById('sp-send-btn');
 const statusDot = document.getElementById('sp-status-dot');
 
 /* ─── State ───────────────────────────────────────────────────────────── */
 
-let socket        = null;
-let streamBubble  = null;   // Current Byte bubble being streamed into
-let isStreaming   = false;
+let socket = null;
+let streamBubble = null;   // Current Byte bubble being streamed into
+let isStreaming = false;
 let chunksReceived = 0;     // Track whether WS delivered anything for this message
 
 /* ─── WebSocket Connection ───────────────────────────────────────────── */
@@ -73,7 +73,7 @@ function connectWS() {
 
 function updateDot(connected) {
   statusDot.className = `sp-dot ${connected ? 'connected' : 'disconnected'}`;
-  statusDot.title     = connected ? 'Connected to Galactic AI' : 'Disconnected — reconnecting...';
+  statusDot.title = connected ? 'Connected to Galactic AI' : 'Disconnected — reconnecting...';
 }
 
 /* ─── Sending Messages ────────────────────────────────────────────────── */
@@ -106,7 +106,7 @@ async function sendMessage() {
     const resp = await fetch(`${BASE_URL}/api/chat`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ message: text })
+      body: JSON.stringify({ message: text, source: 'extension' })
     });
     if (resp.ok) {
       const data = await resp.json();
@@ -166,7 +166,7 @@ function scrollToBottom() {
 }
 
 function setInputLocked(locked) {
-  input.disabled  = locked;
+  input.disabled = locked;
   sendBtn.disabled = locked;
 }
 
