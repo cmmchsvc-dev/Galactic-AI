@@ -1,0 +1,187 @@
+# ==============================================================================
+# Galactic AI - Configuration Template
+# ==============================================================================
+# Copy this file to `config.yaml` and fill in your details.
+# Protected by sovereignty. Local-first. AI-driven.
+
+system:
+  name: Galactic AI
+  version: 1.3.0
+  port: 9999
+  heartbeat_interval: 5
+  update_check_interval: 21600
+
+# ─── MODELS & ROUTING ─────────────────────────────────────────────────────────
+models:
+  primary_provider: openrouter
+  primary_model: google/gemini-2.0-flash-001
+  
+  fallback_provider: ollama
+  fallback_model: qwen2.5-coder:7b
+  
+  # The "Big Brain" for strategic planning and investigation
+  planner_provider: google
+  planner_model: gemini-2.0-pro-exp-02-05
+  
+  planner_fallback_provider: openrouter
+  planner_fallback_model: openai/gpt-4o
+  
+  auto_fallback: true
+  smart_routing: true
+  streaming: true
+  speak_timeout: 600
+  max_turns: 50
+  context_window: 0
+  context_window_trim: true
+  recovery_time_seconds: 300
+  
+  fallback_cooldowns:
+    AUTH_ERROR: 86400
+    QUOTA_EXHAUSTED: 3600
+    RATE_LIMIT: 60
+    SERVER_ERROR: 30
+    TIMEOUT: 10
+
+# ─── PROVIDERS ───────────────────────────────────────────────────────────────
+providers:
+  google:
+    apiKey: "YOUR_GOOGLE_API_KEY"
+    baseUrl: "https://generativelanguage.googleapis.com/v1beta"
+    
+  openrouter:
+    apiKey: "YOUR_OPENROUTER_API_KEY"
+    baseUrl: "https://openrouter.ai/api/v1"
+    
+  anthropic:
+    apiKey: "YOUR_ANTHROPIC_API_KEY"
+    baseUrl: "https://api.anthropic.com/v1"
+    
+  openai:
+    apiKey: "YOUR_OPENAI_API_KEY"
+    baseUrl: "https://api.openai.com/v1"
+    
+  xai:
+    apiKey: "YOUR_XAI_API_KEY"
+    baseUrl: "https://api.x.ai/v1"
+    
+  groq:
+    apiKey: "YOUR_GROQ_API_KEY"
+    baseUrl: "https://api.groq.com/openai/v1"
+    
+  deepseek:
+    apiKey: "YOUR_DEEPSEEK_API_KEY"
+    baseUrl: "https://api.deepseek.com/v1"
+    
+  nvidia:
+    apiKey: "YOUR_NVIDIA_API_KEY"
+    baseUrl: "https://integrate.api.nvidia.com/v1"
+    # Optional: Per-model routing keys if not using a unified key
+    keys:
+      deepseek: ""
+      glm: ""
+      kimi: ""
+      qwen: ""
+      stepfun: ""
+    fluxApiKey: ""
+    fluxDevApiKey: ""
+
+  ollama:
+    baseUrl: "http://127.0.0.1:11434/v1"
+
+# ─── BRIDGES & MESSAGING ──────────────────────────────────────────────────────
+telegram:
+  enabled: true
+  bot_token: "YOUR_TELEGRAM_BOT_TOKEN"
+  admin_chat_id: "YOUR_TELEGRAM_CHAT_ID"
+  timeout_seconds: 180
+  ollama_timeout_seconds: 600
+
+discord:
+  enabled: false
+  bot_token: ""
+  admin_user_id: ""
+  allowed_channels: []
+  timeout_seconds: 120
+
+whatsapp:
+  enabled: false
+  access_token: ""
+  phone_number_id: ""
+  verify_token: ""
+  api_version: "v21.0"
+
+gmail:
+  enabled: false
+  email: "your-email@example.com"
+  app_password: "YOUR_GMAIL_APP_PASSWORD"
+  check_interval: 60
+  notify_telegram: true
+
+# ─── SOCIAL MEDIA ─────────────────────────────────────────────────────────────
+social_media:
+  twitter:
+    consumer_key: ""
+    consumer_secret: ""
+    access_token: ""
+    access_token_secret: ""
+  reddit:
+    client_id: ""
+    client_secret: ""
+    username: ""
+    password: ""
+    user_agent: "GalacticAI/1.2.0"
+
+# ─── WEB CONTROL DECK ─────────────────────────────────────────────────────────
+web:
+  enabled: true
+  host: "127.0.0.1"
+  port: 17789
+  remote_access: false
+  jwt_secret: "GENERATE_A_RANDOM_SECRET_FOR_SECURITY"
+  password_hash: "SHA256_HASH_OF_YOUR_PASSWORD"
+
+# ─── BROWSER & EXTENSION ──────────────────────────────────────────────────────
+browser:
+  engine: "chromium"
+  headless: false
+  
+chrome_bridge:
+  enabled: true
+  timeout: 30
+
+# ─── MEDIA & VISION ───────────────────────────────────────────────────────────
+elevenlabs:
+  api_key: ""
+  voice: "Nova"
+
+video:
+  provider: "google"
+  google:
+    model: "veo-3.1"
+    default_aspect_ratio: "16:9"
+    default_duration: 8
+    default_resolution: "1080p"
+  luma:
+    apiKey: ""
+  runway:
+    apiKey: ""
+    model: "gen4"
+
+# ─── PATHS ───────────────────────────────────────────────────────────────────
+paths:
+  workspace: "./workspace"
+  logs: "./logs"
+  images: "./images"
+  chroma_data: "./chroma_data"
+  plugins: "./plugins"
+  watch: "./watch"
+
+# ─── TOOLS & TIMEOUTS ─────────────────────────────────────────────────────────
+tool_timeouts:
+  exec_shell: 120
+  execute_python: 60
+  web_search: 15
+  web_fetch: 30
+  generate_image: 180
+  analyze_image: 60
+  generate_video: 300
