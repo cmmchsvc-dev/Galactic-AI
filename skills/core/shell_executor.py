@@ -9,7 +9,7 @@ class ShellSkill(GalacticSkill):
     """The 'Hands' of Galactic AI: Executes local shell commands."""
 
     skill_name  = "shell_executor"
-    version     = "1.1.2"
+    version     = $11.4.0"
     author      = "Galactic AI"
     description = "Execute local shell commands (PowerShell)."
     category    = "system"
