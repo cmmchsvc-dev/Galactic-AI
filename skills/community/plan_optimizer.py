@@ -9,7 +9,7 @@ class PlanOptimizerSkill(GalacticSkill):
     before committing to a long-running subagent loop.
     """
     skill_name  = "plan_optimizer"
-    version     = "1.0.0"
+    version     = $11.4.0"
     author      = "Galactic AI"
     description = "Workspace Oracle: Simulates tool chains and previews costs/steps before execution."
     category    = "intelligence"

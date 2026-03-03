@@ -3,7 +3,7 @@ from skills.base import GalacticSkill
 
 class MdImprover(GalacticSkill):
     skill_name  = "md_improver"
-    version     = "1.0.0"
+    version     = $11.4.0"
     author      = "Galactic AI (via Planner)"
     description = "Audits a markdown file against quality heuristics."
     category    = "documentation"
