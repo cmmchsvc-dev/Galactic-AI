@@ -40,14 +40,13 @@ class SubAgentSession:
 
     def to_dict(self):
         return {
-            "session_id": self.id,
+            "id":         self.id,
             "agent":      self.agent_id,
             "task":       self.task[:120],
-            "model":      self.model,
             "status":     self.status,
             "elapsed":    self.elapsed,
             "progress":   self.progress,
-            "log_lines":  self.log_lines[-3:],
+            "log_tail":   self.log_lines[-3:],
             "result_snippet": (self.result or "")[:300] if self.status in ("completed", "failed") else None,
             "chain_id":   self.chain_id,
             "chain_step": self.chain_step,
@@ -267,7 +266,6 @@ class SubAgentSkill(GalacticSkill):
         try:
             context = (
                 f"You are a Galactic Sub-Agent ({session.agent_id}). "
-                "You have full 'Computer Use' capabilities. Use browser (browser_*, chrome_*) and desktop (desktop_*) tools to gather information and automate tasks proactively. "
                 f"Focus ONLY on this task and return a thorough result:\n\n{session.task}"
             )
             session.progress = "Thinking..."
@@ -320,7 +318,6 @@ class SubAgentSkill(GalacticSkill):
                 "type":       "subagent_update",
                 "session_id": session.id,
                 "agent":      session.agent_id,
-                "model":      session.model,
                 "status":     session.status,
                 "elapsed":    session.elapsed,
                 "progress":   session.progress,
@@ -337,7 +334,6 @@ class SubAgentSkill(GalacticSkill):
                 "type":           "subagent_done",
                 "session_id":     session.id,
                 "agent":          session.agent_id,
-                "model":          session.model,
                 "status":         session.status,
                 "elapsed":        session.elapsed,
                 "result_snippet": (session.result or "")[:400],

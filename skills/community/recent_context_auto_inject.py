@@ -22,7 +22,7 @@ class RecentContextAutoInjectSkill(GalacticSkill):
     """
 
     skill_name = "recent_context_auto_inject"
-    version     = $11.4.0"
+    version = "1.0.0"
     author = "Chesley + Byte"
     description = "Auto-inject last N characters of recent conversation from hot_buffer.json on boot."
     category = "memory"

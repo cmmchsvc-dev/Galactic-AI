@@ -7,36 +7,58 @@
   <meta name="description" content="A local-first AI automation platform with 150+ built-in tools, an AI-extensible Skills ecosystem, true persistent memory (ChromaDB + MEMORY.md), voice I/O, Chrome browser extension, Sub-Agents, computer vision control, 14 providers, and a real-time deck. Runs locally. No subscriptions." />
   <style>
     :root {
-      --bg: #0a0a0f;
-      --bg2: #111118;
-      --bg3: #1a1a24;
-      --border: #2a2a3a;
+      --bg: #030305;
+      --bg2: #0f1016;
+      --bg3: #1a1c26;
+      --border: rgba(255, 255, 255, 0.08);
       --accent: #7c3aed;
       --accent2: #a855f7;
       --accent3: #06b6d4;
-      --text: #e2e8f0;
+      --text: #f8fafc;
+      --text-dim: #cbd5e1;
       --muted: #94a3b8;
       --green: #10b981;
       --yellow: #f59e0b;
+      --glass-bg: rgba(15, 16, 22, 0.6);
+      --glass-border: rgba(255, 255, 255, 0.05);
+      --shadow-primary: 0 8px 32px rgba(124, 58, 237, 0.15);
+      --glow-accent: 0 0 20px rgba(168, 85, 247, 0.4);
     }
     * { box-sizing: border-box; margin: 0; padding: 0; }
     html { scroll-behavior: smooth; }
     body {
       background: var(--bg);
+      background-image: radial-gradient(circle at 15% 50%, rgba(124, 58, 237, 0.08), transparent 25%),
+                        radial-gradient(circle at 85% 30%, rgba(6, 182, 212, 0.08), transparent 25%);
       color: var(--text);
-      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
+      font-family: 'Inter', system-ui, -apple-system, sans-serif;
       line-height: 1.6;
+      overflow-x: hidden;
+    }
+    
+    /* ANIMATIONS */
+    @keyframes float {
+      0% { transform: translateY(0px); }
+      50% { transform: translateY(-10px); }
+      100% { transform: translateY(0px); }
+    }
+    @keyframes pulse-glow {
+      0% { box-shadow: 0 0 0 0 rgba(168, 85, 247, 0.4); }
+      70% { box-shadow: 0 0 0 10px rgba(168, 85, 247, 0); }
+      100% { box-shadow: 0 0 0 0 rgba(168, 85, 247, 0); }
     }
 
     /* NAV */
     nav {
       position: sticky; top: 0; z-index: 100;
-      background: rgba(10,10,15,0.92);
-      backdrop-filter: blur(12px);
-      border-bottom: 1px solid var(--border);
+      background: var(--glass-bg);
+      backdrop-filter: blur(16px);
+      -webkit-backdrop-filter: blur(16px);
+      border-bottom: 1px solid var(--glass-border);
       padding: 0 2rem;
       display: flex; align-items: center; justify-content: space-between;
-      height: 60px;
+      height: 70px;
+      box-shadow: 0 4px 30px rgba(0, 0, 0, 0.1);
     }
     .nav-logo { font-weight: 700; font-size: 1.1rem; letter-spacing: 0.02em; }
     .nav-logo span { color: var(--accent2); }
@@ -95,48 +117,62 @@
     }
     .hero-actions { display: flex; gap: 1rem; justify-content: center; flex-wrap: wrap; }
     .btn-primary {
-      background: var(--accent);
+      background: linear-gradient(135deg, var(--accent), var(--accent2));
       color: white;
-      padding: 0.8rem 2rem;
+      padding: 0.9rem 2.2rem;
       border-radius: 8px;
       text-decoration: none;
       font-weight: 700;
-      font-size: 1rem;
-      transition: background 0.2s, transform 0.15s;
+      font-size: 1.05rem;
+      transition: all 0.3s ease;
+      box-shadow: var(--shadow-primary);
+      border: 1px solid rgba(255,255,255,0.1);
     }
-    .btn-primary:hover { background: var(--accent2); transform: translateY(-1px); }
+    .btn-primary:hover {
+      transform: translateY(-2px);
+      box-shadow: var(--glow-accent);
+      filter: brightness(1.1);
+    }
     .btn-secondary {
-      background: var(--bg3);
+      background: var(--glass-bg);
+      backdrop-filter: blur(10px);
       color: var(--text);
-      padding: 0.8rem 2rem;
+      padding: 0.9rem 2.2rem;
       border-radius: 8px;
       text-decoration: none;
       font-weight: 600;
-      font-size: 1rem;
+      font-size: 1.05rem;
       border: 1px solid var(--border);
-      transition: border-color 0.2s, transform 0.15s;
+      transition: all 0.3s ease;
     }
-    .btn-secondary:hover { border-color: var(--accent); transform: translateY(-1px); }
+    .btn-secondary:hover {
+      border-color: var(--accent2);
+      transform: translateY(-2px);
+      background: rgba(255,255,255,0.02);
+    }
     .hero-sub {
       margin-top: 2rem;
       font-size: 0.85rem;
       color: var(--muted);
+      opacity: 0.8;
     }
 
     /* STATS BAR */
     .stats-bar {
-      border-top: 1px solid var(--border);
-      border-bottom: 1px solid var(--border);
-      background: var(--bg2);
-      padding: 1.5rem 2rem;
+      border-top: 1px solid var(--glass-border);
+      border-bottom: 1px solid var(--glass-border);
+      background: linear-gradient(90deg, transparent, rgba(15,16,22,0.8), transparent);
+      padding: 2rem 2rem;
       display: flex;
       justify-content: center;
-      gap: 3rem;
+      gap: 4rem;
       flex-wrap: wrap;
+      backdrop-filter: blur(5px);
     }
-    .stat { text-align: center; }
-    .stat-num { font-size: 1.75rem; font-weight: 800; color: var(--accent2); display: block; }
-    .stat-label { font-size: 0.8rem; color: var(--muted); }
+    .stat { text-align: center; transition: transform 0.3s ease; cursor: default; }
+    .stat:hover { transform: translateY(-5px); }
+    .stat-num { font-size: 2.2rem; font-weight: 800; color: var(--accent2); display: block; filter: drop-shadow(0 0 8px rgba(168,85,247,0.3)); }
+    .stat-label { font-size: 0.85rem; color: var(--text-dim); text-transform: uppercase; letter-spacing: 1px; margin-top: 0.25rem; }
 
     /* SECTIONS */
     section { padding: 5rem 2rem; max-width: 1100px; margin: 0 auto; }
@@ -216,20 +252,41 @@
       gap: 1.5rem;
     }
     .feature-card {
-      background: var(--bg2);
-      border: 1px solid var(--border);
-      border-radius: 12px;
-      padding: 1.75rem;
-      transition: border-color 0.2s, transform 0.15s;
+      background: var(--glass-bg);
+      backdrop-filter: blur(10px);
+      -webkit-backdrop-filter: blur(10px);
+      border: 1px solid var(--glass-border);
+      border-radius: 16px;
+      padding: 2rem;
+      transition: all 0.4s cubic-bezier(0.175, 0.885, 0.32, 1.275);
+      position: relative;
+      overflow: hidden;
     }
-    .feature-card:hover { border-color: var(--accent); transform: translateY(-2px); }
+    .feature-card::before {
+      content: '';
+      position: absolute;
+      top: 0; left: 0; width: 100%; height: 100%;
+      background: radial-gradient(circle at 50% 0%, rgba(124,58,237,0.1), transparent 60%);
+      opacity: 0;
+      transition: opacity 0.4s ease;
+    }
+    .feature-card:hover { 
+      border-color: rgba(168,85,247,0.5); 
+      transform: translateY(-8px) scale(1.02); 
+      box-shadow: 0 15px 30px rgba(0,0,0,0.3), var(--glow-accent);
+    }
+    .feature-card:hover::before { opacity: 1; }
     .feature-icon {
-      font-size: 1.75rem;
-      margin-bottom: 0.75rem;
-      display: block;
+      font-size: 2.2rem;
+      margin-bottom: 1rem;
+      display: inline-block;
+      transition: transform 0.3s ease;
     }
-    .feature-card h3 { font-size: 1.05rem; font-weight: 700; margin-bottom: 0.5rem; }
-    .feature-card p { color: var(--muted); font-size: 0.9rem; }
+    .feature-card:hover .feature-icon {
+      transform: scale(1.1) rotate(5deg);
+    }
+    .feature-card h3 { font-size: 1.15rem; font-weight: 700; margin-bottom: 0.6rem; color: var(--text); }
+    .feature-card p { color: var(--muted); font-size: 0.95rem; line-height: 1.5; position: relative; z-index: 1; }
 
     /* PROVIDERS */
     .provider-grid {
@@ -405,11 +462,11 @@
 
 <!-- HERO -->
 <div class="hero">
-  <div class="hero-badge">v1.3.0 — 150+ Tools · Agentic Code Intelligence · Big Brain Planner · Live Voice · Computer Use</div>
+  <div class="hero-badge">v1.4.0 — Hive Mind Subagents · Robust Playwright Integration · Rich Terminal Deck</div>
   <h1>Your AI that actually<br><span class="grad">does everything.</span></h1>
-  <p>A local-first AI automation platform with 150+ built-in tools, a dual-brain Strategic Planner, true persistent memory (ChromaDB), interruptible Live Voice mode, and advanced vision-based computer use. Runs on your machine. No subscriptions. No cloud required.</p>
+  <p>A local-first AI automation platform with 188+ built-in tools, a dual-brain Strategic Planner, true persistent memory (ChromaDB), interruptible Live Voice mode, and advanced vision-based computer use. Runs on your machine. No subscriptions. No cloud required.</p>
   <div class="hero-actions">
-    <a href="https://github.com/cmmchsvc-dev/Galactic-AI/releases/latest" class="btn-primary">Download v1.3.0 Free</a>
+    <a href="https://github.com/cmmchsvc-dev/Galactic-AI/releases/latest" class="btn-primary" style="animation: pulse-glow 2s infinite;">Download v1.4.0 Free</a>
     <a href="https://github.com/cmmchsvc-dev/Galactic-AI" class="btn-secondary">View on GitHub</a>
   </div>
   <p class="hero-sub">Free &amp; open source · Python 3.10+ · Windows / macOS / Linux</p>
@@ -417,9 +474,9 @@
 
 <!-- STATS BAR -->
 <div class="stats-bar">
-  <div class="stat"><span class="stat-num">150+</span><span class="stat-label">Built-in Tools</span></div>
+  <div class="stat"><span class="stat-num">188+</span><span class="stat-label">Built-in Tools</span></div>
   <div class="stat"><span class="stat-num">14</span><span class="stat-label">AI Providers</span></div>
-  <div class="stat"><span class="stat-num">2x</span><span class="stat-label">Planner + Builder Brains</span></div>
+  <div class="stat"><span class="stat-num">Hive</span><span class="stat-label">Mind Subagents</span></div>
   <div class="stat"><span class="stat-num">100%</span><span class="stat-label">Local Mode Available</span></div>
   <div class="stat"><span class="stat-num">0</span><span class="stat-label">Subscriptions</span></div>
 </div>
@@ -485,14 +542,14 @@
   <h2>Everything you need. Nothing you don't.</h2>
   <p class="section-sub">Built for people who want their AI to actually do things.</p>
 
-  <!-- What's New in v1.2.1 -->
+  <!-- What's New in v1.4.0 -->
   <div class="whats-new">
-    <div class="whats-new-label">✦ NEW IN v1.3.0 — THE INTELLIGENCE UPDATE</div>
+    <div class="whats-new-label">✦ NEW IN v1.4.0 — THE HIVE MIND UPDATE</div>
     <ul>
-      <li><strong>Agentic Code Intelligence:</strong> New <code>grep_search</code> and <code>code_outline</code> tools for deep codebase understanding.</li>
-      <li><strong>Surgical File Editing:</strong> Enhanced <code>read_file</code> with line ranges and <code>edit_file</code> for precise, non-destructive changes.</li>
-      <li><strong>Advanced Agentic Protocol:</strong> Updated <code>SOUL.md</code> with a robust Research → Plan → Implement → Verify cycle.</li>
-      <li><strong>Provider Hardening:</strong> Fixed Ollama thinking parameter injection and improved streaming reliability.</li>
+      <li><strong>Hive Mind Subagents:</strong> Spawn a hierarchy of worker agents visible in the Control Deck UI to parallelize development securely and quickly.</li>
+      <li><strong>Robust Playwright Browsing:</strong> Vastly improved `chrome_type` with seamless Search & Navigation handling complex sites perfectly.</li>
+      <li><strong>Dynamic Image Decoding:</strong> Render and parse screenshot memory buffers directly in chat, skipping object references.</li>
+      <li><strong>Streamlined Engine:</strong> Removed legacy EXE layers to ensure the application executes pure python, running significantly faster natively.</li>
     </ul>
   </div>
 
@@ -503,9 +560,9 @@
       <p>MEMORY.md, IDENTITY.md, SOUL.md, USER.md, and VAULT.md are loaded into every prompt. The AI always knows who it is, who you are, and how to log into your services.</p>
     </div>
     <div class="feature-card">
-      <span class="feature-icon">🕵️‍♂️</span>
-      <h3>Sub-Agents</h3>
-      <p>Spawn isolated AI background workers for deep research, coding, or data processing. Check their progress while keeping the main chat free.</p>
+      <span class="feature-icon">🐝</span>
+      <h3>Hive Mind Subagents</h3>
+      <p>Spawn isolated AI background workers nested in a Hive Mind architecture. Subagents communicate seamlessly while keeping main UI responsive for review.</p>
     </div>
     <div class="feature-card">
       <span class="feature-icon">👁️</span>
@@ -776,7 +833,7 @@
   <h2>Ready to run your own AI?</h2>
   <p>Free. Open source. Runs on your machine. No subscriptions, no cloud lock-in, no data leaks.</p>
   <div class="hero-actions">
-    <a href="https://github.com/cmmchsvc-dev/Galactic-AI/releases/latest" class="btn-primary">Download v1.3.0 Free</a>
+    <a href="https://github.com/cmmchsvc-dev/Galactic-AI/releases/latest" class="btn-primary">Download v1.4.0 Free</a>
     <a href="https://github.com/cmmchsvc-dev/Galactic-AI" class="btn-secondary">View Source on GitHub</a>
   </div>
   <p style="margin-top:1.5rem;color:var(--muted);font-size:0.875rem;">Windows · macOS · Linux · Chromebook · WSL2</p>
@@ -784,7 +841,7 @@
 
 <!-- FOOTER -->
 <footer>
-  <span>⭐ Galactic AI v1.3.0</span>
+  <span>⭐ Galactic AI v1.4.0</span>
   <a href="https://github.com/cmmchsvc-dev/Galactic-AI">GitHub</a>
   <a href="https://github.com/cmmchsvc-dev/Galactic-AI/releases">Releases</a>
   <a href="https://github.com/cmmchsvc-dev/Galactic-AI/blob/main/README.md">Docs</a>

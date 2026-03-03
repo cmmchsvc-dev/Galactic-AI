@@ -3,7 +3,7 @@ from skills.base import GalacticSkill
 
 class AutomationRecommender(GalacticSkill):
     skill_name  = "automation_recommender"
-    version     = $11.4.0"
+    version     = "1.0.0"
     author      = "Galactic AI (via Planner)"
     description = "Analyzes codebase patterns to recommend custom Galactic AI automations."
     category    = "code_analysis"
