@@ -1,0 +1,66 @@
+# Galactic AI v1.1.0 — Python Dependencies
+# Install with: pip install -r requirements.txt
+
+# ─── Core web framework & networking ─────────────────────────────────────────
+aiohttp>=3.9.0
+httpx[http2]>=0.27.0
+pyyaml>=6.0
+jinja2>=3.1.0
+requests>=2.31.0
+urllib3>=2.0.0
+
+# ─── Browser & desktop automation ────────────────────────────────────────────
+playwright>=1.44.0           # Chromium/Firefox/WebKit browser control
+pywebview>=5.0.0             # Native window support (launcher_desktop.py)
+pygetwindow>=0.0.9           # Window management (desktop_tool.py)
+pyautogui>=0.9.54            # OS-level mouse/keyboard/screenshot (desktop_tool.py)
+pyperclip>=1.8.2             # Clipboard access for Unicode typing support
+opencv-python>=4.8.0         # Template matching for desktop_locate tool
+
+# ─── AI Provider SDKs ─────────────────────────────────────────────────────────
+openai>=1.40.0               # OpenAI + compatible (Groq, Cerebras, etc.)
+anthropic>=0.34.0            # Anthropic Claude SDK
+google-genai>=1.0.0          # Google Gen AI SDK (Gemini + Imagen)
+
+# ─── Text-to-Speech & Audio ──────────────────────────────────────────────────
+edge-tts>=7.0.0              # FREE Microsoft neural voices
+elevenlabs>=1.9.0            # Premium TTS voices (optional)
+gtts>=2.5.0                  # Free Google TTS fallback
+pygame>=2.5.0                # Audio playback for TTS output
+
+# ─── Web scraping / content parsing ──────────────────────────────────────────
+beautifulsoup4>=4.12.0
+lxml>=5.0.0                  # Faster HTML/XML parser for beautifulsoup4
+
+# ─── Data & Document Processing ──────────────────────────────────────────────
+pandas>=2.0.0                # Data analysis and system tools
+pdfplumber>=0.11.0           # High-accuracy PDF extraction (gateway_v3.py)
+openpyxl>=3.1.0              # Excel file support (.xlsx)
+python-docx>=1.1.0           # Read .docx Word documents
+PyPDF2>=3.0.0                # Basic PDF support (legacy)
+Pillow>=10.4.0               # Image processing (analyze_image tool)
+
+# ─── Memory & ML (Core) ──────────────────────────────────────────────────────
+chromadb>=0.4.24             # Vector database for long-term memory
+sentence-transformers>=2.2.2 # Embeddings generation
+numpy>=1.26.0                # Numerical processing
+scikit-learn>=1.4.0          # Cosine similarity and semantic clustering
+
+# ─── Scheduling / tasks ──────────────────────────────────────────────────────
+apscheduler>=3.10.0          # Advanced task scheduling
+
+# ─── Remote Access / Security ────────────────────────────────────────────────
+qrcode[pil]>=8.0             # QR code generation for mobile pairing
+cryptography>=42.0.0         # TLS certificate generation
+
+# ─── Social Media & Messaging ────────────────────────────────────────────────
+discord.py>=2.3.0            # Discord integration (discord_bridge.py)
+tweepy>=4.14.0               # Twitter/X API v2
+praw>=7.7.0                  # Reddit API
+
+# ─── Utilities & Formatting ──────────────────────────────────────────────────
+psutil>=5.9.0                # System telemetry (sovereign dashboard)
+python-dotenv>=1.0.0         # Load .env files
+rich>=13.7.0                 # Formatted terminal/dashboard output
+tqdm>=4.66.0                 # Progress bars
+
