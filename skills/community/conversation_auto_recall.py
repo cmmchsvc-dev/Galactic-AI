@@ -42,7 +42,7 @@ class ConversationAutoRecallSkill(GalacticSkill):
     """
 
     skill_name = "conversation_auto_recall"
-    version = "1.0.0"
+    version     = $11.4.0"
     author = "Chesley + Byte"
     description = "Auto-recalls relevant snippets from archived conversations and injects them into context."
     category = "memory"

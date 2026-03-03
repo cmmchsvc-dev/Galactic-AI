@@ -22,7 +22,7 @@ class WorkspaceIndexerSkill(GalacticSkill):
     Monitors the workspace folder and builds a searchable semantic index of your codebase.
     """
     skill_name  = "workspace_indexer"
-    version     = "1.0.0"
+    version     = $11.4.0"
     author      = "Galactic AI"
     description = "Automatically indexes files in workspace/ for fast semantic search (RAG)."
     category    = "system"

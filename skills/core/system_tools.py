@@ -34,7 +34,7 @@ class SystemSkill(GalacticSkill):
     """Core OS and Utility tools: files, git, process, networking."""
 
     skill_name  = "system_tools"
-    version     = "1.1.0"
+    version     = $11.4.0"
     author      = "Galactic AI"
     description = "Essential OS, File System, Git, and Network utility tools."
     category    = "system"
@@ -457,13 +457,14 @@ class SystemSkill(GalacticSkill):
                 "fn": self.tool_send_telegram
             },
             "grep_search": {
-                "description": "Search file contents for a text or regex pattern. Returns matching lines with filenames and line numbers.",
+                "description": "Search file contents for a text pattern. Returns matching lines with filenames and line numbers. Use is_regex=true if your pattern is a regular expression.",
                 "parameters": {
                     "type": "object",
                     "properties": {
-                        "pattern": {"type": "string", "description": "Text or regex pattern to find."},
+                        "pattern": {"type": "string", "description": "Text pattern to find."},
                         "path": {"type": "string", "description": "Root directory to search (default: current workspace)."},
                         "file_pattern": {"type": "string", "description": "Optional glob to filter files (e.g. '*.py')."},
+                        "is_regex": {"type": "boolean", "description": "If true, pattern is regex. If false, it's treated as literal text (default: false)."},
                         "max_results": {"type": "integer", "description": "Max matches to return (default: 50)."}
                     },
                     "required": ["pattern"]
@@ -874,6 +875,10 @@ class SystemSkill(GalacticSkill):
             return f"[ERROR] Session ID {sid} is already running."
             
         try:
+            # ── Placeholder Validation ──
+            if not cmd or '<' in cmd or '>' in cmd or '[' in cmd or 'YOUR_' in cmd.upper():
+                return f"[ERROR] process_start: Invalid or placeholder command detected: '{cmd}'. Please provide a real command or ask for the missing parameters."
+
             p = await asyncio.create_subprocess_exec('powershell', '-Command', cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
             
             out_buf = []
@@ -1011,13 +1016,15 @@ class SystemSkill(GalacticSkill):
         pattern = args.get('pattern')
         path = args.get('path', '.') or '.'
         file_pattern = args.get('file_pattern', '*')
+        is_regex = bool(args.get('is_regex', False))
         max_results = int(args.get('max_results', 50))
 
         def _grep_sync():
             try:
                 import fnmatch
                 base = os.path.abspath(path)
-                regex = re.compile(pattern, re.IGNORECASE)
+                search_pattern = pattern if is_regex else re.escape(pattern)
+                regex = re.compile(search_pattern, re.IGNORECASE)
                 matches = []
                 
                 # Directories to skip

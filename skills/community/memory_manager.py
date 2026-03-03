@@ -18,7 +18,7 @@ class MemoryManagerSkill(GalacticSkill):
     Manages the AI's long-term memory using ChromaDB for semantic search.
     """
     skill_name  = "memory_manager"
-    version     = "1.0.0"
+    version     = $11.4.0"
     author      = "Galactic AI"
     description = "Vector database long-term memory using ChromaDB."
     category    = "data"

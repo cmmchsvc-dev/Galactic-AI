@@ -25,7 +25,7 @@ class BootRecallBannerSkill(GalacticSkill):
     """
 
     skill_name = "boot_recall_banner"
-    version = "1.0.0"
+    version     = $11.4.0"
     author = "Chesley + Byte"
     description = "Prints the last N hot-buffer messages on boot (and writes them to a file)."
     category = "memory"
