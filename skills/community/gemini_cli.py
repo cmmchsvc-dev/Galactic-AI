@@ -47,7 +47,7 @@ class GeminiCLISkill(GalacticSkill):
     """
     
     skill_name  = "gemini_cli"
-    version     = $11.4.0"
+    version     = "1.0.0"
     author      = "Gemini CLI"
     description = "Full integration of the Gemini CLI engineering agent and workflow."
     category    = "intelligence"

@@ -2,7 +2,7 @@
 
 **Sovereign. Universal. Fast.**
 
-A powerful, local-first AI automation platform with 150+ built-in tools, an extensible Skills ecosystem, true persistent memory, voice I/O, video generation, Chrome browser extension, social media tools, 14+ AI providers, multi-platform messaging bridges, and a real-time web Control Deck. **v1.3.0**
+A powerful, local-first AI automation platform with 188+ built-in tools, an extensible Skills ecosystem, true persistent memory, voice I/O, video generation, Chrome browser extension, social media tools, 14+ AI providers, multi-platform messaging bridges, and a real-time web Control Deck. **v1.4.0**
 
 Run fully local with Ollama (no API keys, no cloud, no tracking), or connect to any of 14 cloud providers. Your data stays yours.
 
@@ -32,16 +32,11 @@ Beyond recalling chat history, Galactic AI now has a living memory of your local
 
 ## Quick Start
 
-### 🖥️ Windows — Standalone EXE (Easiest)
+### 🖥️ Windows — Standalone EXE (Removed)
 
-No Python or terminal needed:
+> **Note**: As of v1.4.0, the packaged `GalacticAI.exe` has been removed to significantly speed up native Python execution, remove massive bundling overhead, and prevent false-positive Antivirus blocks.
 
-1. Download **`Galactic-AI-v1.3.0-windows.zip`** from [Releases](https://github.com/cmmchsvc-dev/Galactic-AI/releases)
-2. Unzip → open `config.yaml` → paste in your API key
-3. Double-click **`GalacticAI.exe`** — a console window + the Control Deck window will open
-4. First run shows the Setup Wizard to finish configuration
-
-> **Already have a config?** The exe finds `config.yaml` automatically in the same folder.
+Please use the Python native scripts below to run Galactic AI.
 
 ### Windows — Script (Python required)
 ```powershell
@@ -543,6 +538,7 @@ MIT License — see LICENSE file.
 
 | Version | Highlights |
 |---|---|
+| **v1.4.0** | 🐝 **Hive Mind Subagents** architecture for hierarchal multi-agent workflows visible in UI. • 🌐 **Robust Playwright Integration** resolving DOM navigation flaws in Search/Enter behaviors • 🖼️ **Dynamic Image Decoding** directly buffering visions via base64 for reliable parsing • 🚀 Streamlined Engine execution with legacy EXE dependencies completely removed • Version UI consistency. |
 | **v1.3.0** | 🖥️ Windows Desktop EXE (pywebview, auto-login, text selection, console window) • 🤖 `grep_search` + `code_outline` tools • Advanced Agentic Protocol in SOUL.md • Smart Scroll in all tabs • Empty logs tab fix • Version string consistency • Signal handler fix for GUI mode |
 | **v1.2.1** | 🎛️ The Control Update — Centralized dynamic models.yaml, 14 new providers added, OpenRouter tiers restored, and robust JSON extraction (O(N) stack-based parser) + Subprocess Unicode encoding fixes |
 | **v1.2.0** | 🧠 The Hivemind Update — Resumable workflows via checkpoints, Workspace Oracle planner, Gemini CLI Bridge, Superpowers TDD integration, and Planner fallback redundancy |
