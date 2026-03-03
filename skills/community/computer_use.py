@@ -30,7 +30,7 @@ class ComputerUseSkill(GalacticSkill):
     Allows the AI to look at the screen and find coordinates for elements based on natural language descriptions.
     """
     skill_name  = "computer_use"
-    version     = $11.4.0"
+    version     = "1.0.0"
     author      = "Galactic AI"
     description = "Vision-based GUI automation: find and click elements on screen using Gemini."
     category    = "system"

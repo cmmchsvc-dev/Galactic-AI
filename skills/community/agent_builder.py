@@ -2,7 +2,7 @@ from skills.base import GalacticSkill
 
 class AgentBuilderSkill(GalacticSkill):
     skill_name  = "agent_builder"
-    version     = $11.4.0"
+    version     = "1.0.0"
     author      = "Galactic AI"
     description = "Generate Claude-style subagent markdown specs with strong trigger descriptions and frontmatter."
     category    = "development"
