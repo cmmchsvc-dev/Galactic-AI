@@ -14,6 +14,7 @@ import asyncio
 import base64
 import json
 import logging
+import os
 import uuid
 from datetime import datetime
 from pathlib import Path
@@ -33,7 +34,7 @@ class ChromeBridgeSkill(GalacticSkill):
     """
 
     skill_name  = "chrome_bridge"
-    version     = "1.1.9"
+    version     = $11.4.0"
     author      = "Galactic AI"
     description = "Chrome extension WebSocket bridge for real browser control."
     category    = "browser"
@@ -112,22 +113,23 @@ class ChromeBridgeSkill(GalacticSkill):
                 "fn": self._tool_chrome_click
             },
             "chrome_type": {
-                "description": "Type text into the focused element or a specified element in the user's Chrome browser.",
+                "description": "Type text into the focused element or a specified element in the user's Chrome browser. IMPORTANT: To submit a search or form immediately, you MUST set 'enter': true.",
                 "parameters": {"type": "object", "properties": {
                     "text": {"type": "string", "description": "Text to type"},
                     "ref": {"type": "string", "description": "Element ref ID to type into"},
                     "selector": {"type": "string", "description": "CSS selector of element to type into"},
                     "clear": {"type": "boolean", "description": "Clear existing content before typing (default: true)"},
+                    "enter": {"type": "boolean", "description": "CRITICAL: Set to true if you are filling a search bar or need to submit the form immediately after typing. Without this, searches will fail."},
                 }, "required": ["text"]},
                 "fn": self._tool_chrome_type
             },
             "chrome_scroll": {
                 "description": "Scroll the page or a specific element in the user's Chrome browser.",
                 "parameters": {"type": "object", "properties": {
-                    "direction": {"type": "string", "description": "Scroll direction: up, down, left, right"},
-                    "amount": {"type": "number", "description": "Scroll amount in pixels (default: 300)"},
-                    "ref": {"type": "string", "description": "Element ref ID to scroll into view"},
-                    "selector": {"type": "string", "description": "CSS selector of element to scroll into view"},
+                    "direction": {"type": "string", "description": "CRITICAL: When asked to scroll to the 'middle', 'top', or 'bottom', you MUST pass that exact word here. Do NOT try to guess pixel amounts."},
+                    "amount": {"type": "number", "description": "Scroll amount in pixels (default: 300). Ignored for middle/bottom/top."},
+                    "ref": {"type": "string", "description": "Optional element ref ID to scroll perfectly into view"},
+                    "selector": {"type": "string", "description": "Optional CSS selector to scroll perfectly into view"},
                 }},
                 "fn": self._tool_chrome_scroll
             },
@@ -151,6 +153,11 @@ class ChromeBridgeSkill(GalacticSkill):
                 "description": "Extract all text content from the current page in the user's Chrome browser.",
                 "parameters": {"type": "object", "properties": {}},
                 "fn": self._tool_chrome_get_text
+            },
+            "chrome_get_dom": {
+                "description": "Extract the full HTML (DOM) of the current page in the user's Chrome browser.",
+                "parameters": {"type": "object", "properties": {}},
+                "fn": self._tool_chrome_get_dom
             },
             "chrome_tabs_list": {
                 "description": "List all open tabs in the user's Chrome browser.",
@@ -311,32 +318,40 @@ class ChromeBridgeSkill(GalacticSkill):
     async def _tool_chrome_screenshot(self, args):
         if not self.ws_connection:
             return "[ERROR] Chrome extension not connected. Install the Galactic Browser extension and click Connect."
-        result = await self.screenshot()
-        if result.get('status') == 'success':
-            img_data = result.get('image_b64', '')
-            if not img_data:
-                return "[ERROR] Chrome screenshot: no image data returned"
+        
+        await self.send_command("show_status", {"text": "Capturing screen..."})
+        try:
+            result = await self.screenshot()
+            if result.get('status') == 'success':
+                img_data = result.get('image_b64', '')
+                if not img_data:
+                    return "[ERROR] Chrome screenshot: no image data returned"
 
-            # Save to images/browser/ directory (consistent with Playwright screenshot tool)
-            try:
-                images_dir = self.core.config.get('paths', {}).get('images', './images')
-                img_subdir = Path(images_dir) / 'browser'
-                img_subdir.mkdir(parents=True, exist_ok=True)
-                ts = datetime.now().strftime('%Y%m%d_%H%M%S')
-                path = str(img_subdir / f'chrome_{ts}.jpg')
-                
-                # Strip data URI prefix if present
-                clean_b64 = img_data.split(',', 1)[1] if ',' in img_data and img_data.startswith('data:') else img_data
-                
-                raw = base64.b64decode(clean_b64)
-                with open(path, 'wb') as f:
-                    f.write(raw)
-                # Return special dict that gateway detects and renders as a vision message
-                return {"__image_b64__": img_data, "path": path, "media_type": "image/jpeg",
-                        "text": f"[CHROME] Screenshot saved: {path}"}
-            except Exception as e:
-                return f"[CHROME] Screenshot captured ({len(img_data)} chars base64) — save failed: {e}"
-        return f"[ERROR] Chrome screenshot: {result.get('error') or result.get('message') or 'unknown error'}"
+                # Save to images/browser/ directory (consistent with Playwright screenshot tool)
+                try:
+                    images_dir = self.core.config.get('paths', {}).get('images', './images')
+                    img_subdir = Path(images_dir) / 'browser'
+                    img_subdir.mkdir(parents=True, exist_ok=True)
+                    ts = datetime.now().strftime('%Y%m%d_%H%M%S')
+                    path = str(img_subdir / f'chrome_{ts}.jpg')
+                    
+                    # Strip data URI prefix if present
+                    clean_b64 = img_data.split(',', 1)[1] if ',' in img_data and img_data.startswith('data:') else img_data
+                    
+                    raw = base64.b64decode(clean_b64)
+                    with open(path, 'wb') as f:
+                        f.write(raw)
+                    filename = os.path.basename(path)
+                    embed_hint = f"\n\nEMBED HINT: ![Browser Screenshot](http://{self.core.config['web'].get('host', '127.0.0.1')}:{self.core.config['web'].get('port', 17789)}/api/images/browser/{filename})"
+                    
+                    # Return special dict that gateway detects and renders as a vision message
+                    return {"__image_b64__": img_data, "path": path, "media_type": "image/jpeg",
+                            "text": f"[CHROME] Screenshot saved: {path}{embed_hint}"}
+                except Exception as e:
+                    return f"[CHROME] Screenshot captured ({len(img_data)} chars base64) — save failed: {e}"
+            return f"[ERROR] Chrome screenshot: {result.get('error') or result.get('message') or 'unknown error'}"
+        finally:
+            await self.send_command("hide_status", {})
 
     async def _tool_chrome_zoom(self, args):
         if not self.ws_connection: return "[ERROR] Chrome extension not connected."
@@ -360,8 +375,11 @@ class ChromeBridgeSkill(GalacticSkill):
                 
                 with open(path, 'wb') as f:
                     f.write(base64.b64decode(clean_b64))
+                filename = os.path.basename(path)
+                embed_hint = f"\n\nEMBED HINT: ![Browser Zoom](http://{self.core.config['web'].get('host', '127.0.0.1')}:{self.core.config['web'].get('port', 17789)}/api/images/browser/{filename})"
+
                 return {"__image_b64__": img_data, "path": path, "media_type": "image/jpeg",
-                        "text": f"[CHROME] Zoomed region {region} saved: {path}"}
+                        "text": f"[CHROME] Zoomed region {region} saved: {path}{embed_hint}"}
             except Exception as e:
                 return f"[CHROME] Zoom captured — save failed: {e}"
         return f"[ERROR] Chrome zoom: {result.get('error') or result.get('message') or 'unknown'}"
@@ -369,22 +387,30 @@ class ChromeBridgeSkill(GalacticSkill):
     async def _tool_chrome_navigate(self, args):
         if not self.ws_connection: return "[ERROR] Chrome extension not connected."
         url = args.get('url', '')
-        result = await self.navigate(url)
-        if result.get('status') == 'success':
-            return f"[CHROME] Navigated to: {result.get('url', url)}"
-        return f"[ERROR] Chrome navigate: {result.get('error') or result.get('message') or 'unknown error'}"
+        await self.send_command("show_status", {"text": f"Navigating to {url}..."})
+        try:
+            result = await self.navigate(url)
+            if result.get('status') == 'success':
+                return f"[CHROME] Navigated to: {result.get('url', url)}"
+            return f"[ERROR] Chrome navigate: {result.get('error') or result.get('message') or 'unknown error'}"
+        finally:
+            await self.send_command("hide_status", {})
 
     async def _tool_chrome_read_page(self, args):
         if not self.ws_connection: return "[ERROR] Chrome extension not connected."
-        result = await self.read_page(
-            tab_id=args.get('tab_id'),
-            filter_val=args.get('filter', 'all'),
-        )
-        if result.get('status') == 'success':
-            tree = result.get('tree', '')
-            refs = result.get('ref_count', 0)
-            return f"[CHROME] Page snapshot ({refs} refs):\n{tree}"
-        return f"[ERROR] Chrome read_page: {result.get('error') or result.get('message') or 'unknown error'}"
+        await self.send_command("show_status", {"text": "Scanning page..."})
+        try:
+            result = await self.read_page(
+                tab_id=args.get('tab_id'),
+                filter_val=args.get('filter', 'all'),
+            )
+            if result.get('status') == 'success':
+                tree = result.get('tree', '')
+                refs = result.get('ref_count', 0)
+                return f"[CHROME] Page snapshot ({refs} refs):\n{tree}"
+            return f"[ERROR] Chrome read_page: {result.get('error') or result.get('message') or 'unknown error'}"
+        finally:
+            await self.send_command("hide_status", {})
 
     async def _tool_chrome_find(self, args):
         if not self.ws_connection: return "[ERROR] Chrome extension not connected."
@@ -404,46 +430,67 @@ class ChromeBridgeSkill(GalacticSkill):
 
     async def _tool_chrome_click(self, args):
         if not self.ws_connection: return "[ERROR] Chrome extension not connected."
-        result = await self.click(
-            ref=args.get('ref'), selector=args.get('selector'),
-            x=args.get('x'), y=args.get('y'),
-            double_click=args.get('double_click', False)
-        )
-        if result.get('status') == 'success':
-            target = args.get('ref') or args.get('selector') or f"({args.get('x')},{args.get('y')})"
-            return f"[CHROME] Clicked: {target}"
-        return f"[ERROR] Chrome click: {result.get('error') or result.get('message') or 'unknown error'}"
+        target = args.get('ref') or args.get('selector') or f"({args.get('x')},{args.get('y')})"
+        await self.send_command("show_status", {"text": f"Clicking {target}..."})
+        try:
+            result = await self.click(
+                ref=args.get('ref'), selector=args.get('selector'),
+                x=args.get('x'), y=args.get('y'),
+                double_click=args.get('double_click', False)
+            )
+            if result.get('status') == 'success':
+                return f"[CHROME] Clicked: {target}"
+            return f"[ERROR] Chrome click: {result.get('error') or result.get('message') or 'unknown error'}"
+        finally:
+            await self.send_command("hide_status", {})
 
     async def _tool_chrome_type(self, args):
         if not self.ws_connection: return "[ERROR] Chrome extension not connected."
-        result = await self.type_text(
-            text=args.get('text', ''),
-            ref=args.get('ref'), selector=args.get('selector'),
-            clear=args.get('clear', True)
-        )
-        if result.get('status') == 'success':
-            return f"[CHROME] Typed {len(args.get('text', ''))} chars"
-        return f"[ERROR] Chrome type: {result.get('error') or result.get('message') or 'unknown error'}"
+        text = args.get('text', '')
+        short_text = (text[:20] + "...") if len(text) > 20 else text
+        await self.send_command("show_status", {"text": f"Typing '{short_text}'..."})
+        try:
+            result = await self.type_text(
+                text=text,
+                ref=args.get('ref'), selector=args.get('selector'),
+                clear=args.get('clear', True),
+                enter=args.get('enter', False)
+            )
+            if result.get('status') == 'success':
+                return f"[CHROME] Typed {len(text)} chars"
+            return f"[ERROR] Chrome type: {result.get('error') or result.get('message') or 'unknown error'}"
+        finally:
+            await self.send_command("hide_status", {})
 
     async def _tool_chrome_scroll(self, args):
         if not self.ws_connection: return "[ERROR] Chrome extension not connected."
-        result = await self.scroll(
-            direction=args.get('direction'), amount=args.get('amount'),
-            ref=args.get('ref'), selector=args.get('selector')
-        )
-        if result.get('status') == 'success':
-            return f"[CHROME] Scrolled {args.get('direction', 'element into view')}"
-        return f"[ERROR] Chrome scroll: {result.get('error') or result.get('message') or 'unknown error'}"
+        direction = args.get('direction', 'down')
+        await self.send_command("show_status", {"text": f"Scrolling to {direction}..."})
+        try:
+            result = await self.scroll(
+                direction=direction, amount=args.get('amount'),
+                ref=args.get('ref'), selector=args.get('selector')
+            )
+            if result.get('status') == 'success':
+                return result.get('message', f"[CHROME] Scrolled {args.get('direction', 'down')}")
+            return f"[ERROR] Chrome scroll: {result.get('error') or result.get('message') or 'unknown error'}"
+        finally:
+            await self.send_command("hide_status", {})
 
     async def _tool_chrome_form_input(self, args):
         if not self.ws_connection: return "[ERROR] Chrome extension not connected."
-        result = await self.form_input(
-            ref=args.get('ref'), selector=args.get('selector'),
-            value=args.get('value', '')
-        )
-        if result.get('status') == 'success':
-            return f"[CHROME] Form value set"
-        return f"[ERROR] Chrome form_input: {result.get('error') or result.get('message') or 'unknown error'}"
+        target = args.get('ref') or args.get('selector')
+        await self.send_command("show_status", {"text": f"Setting {target}..."})
+        try:
+            result = await self.form_input(
+                ref=args.get('ref'), selector=args.get('selector'),
+                value=args.get('value', '')
+            )
+            if result.get('status') == 'success':
+                return f"[CHROME] Form value set"
+            return f"[ERROR] Chrome form_input: {result.get('error') or result.get('message') or 'unknown error'}"
+        finally:
+            await self.send_command("hide_status", {})
 
     async def _tool_chrome_execute_js(self, args):
         if not self.ws_connection: return "[ERROR] Chrome extension not connected."
@@ -459,6 +506,20 @@ class ChromeBridgeSkill(GalacticSkill):
             text = result.get('text', '')
             return f"[CHROME] Page text ({len(text)} chars):\n{text[:5000]}"
         return f"[ERROR] Chrome get_text: {result.get('error') or result.get('message') or 'unknown error'}"
+
+    async def _tool_chrome_get_dom(self, args):
+        if not self.ws_connection: return "[ERROR] Chrome extension not connected."
+        # Show "Getting DOM..." status pill in the browser
+        await self.send_command("show_status", {"text": "Getting DOM..."})
+        try:
+            result = await self.send_command("get_dom", {})
+            if result.get('status') == 'success':
+                html = result.get('html', '')
+                return f"[CHROME] DOM extracted ({len(html)} chars):\n{html[:8000]}"
+            return f"[ERROR] Chrome get_dom: {result.get('error') or result.get('message') or 'unknown error'}"
+        finally:
+            # Always hide the status pill when done
+            await self.send_command("hide_status", {})
 
     async def _tool_chrome_tabs_list(self, args):
         if not self.ws_connection: return "[ERROR] Chrome extension not connected."
@@ -554,47 +615,63 @@ class ChromeBridgeSkill(GalacticSkill):
 
     async def _tool_chrome_hover(self, args):
         if not self.ws_connection: return "[ERROR] Chrome extension not connected."
-        result = await self.hover(
-            ref=args.get('ref'), selector=args.get('selector'),
-            x=args.get('x'), y=args.get('y')
-        )
-        if result.get('status') == 'success':
-            target = args.get('ref') or args.get('selector') or f"({args.get('x')},{args.get('y')})"
-            return f"[CHROME] Hovered: {target}"
-        return f"[ERROR] Chrome hover: {result.get('error') or result.get('message') or 'unknown error'}"
+        target = args.get('ref') or args.get('selector') or f"({args.get('x')},{args.get('y')})"
+        await self.send_command("show_status", {"text": f"Hovering {target}..."})
+        try:
+            result = await self.hover(
+                ref=args.get('ref'), selector=args.get('selector'),
+                x=args.get('x'), y=args.get('y')
+            )
+            if result.get('status') == 'success':
+                return f"[CHROME] Hovered: {target}"
+            return f"[ERROR] Chrome hover: {result.get('error') or result.get('message') or 'unknown error'}"
+        finally:
+            await self.send_command("hide_status", {})
 
     async def _tool_chrome_drag(self, args):
         if not self.ws_connection: return "[ERROR] Chrome extension not connected."
-        result = await self.send_command("drag", {
-            "start_x": args.get('start_x'), "start_y": args.get('start_y'),
-            "end_x": args.get('end_x'), "end_y": args.get('end_y'),
-        })
-        if result.get('status') == 'success':
-            return (f"[CHROME] Dragged from ({args.get('start_x')},{args.get('start_y')}) "
-                    f"to ({args.get('end_x')},{args.get('end_y')})")
-        return f"[ERROR] Chrome drag: {result.get('error') or result.get('message') or 'unknown'}"
+        await self.send_command("show_status", {"text": "Dragging..."})
+        try:
+            result = await self.send_command("drag", {
+                "start_x": args.get('start_x'), "start_y": args.get('start_y'),
+                "end_x": args.get('end_x'), "end_y": args.get('end_y'),
+            })
+            if result.get('status') == 'success':
+                return (f"[CHROME] Dragged from ({args.get('start_x')},{args.get('start_y')}) "
+                        f"to ({args.get('end_x')},{args.get('end_y')})")
+            return f"[ERROR] Chrome drag: {result.get('error') or result.get('message') or 'unknown'}"
+        finally:
+            await self.send_command("hide_status", {})
 
     async def _tool_chrome_right_click(self, args):
         if not self.ws_connection: return "[ERROR] Chrome extension not connected."
-        result = await self.send_command("right_click", {
-            "ref": args.get('ref'), "selector": args.get('selector'),
-            "x": args.get('x'), "y": args.get('y'),
-        })
-        if result.get('status') == 'success':
-            target = args.get('ref') or args.get('selector') or f"({args.get('x')},{args.get('y')})"
-            return f"[CHROME] Right-clicked: {target}"
-        return f"[ERROR] Chrome right_click: {result.get('error') or result.get('message') or 'unknown'}"
+        target = args.get('ref') or args.get('selector') or f"({args.get('x')},{args.get('y')})"
+        await self.send_command("show_status", {"text": f"Right-clicking {target}..."})
+        try:
+            result = await self.send_command("right_click", {
+                "ref": args.get('ref'), "selector": args.get('selector'),
+                "x": args.get('x'), "y": args.get('y'),
+            })
+            if result.get('status') == 'success':
+                return f"[CHROME] Right-clicked: {target}"
+            return f"[ERROR] Chrome right_click: {result.get('error') or result.get('message') or 'unknown'}"
+        finally:
+            await self.send_command("hide_status", {})
 
     async def _tool_chrome_triple_click(self, args):
         if not self.ws_connection: return "[ERROR] Chrome extension not connected."
-        result = await self.send_command("triple_click", {
-            "ref": args.get('ref'), "selector": args.get('selector'),
-            "x": args.get('x'), "y": args.get('y'),
-        })
-        if result.get('status') == 'success':
-            target = args.get('ref') or args.get('selector') or f"({args.get('x')},{args.get('y')})"
-            return f"[CHROME] Triple-clicked: {target}"
-        return f"[ERROR] Chrome triple_click: {result.get('error') or result.get('message') or 'unknown'}"
+        target = args.get('ref') or args.get('selector') or f"({args.get('x')},{args.get('y')})"
+        await self.send_command("show_status", {"text": f"Triple-clicking {target}..."})
+        try:
+            result = await self.send_command("triple_click", {
+                "ref": args.get('ref'), "selector": args.get('selector'),
+                "x": args.get('x'), "y": args.get('y'),
+            })
+            if result.get('status') == 'success':
+                return f"[CHROME] Triple-clicked: {target}"
+            return f"[ERROR] Chrome triple_click: {result.get('error') or result.get('message') or 'unknown'}"
+        finally:
+            await self.send_command("hide_status", {})
 
     async def _tool_chrome_upload(self, args):
         if not self.ws_connection: return "[ERROR] Chrome extension not connected."
@@ -781,6 +858,12 @@ class ChromeBridgeSkill(GalacticSkill):
 
         elif msg_type == "disconnect":
             self._connected = False
+            # Fail all pending commands immediately
+            for request_id, future in self._pending.items():
+                if not future.done():
+                    future.set_result({"error": "Chrome extension disconnected."})
+            self._pending.clear()
+            
             await self.core.log(
                 "Chrome extension disconnected",
                 priority=2,
@@ -794,8 +877,6 @@ class ChromeBridgeSkill(GalacticSkill):
         else:
             logger.debug("ChromeBridge: unhandled message type '%s'", msg_type)
 
-    # ── Outbound command dispatcher ──────────────────────────────────────
-
     async def send_command(self, command: str, args: dict | None = None) -> dict:
         """Send a command to the Chrome extension and wait for the result.
 
@@ -804,6 +885,9 @@ class ChromeBridgeSkill(GalacticSkill):
         """
         if not self.connected:
             return {"error": "Chrome extension not connected. Ensure the extension is running and connected via WebSocket."}
+
+        # Technical logging for interaction tracing
+        logger.info("[ChromeBridge] Sending command: %s (args: %s)", command, args)
 
         request_id = uuid.uuid4().hex[:8]
         future: asyncio.Future = asyncio.get_event_loop().create_future()
@@ -815,6 +899,10 @@ class ChromeBridgeSkill(GalacticSkill):
             "command": command,
             "args": args or {},
         })
+
+        if not self.ws_connection:
+            self._connected = False
+            return {"error": "Chrome extension WebSocket connection lost."}
 
         try:
             await self.ws_connection.send_str(envelope)
@@ -906,13 +994,14 @@ class ChromeBridgeSkill(GalacticSkill):
             "tab_id": tab_id,
         })
 
-    async def type_text(self, text: str, selector=None, ref=None, clear: bool = True, tab_id=None):
+    async def type_text(self, text: str, selector=None, ref=None, clear: bool = True, enter: bool = False, tab_id=None):
         """Type text into a focused element or one identified by selector/ref."""
         return await self.send_command("type", {
             "text": text,
             "selector": selector,
             "ref": ref,
             "clear": clear,
+            "enter": enter,
             "tab_id": tab_id,
         })
 

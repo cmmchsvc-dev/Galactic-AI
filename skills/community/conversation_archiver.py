@@ -44,7 +44,7 @@ class ConversationArchiverSkill(GalacticSkill):
     """
 
     skill_name = 'conversation_archiver'
-    version = '1.0.2'
+    version     = $11.4.0'
     author = 'Chesley + Byte'
     description = 'Archives full chat transcripts to logs/conversations and keeps a rolling hot buffer (robust patch that survives restarts).'
     category = 'memory'

@@ -18,7 +18,7 @@ class GeminiCoder(GalacticSkill):
     Uses the new google-genai SDK.
     """
     skill_name  = "gemini_coder"
-    version     = "1.1.0"
+    version     = $11.4.0"
     author      = "Chesley"
     description = "Senior Coding Engine powered by Google Gemini (google-genai SDK) with self-healing execution."
     category    = "data"

@@ -35,7 +35,7 @@ class DesktopSkill(GalacticSkill):
     """OS-level desktop control: screenshots, mouse, keyboard."""
 
     skill_name  = "desktop_tool"
-    version     = "1.1.2"
+    version     = $11.4.0"
     author      = "Galactic AI"
     description = "OS-level mouse, keyboard, and screenshot control via pyautogui."
     category    = "desktop"
@@ -48,8 +48,7 @@ class DesktopSkill(GalacticSkill):
                 "parameters": {
                     "type": "object",
                     "properties": {
-                        "region": {"type": "string", "description": "Optional region as 'x,y,width,height' (e.g. '0,0,1920,1080'). Omit for full screen."},
-                        "save_path": {"type": "string", "description": "Optional file path to save PNG."}
+                        "region": {"type": "string", "description": "Optional region as 'x,y,width,height' (e.g. '0,0,1920,1080'). Omit for full screen."}
                     }
                 },
                 "fn": self._tool_desktop_screenshot
@@ -178,8 +177,7 @@ class DesktopSkill(GalacticSkill):
                 parts = [int(v.strip()) for v in region_str.split(',')]
                 if len(parts) == 4:
                     region = tuple(parts)
-            save_path = args.get('save_path')
-            result = await self.screenshot(region=region, save_path=save_path)
+            result = await self.screenshot(region=region)
             if result['status'] != 'success':
                 return f"[ERROR] Desktop screenshot failed: {result.get('message')}"
 
@@ -194,12 +192,21 @@ class DesktopSkill(GalacticSkill):
                 )
             except Exception as ve:
                 vision_result = f"[Vision analysis failed: {ve}] Screenshot saved at {result['path']} — use analyze_image tool with that path to retry."
-            return (
-                f"[DESKTOP] Screenshot: {result['path']} "
-                f"(full {result['width']}x{result['height']} px, "
-                f"vision at {result.get('vision_width', result['width'])}x{result.get('vision_height', result['height'])} px)\n\n"
-                f"Vision Analysis:\n{vision_result}"
-            )
+            filename = os.path.basename(result['path'])
+            embed_hint = f"\n\nEMBED HINT: ![Desktop Screenshot](http://{self.core.config['web'].get('host', '127.0.0.1')}:{self.core.config['web'].get('port', 17789)}/api/images/desktop/{filename})"
+            
+            return {
+                "__image_b64__": result['b64'],
+                "path": result['path'],
+                "media_type": "image/png",
+                "text": (
+                    f"[DESKTOP] Screenshot: {result['path']} "
+                    f"(full {result['width']}x{result['height']} px, "
+                    f"vision at {result.get('vision_width', result['width'])}x{result.get('vision_height', result['height'])} px)\n\n"
+                    f"Vision Analysis:\n{vision_result}"
+                    f"{embed_hint}"
+                )
+            }
         except Exception as e:
             return f"[ERROR] Desktop screenshot: {e}"
 

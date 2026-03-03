@@ -8,7 +8,7 @@ class GeminiCLIBridge(GalacticSkill):
     Allows Galactic AI to delegate highly complex coding tasks natively to the Gemini CLI.
     """
     skill_name  = "gemini_cli_bridge"
-    version     = "1.0.0"
+    version     = $11.4.0"
     author      = "Chesley"
     description = "Delegates tasks to the native Node.js Gemini CLI with YOLO mode for deep codebase interventions."
     category    = "development"
@@ -84,11 +84,16 @@ class GeminiCLIBridge(GalacticSkill):
             clean_out = "\\n".join([line for line in out_str.split("\\n") if "punycode" not in line.lower() and "trace-deprecation" not in line.lower()])
             clean_err = "\\n".join([line for line in err_str.split("\\n") if "punycode" not in line.lower() and "trace-deprecation" not in line.lower()])
             
-            result = f"### Gemini CLI Output (Exit Code: {process.returncode})\\n"
+            result = f"### Gemini CLI Output (Exit Code: {process.returncode})\n"
             if clean_out.strip():
-                result += f"STDOUT:\\n{clean_out.strip()}\\n"
+                result += f"STDOUT:\n{clean_out.strip()}\n"
             if clean_err.strip():
-                result += f"STDERR:\\n{clean_err.strip()}\\n"
+                result += f"STDERR:\n{clean_err.strip()}\n"
+                # Proactively log errors to the core console for visibility
+                await self.core.log(f"⚠️ Gemini CLI STDERR: {clean_err.strip()[:500]}", priority=1)
+                
+            if process.returncode != 0 and not clean_out.strip() and not clean_err.strip():
+                return f"[Error] Gemini CLI failed with exit code {process.returncode} and no output."
                 
             return result
             
