@@ -8,6 +8,10 @@ import time
 import logging
 from datetime import datetime
 
+# Enable VT processing for ANSI colors on Windows
+if os.name == 'nt':
+    os.system("")
+
 # Silence noisy HTTP libraries globally — logs go to web UI, not terminal
 logging.getLogger("httpx").setLevel(logging.WARNING)
 logging.getLogger("httpcore").setLevel(logging.WARNING)
