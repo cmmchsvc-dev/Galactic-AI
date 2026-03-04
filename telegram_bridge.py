@@ -63,6 +63,18 @@ class TelegramBridge:
         task.add_done_callback(lambda t: self._active_tasks.remove(t) if t in self._active_tasks else None)
         return task
 
+    def _is_authorized(self, chat_id):
+        """Unified Security Gate: Only the configured admin is allowed."""
+        admin_id_val = self.config.get('admin_chat_id')
+        if not admin_id_val:
+            return False # Default Deny if not configured
+        
+        try:
+            admin_id = int(admin_id_val)
+            return chat_id == admin_id
+        except (ValueError, TypeError):
+            return False # Default Deny if misconfigured
+
     async def _log(self, message, priority=3):
         """Route logs to the Telegram component log file."""
         await self.core.log(message, priority=priority, component=self._component)
@@ -423,6 +435,16 @@ class TelegramBridge:
             return text, {"inline_keyboard": buttons}
 
     async def process_callback(self, chat_id, callback_query):
+        # --- Security Check ---
+        if not self._is_authorized(chat_id):
+            await self.client.post(f"{self.api_url}/answerCallbackQuery", json={
+                "callback_query_id": callback_query["id"],
+                "text": "Access Denied. You are not the administrator.",
+                "show_alert": True
+            })
+            return
+        # --- End Security Check ---
+
         data = callback_query.get("data", "")
         await self.client.post(f"{self.api_url}/answerCallbackQuery", json={"callback_query_id": callback_query["id"]})
         message_id = callback_query["message"]["message_id"]
@@ -1377,6 +1399,8 @@ class TelegramBridge:
         elif cmd == '/browser':
             if hasattr(self.core, 'gateway'):
                 await self.core.gateway.speak("open youtube")
+        elif cmd == '/id':
+            await self.send_message(chat_id, f"🆔 Your Telegram Chat ID: `{chat_id}`\nCopy this into `config.yaml` under `telegram.admin_chat_id` to secure your bot.")
 
     async def listen_loop(self):
         await self._log("Telegram Bridge: Listening...", priority=1)
@@ -1391,6 +1415,18 @@ class TelegramBridge:
                     elif "message" in update:
                         msg = update["message"]
                         chat_id = msg["chat"]["id"]
+                        text = msg.get("text", "")
+
+                        # Public Command Alias: /id and /start should always work to help setup
+                        if text and text.split()[0] in ('/id', '/start'):
+                            await self.process_command(chat_id, text)
+                            continue
+
+                        # --- Strict Admin-only security check ---
+                        if not self._is_authorized(chat_id):
+                            await self._log(f"Unauthorized interaction from {chat_id}. Access Denied.", priority=2)
+                            await self.send_message(chat_id, "🚫 **Access Denied.**\nThis bot is locked to the administrator.\n\nUse `/id` to see your ID if you are the owner.")
+                            continue
                         text = msg.get("text", "")
                         if "document" in msg and hasattr(self.core, 'gateway'):
                             await self.send_typing(chat_id)
