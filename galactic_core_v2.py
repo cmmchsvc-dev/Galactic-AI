@@ -549,7 +549,7 @@ class GalacticCore:
 ║   ╚═════╝ ╚═╝  ╚═╝╚══════╝╚═╝  ╚═╝ ╚═════╝   ╚═╝   ╚═╝ ╚═════╝║
 ║                                                               ║
 ║               * * *  AUTOMATION SUITE  * * *                  ║
-║                       v{ver:<39}║
+║                       v{ver:<38} ║
 ║                  Sovereign - Universal - Fast                 ║
 ║                                                               ║
 ╚═══════════════════════════════════════════════════════════════╝
@@ -570,9 +570,9 @@ class GalacticCore:
                     colored += f"\033[38;2;{r};{g};{b}m{char}"
                 colored += "\033[0m"
                 res.append(colored)
-            return '\n'.join(res)
+            return '\033[0m\n' + '\n'.join(res) + '\n\033[0m'
 
-        splash = "\n" + _gradient(full_splash, "00F0FF", "8A2BE2") + "\n"
+        splash = _gradient(full_splash, "00F0FF", "8A2BE2")
         
         # Try to print with UTF-8 encoding
         try:
