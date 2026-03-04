@@ -62,7 +62,7 @@ class GalacticCore:
         config_full_path = os.path.abspath(self.config_path)
         if not os.path.exists(config_full_path):
             config = {
-                'system': {'name': 'Galactic AI', 'version': '1.3.0', 'port': 9999},
+                'system': {'name': 'Galactic AI', 'version': '1.4.5', 'port': 9999},
                 'paths': {'logs': './logs', 'images': './images', 'plugins': './plugins'},
                 'gateway': {'provider': 'placeholder', 'model': 'placeholder'}
             }
@@ -86,7 +86,7 @@ class GalacticCore:
             'aliases':  {},
             'social_media': {
                 'twitter': {'consumer_key': '', 'consumer_secret': '', 'access_token': '', 'access_token_secret': ''},
-                'reddit':  {'client_id': '', 'client_secret': '', 'username': '', 'password': '', 'user_agent': 'GalacticAI/1.1.0'},
+                'reddit':  {'client_id': '', 'client_secret': '', 'username': '', 'password': '', 'user_agent': 'GalacticAI/1.4.5'},
             },
             'chrome_bridge': {'enabled': True, 'timeout': 30},
         }
@@ -102,7 +102,7 @@ class GalacticCore:
                         migrated = True
 
         # Ensure system section has newer keys
-        sys_defaults = {'update_check_interval': 21600, 'version': '1.3.0'}
+        sys_defaults = {'update_check_interval': 21600, 'version': '1.4.5'}
         if 'system' not in config:
             config['system'] = {'name': 'Galactic AI', 'port': 9999}
             config['system'].update(sys_defaults)
