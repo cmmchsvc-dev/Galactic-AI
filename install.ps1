@@ -17,7 +17,8 @@ if (-not (Test-Path $vcRegPath -ErrorAction SilentlyContinue)) {
     $vcUrl = "https://aka.ms/vs/17/release/vc_redist.x64.exe"
     $vcInstaller = "$env:TEMP\vc_redist.x64.exe"
     Invoke-WebRequest -Uri $vcUrl -OutFile $vcInstaller
-    Start-Process -FilePath $vcInstaller -ArgumentList "/install /quiet /norestart" -Wait
+    Write-Host "  Please grant administrator permission in the pop-up to install Visual C++..." -ForegroundColor Yellow
+    Start-Process -FilePath $vcInstaller -ArgumentList "/install /quiet /norestart" -Verb RunAs -Wait
     Write-Host "  VC++ Redistributable installed." -ForegroundColor Green
 }
 else {
