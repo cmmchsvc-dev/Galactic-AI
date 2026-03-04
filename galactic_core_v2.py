@@ -1,8 +1,19 @@
+import sys
+
+# Force UTF-8 output on Windows so Unicode splash art & emoji render correctly
+if sys.platform == 'win32':
+    import os
+    os.environ.setdefault('PYTHONIOENCODING', 'utf-8')
+    try:
+        sys.stdout.reconfigure(encoding='utf-8', errors='replace')
+        sys.stderr.reconfigure(encoding='utf-8', errors='replace')
+    except Exception:
+        pass  # Already reconfigured or not a TextIOWrapper
+
 import asyncio
 import json
 import os
 import signal
-import sys
 import yaml
 import time
 import logging
