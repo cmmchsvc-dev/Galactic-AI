@@ -20,11 +20,11 @@ class DiscordBridge:
         self.core = core
         self.config = core.config.get('discord', {})
         self.bot_token = self.config.get('bot_token', '')
-        self.allowed_channels = self.config.get('allowed_channels', [])
-        self.admin_user_id = self.config.get('admin_user_id', '')
         self.start_time = time.time()
-        self._processing = set()  # (channel_id, text) pairs currently in-flight — prevents duplicate sends
+        self.bot = None
+        self._processing = set()  # (channel_id, text) pairs currently in-flight
         self._component = "Discord"
+        self._authorized_user_id = str(self.config.get('admin_user_id', '')).strip()
 
     async def _log(self, message, priority=3):
         """Route logs to the Discord component log file."""
@@ -44,6 +44,29 @@ class DiscordBridge:
     def is_configured(self) -> bool:
         """Return True if Discord bridge has minimum viable configuration."""
         return bool(HAS_DISCORD and self.bot_token)
+
+    def _is_authorized(self, user_id, channel_id=None) -> bool:
+        """Check if a Discord user is authorized to control the AI.
+
+        Returns True if:
+        1. The user_id matches admin_user_id in config.
+        2. admin_user_id is not set, BUT the message is in an allowed_channels whitelist
+           AND the user is NOT a bot. (Legacy fallback for channel-only security).
+
+        Recommended: Always set admin_user_id for maximum security.
+        """
+        user_id = str(user_id)
+        # 1. Strict user-based authorization (Primary)
+        if self._authorized_user_id:
+            return user_id == self._authorized_user_id
+
+        # 2. Legacy/Channel-based fallback (Only if no admin_user_id is set)
+        allowed_channels = self.config.get('allowed_channels', [])
+        if allowed_channels and channel_id:
+            return str(channel_id) in [str(c) for c in allowed_channels]
+
+        # 3. Default Deny: If no admin_user_id and no allowed_channels, block everything
+        return False
 
     # ──────────────────────────────────────────────
     #  Event handlers
@@ -71,18 +94,28 @@ class DiscordBridge:
             if message.author.bot:
                 return
 
-            # Check if channel is allowed (empty list = allow all)
-            channel_id = str(message.channel.id)
-            is_dm = isinstance(message.channel, discord.DMChannel)
-            if self.allowed_channels and not is_dm:
-                if channel_id not in [str(c) for c in self.allowed_channels]:
-                    return
-
+            # Check authorization
+            is_authorized = self._is_authorized(message.author.id, message.channel.id)
             text = message.content.strip()
+
+            # Handle setup help (/id command or help) even if unauthorized
+            if text.lower() in ('/id', '!gal id', 'id'):
+                content = f"🆔 **Your Discord ID:** `{message.author.id}`\n"
+                content += f"📍 **Channel ID:** `{message.channel.id}`\n\n"
+                if not self._authorized_user_id:
+                    content += "⚠️ **Security Alert:** No `admin_user_id` is configured. The bot is in a restricted state."
+                await message.reply(content)
+                return
+
+            if not is_authorized:
+                # Silent discard for non-authorized users to prevent bot spam
+                return
+
             if not text:
                 return
 
-            # Dedup guard — same pattern as TelegramBridge
+            # Dedup guard
+            channel_id = str(message.channel.id)
             key = (channel_id, text)
             if key in self._processing:
                 return
@@ -100,6 +133,10 @@ class DiscordBridge:
 
         @self.bot.tree.command(name="status", description="System telemetry for Galactic AI")
         async def slash_status(interaction: discord.Interaction):
+            if not self._is_authorized(interaction.user.id, interaction.channel_id):
+                await interaction.response.send_message("❌ **Unauthorized**: You do not have permission to run system commands.", ephemeral=True)
+                return
+
             await interaction.response.defer(thinking=True)
             try:
                 report = await self._build_status_report()
@@ -110,6 +147,10 @@ class DiscordBridge:
         @self.bot.tree.command(name="model", description="Show or switch the active AI model")
         @app_commands.describe(name="Model to switch to (e.g. gemini-2.5-flash, grok-4)")
         async def slash_model(interaction: discord.Interaction, name: str = None):
+            if not self._is_authorized(interaction.user.id, interaction.channel_id):
+                await interaction.response.send_message("❌ **Unauthorized**: Permission denied.", ephemeral=True)
+                return
+
             await interaction.response.defer(thinking=True)
             try:
                 if name:
@@ -139,6 +180,11 @@ class DiscordBridge:
             except Exception as e:
                 await interaction.followup.send(f"Error: {e}")
 
+        @self.bot.tree.command(name="id", description="Get your Discord User ID and Channel ID")
+        async def slash_id(interaction: discord.Interaction):
+            content = f"🆔 **Your Discord ID:** `{interaction.user.id}`\n"
+            content += f"📍 **Channel ID:** `{interaction.channel_id}`"
+            await interaction.response.send_message(content, ephemeral=True)
         @self.bot.tree.command(name="help", description="Show available Galactic AI commands")
         async def slash_help(interaction: discord.Interaction):
             help_text = (
@@ -146,6 +192,7 @@ class DiscordBridge:
                 "`/status`  --  System telemetry\n"
                 "`/model`  --  Show active model\n"
                 "`/model name:<model>`  --  Switch model\n"
+                "`/id`  --  Show your IDs for config\n"
                 "`/help`  --  This help message\n\n"
                 "Or just type a message to chat with the AI."
             )
