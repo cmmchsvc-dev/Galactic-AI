@@ -8,8 +8,24 @@ Write-Host "  v1.4.5" -ForegroundColor DarkCyan
 Write-Host "============================================" -ForegroundColor Cyan
 Write-Host ""
 
+# Check VC++ Redistributable
+Write-Host "[1/6] Checking Visual C++ Redistributable..." -ForegroundColor Yellow
+$vcRegPath = "HKLM:\SOFTWARE\WOW6432Node\Microsoft\VisualStudio\14.0\VC\Runtimes\x64"
+if (-not (Test-Path $vcRegPath -ErrorAction SilentlyContinue)) {
+    Write-Host "  Missing VC++ Redist. Attempting automatic installation..." -ForegroundColor Yellow
+    [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
+    $vcUrl = "https://aka.ms/vs/17/release/vc_redist.x64.exe"
+    $vcInstaller = "$env:TEMP\vc_redist.x64.exe"
+    Invoke-WebRequest -Uri $vcUrl -OutFile $vcInstaller
+    Start-Process -FilePath $vcInstaller -ArgumentList "/install /quiet /norestart" -Wait
+    Write-Host "  VC++ Redistributable installed." -ForegroundColor Green
+}
+else {
+    Write-Host "  VC++ Redistributable is already installed." -ForegroundColor Green
+}
+
 # Check Python
-Write-Host "[1/5] Checking Python..." -ForegroundColor Yellow
+Write-Host "[2/6] Checking Python..." -ForegroundColor Yellow
 if (-not (Get-Command "python" -ErrorAction SilentlyContinue)) {
     Write-Host "  Python is not installed. Attempting automatic installation..." -ForegroundColor Yellow
     
@@ -37,12 +53,12 @@ $pythonVersion = python --version 2>&1
 Write-Host "  Found: $pythonVersion" -ForegroundColor Green
 
 # Upgrade pip
-Write-Host "[2/5] Upgrading pip..." -ForegroundColor Yellow
+Write-Host "[3/6] Upgrading pip..." -ForegroundColor Yellow
 python -m pip install --upgrade pip --quiet
 Write-Host "  pip upgraded." -ForegroundColor Green
 
 # Install pip dependencies from requirements.txt
-Write-Host "[3/5] Installing Python dependencies (this may take a few minutes)..." -ForegroundColor Yellow
+Write-Host "[4/6] Installing Python dependencies (this may take a few minutes)..." -ForegroundColor Yellow
 pip install -r requirements.txt
 if ($LASTEXITCODE -ne 0) {
     Write-Host "  ERROR: pip install failed. Check internet connection and try again." -ForegroundColor Red
@@ -51,7 +67,7 @@ if ($LASTEXITCODE -ne 0) {
 Write-Host "  Dependencies installed." -ForegroundColor Green
 
 # Install Playwright browser
-Write-Host "[4/5] Installing Chromium browser engine..." -ForegroundColor Yellow
+Write-Host "[5/6] Installing Chromium browser engine..." -ForegroundColor Yellow
 playwright install chromium
 if ($LASTEXITCODE -ne 0) {
     Write-Host "  WARNING: Playwright browser install failed. Browser tools will not work." -ForegroundColor Yellow
@@ -62,7 +78,7 @@ else {
 }
 
 # Create workspace directories
-Write-Host "[5/5] Creating workspace directories..." -ForegroundColor Yellow
+Write-Host "[6/6] Creating workspace directories..." -ForegroundColor Yellow
 New-Item -ItemType Directory -Force -Path "logs" | Out-Null
 New-Item -ItemType Directory -Force -Path "workspace" | Out-Null
 New-Item -ItemType Directory -Force -Path "watch" | Out-Null
