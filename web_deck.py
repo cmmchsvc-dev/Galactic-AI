@@ -5469,7 +5469,7 @@ try {
         await self.core.log("[Chrome Bridge] Extension connected", priority=2)
 
         # Send hello acknowledgement
-        await ws.send_str(json.dumps({'type': 'hello', 'status': 'connected', 'version': '1.1.2'}))
+        await ws.send_str(json.dumps({'type': 'hello', 'status': 'connected', 'version': '1.4.5'}))
 
         try:
             async for msg in ws:
