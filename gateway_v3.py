@@ -2260,18 +2260,21 @@ class GalacticGateway:
         curr_time = time.strftime("%A, %B %d, %Y")
         os_platform = sys.platform
         cwd = os.getcwd()
+        user_name = os.getenv('USERNAME', 'User')
+        home_dir = os.path.expanduser('~')
         env_block = (
             f"CURRENT ENVIRONMENT:\n"
             f"- Date: {curr_time}\n"
-            f"- Operating System: {os_platform} (Windows Power-User Mode)\n"
+            f"- Operating System: {os_platform} (Power-User Mode)\n"
             f"- Working Directory: {cwd}\n"
-            f"- User Context: Chesley McDaniel (Owner)\n"
+            f"- User Context: {user_name} (Owner)\n"
+            f"- Home Directory: {home_dir}\n"
             f"- Terminal Syntax: PowerShell (Use backslashes for paths, e.g., C:\\Users\\...)\n"
         )
 
         behavioral_rules = (
             "AGENT BEHAVIOR RULES (IRONCLAD):\n"
-            "1. NO PROSE: NEVER write blog posts or articles in the chat. Use `write_file` to 'C:\\Users\\Chesley\\OneDrive\\Desktop\\posts\\'.\n"
+            "1. NO PROSE: NEVER write blog posts or articles in the chat. Use `write_file` to save content directly to the user's disk if requested.\n"
             "2. DIRECT ACTION: For simple automation (images, posts, files), use `generate_image`, `write_file`, and `post_to_social` DIRECTLY. NEVER use `test_driven_coder` or `invoke_gemini_cli` for these tasks.\n"
             "3. NO BASH: You are on WINDOWS. Do not use `.sh` files, `source`, or `touch`. Use PowerShell (`New-Item`, `.ps1`) or direct commands.\n"
             "4. ACTION-FIRST: Call all necessary tools in your VERY FIRST response. Do not explain what you will do. JUST DO IT.\n"
@@ -2339,9 +2342,9 @@ class GalacticGateway:
             '  1. Search for a pattern in the codebase:\n'
             '  {"tool": "grep_search", "args": {"pattern": "thinking_level", "file_pattern": "*.py"}}\n\n'
             '  2. Read a specific line range of a file:\n'
-            '  {"tool": "read_file", "args": {"path": "C:\\\\Users\\\\Chesley\\\\Galactic AI\\\\gateway_v3.py", "start_line": 100, "end_line": 150}}\n\n'
+            f'  {{"tool": "read_file", "args": {{"path": "{os.path.join(cwd, "gateway_v3.py").replace("\\", "\\\\")}", "start_line": 100, "end_line": 150}}}}\n\n'
             '  3. View the structure (classes/functions) of a file:\n'
-            '  {"tool": "code_outline", "args": {"path": "C:\\\\Users\\\\Chesley\\\\Galactic AI\\\\skills\\\\core\\\\system_tools.py"}}\n\n'
+            f'  {{"tool": "code_outline", "args": {{"path": "{os.path.join(cwd, "skills", "core", "system_tools.py").replace("\\", "\\\\")}}"}}}}\n\n'
             '  4. Run a shell command:\n'
             '  {"tool": "exec_shell", "args": {"command": "dir"}}\n'
         )

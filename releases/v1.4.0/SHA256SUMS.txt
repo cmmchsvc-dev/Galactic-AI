@@ -1,4 +1,4 @@
-a224e4dfde2877b70a020692b0f67e63199c1ebf53e9aa3b56c99d95e4bc6848  Galactic-AI-v1.4.0.zip
-a224e4dfde2877b70a020692b0f67e63199c1ebf53e9aa3b56c99d95e4bc6848  Galactic-AI-v1.4.0-windows.zip
-a224e4dfde2877b70a020692b0f67e63199c1ebf53e9aa3b56c99d95e4bc6848  Galactic-AI-v1.4.0-macos.zip
-f6ef521015acff58bea40f3d3ed92e87861edfcfa42ee8db3a834efe288788ef  Galactic-AI-v1.4.0-linux.tar.gz
+703ab32d0ec407239463be7b7ebd86f1e29bd4efd8278667d30619d32d0b37a5  Galactic-AI-v1.4.0.zip
+703ab32d0ec407239463be7b7ebd86f1e29bd4efd8278667d30619d32d0b37a5  Galactic-AI-v1.4.0-windows.zip
+703ab32d0ec407239463be7b7ebd86f1e29bd4efd8278667d30619d32d0b37a5  Galactic-AI-v1.4.0-macos.zip
+0f6e5212b4c82f771d9e2a668951afc110ccbc638edda8a8f45b4a047c0e62c0  Galactic-AI-v1.4.0-linux.tar.gz
