@@ -2297,8 +2297,9 @@ class GalacticGateway:
                 "4. NEVER use chrome_key_press to type text. chrome_key_press is ONLY for Tab, Escape, arrow keys.\n"
                 "5. For scrolling: use direction='middle' or percent=50 to jump to page midpoint.\n"
                 "6. Tool sequence: chrome_tabs_create → chrome_read_page → chrome_type(text='query') → chrome_wait_for → chrome_read_page → chrome_scroll.\n"
-                "7. NO REDUNDANT NAVIGATION: If you are already on the correct URL (check chrome_tabs_list), NEVER call chrome_navigate again. Re-navigating to the same page is a CRITICAL FAILURE that resets state and causes loops. If you need to refresh, use chrome_execute_js('location.reload()') instead, but only if absolutely necessary.\n"
-                "8. SLOW SCROLLING & READING: For requests like 'scroll down slowly' or 'read the posts', ALWAYS use chrome_scroll_continuous. After scrolling, you MUST call chrome_read_page or chrome_screenshot to 'see' the new content before deciding to scroll again. NEVER call chrome_navigate while reading a feed.\n"
+                "7. NO REDUNDANT NAVIGATION: If you are already on the correct URL (check chrome_tabs_list), NEVER call chrome_navigate again. Re-navigating to the same page is a CRITICAL FAILURE that resets state and causes loops.\n"
+                "8. INFINITE FEEDS (X, Reddit, etc.): These pages have NO 'bottom'. To 'read' them, use chrome_scroll_continuous for a reasonable amount of time, then STOP and ask the user if they want to see more. Do NOT keep scrolling forever trying to reach a non-existent bottom.\n"
+                "9. CHECKPOINT AFTER SCROLL: After scrolling, you MUST call chrome_read_page or chrome_screenshot to 'see' the new content before deciding next steps.\n"
             )
             return (
                 f"{personality_prompt}\n\n"
@@ -2844,6 +2845,26 @@ class GalacticGateway:
                         # Map safe_name back to actual registered tool name
                         actual_tool_name = next((k for k in self.tools if re.sub(r'[^a-zA-Z0-9_]', '_', k) == tool_name), tool_name)
                         
+                        if tool_name == 'chrome_navigate':
+                            target_url = tool_args.get('url', '').rstrip('/')
+                            # Fetch current URL from extension
+                            try:
+                                chrome_skill = self.core.skills.get('chrome_bridge')
+                                if chrome_skill:
+                                    current_url = await chrome_skill.get_active_tab_url()
+                                    if current_url and current_url.rstrip('/') == target_url:
+                                        await self.core.log(f"🛑 Blocked redundant navigation to {target_url}", priority=1)
+                                        messages.append({
+                                            "role": "tool",
+                                            "tool_call_id": tool_call_id,
+                                            "name": safe_name,
+                                            "content": f"[ERROR] Redundant navigation blocked. You are already at {current_url}. Do NOT call chrome_navigate again. Use chrome_scroll_continuous or chrome_read_page to proceed.",
+                                            "tool_name": tool_name
+                                        })
+                                        continue
+                            except Exception as e:
+                                await self.core.log(f"⚠️ Redundant nav check failed: {e}", priority=2)
+
                         if actual_tool_name not in self.tools:
                             await self._emit_trace("tool_not_found", turn_count, session_id=trace_sid, tool=actual_tool_name)
                             available = ", ".join(sorted(self.tools.keys())[:20]) + "..."
@@ -2930,12 +2951,16 @@ class GalacticGateway:
                         if rt == 'chrome_type':
                             has_typed = True
                             consecutive_scrolls = 0
-                        elif rt == 'chrome_scroll':
+                        elif rt in ('chrome_scroll', 'chrome_scroll_continuous'):
                             consecutive_scrolls += 1
                         else:
                             consecutive_scrolls = 0
                     
-                    if consecutive_scrolls >= 2:
+                    # More lenient threshold for reading tasks
+                    is_reading_task = any(kw in user_input.lower() for kw in ('read', 'feed', 'posts', 'scroll', 'until', 'bottom'))
+                    scroll_limit = 5 if is_reading_task else 2
+                    
+                    if consecutive_scrolls >= scroll_limit:
                         if not has_typed:
                             await self.core.log(f"🛑 Scroll loop detected ({consecutive_scrolls}x without typing). Injecting correction.", priority=1)
                             messages.append({
