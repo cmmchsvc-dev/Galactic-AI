@@ -1102,6 +1102,18 @@ class ChromeBridgeSkill(GalacticSkill):
         """Sleep for *seconds* seconds (Python-side only, no extension command)."""
         return await self._tool_chrome_wait({"seconds": seconds})
 
+    async def get_active_tab_url(self) -> str | None:
+        """Helper to get the URL of the currently active tab."""
+        res = await self.tabs_list()  # result is a string from _tool_chrome_tabs_list, but we want the raw list
+        # Actually tabs_list() returns a formatted string. We need the raw data.
+        # Let's call the internal tabs_list method.
+        result = await self.send_command("tabs_list", {})
+        if result.get("status") == "success":
+            for tab in result.get("tabs", []):
+                if tab.get("active"):
+                    return tab.get("url")
+        return None
+
     # ── Internal helpers ─────────────────────────────────────────────────
 
     def _update_tabs_cache(self, tabs_list: list) -> None:
