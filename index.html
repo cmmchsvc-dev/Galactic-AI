@@ -776,14 +776,14 @@
 
   <!-- HERO -->
   <div class="hero">
-    <div class="hero-badge">v1.4.7 — Security Hardening · Telegram Lockdown · Bot Protection</div>
+    <div class="hero-badge">v1.4.8 — Security Hardening · Telegram Lockdown · Bot Protection</div>
     <h1>Your AI that actually<br><span class="grad">does everything.</span></h1>
     <p>A local-first AI automation platform with 188+ built-in tools, a dual-brain Strategic Planner, true persistent
       memory (ChromaDB), interruptible Live Voice mode, and advanced vision-based computer use. Runs on your machine. No
       subscriptions. No cloud required.</p>
     <div class="hero-actions">
       <a href="https://github.com/cmmchsvc-dev/Galactic-AI/releases/latest" class="btn-primary"
-        style="animation: pulse-glow 2s infinite;">Download v1.4.7 Free</a>
+        style="animation: pulse-glow 2s infinite;">Download v1.4.8 Free</a>
       <a href="https://github.com/cmmchsvc-dev/Galactic-AI" class="btn-secondary">View on GitHub</a>
     </div>
     <p class="hero-sub">Free &amp; open source · Python 3.10+ · Windows / macOS / Linux</p>
@@ -864,20 +864,22 @@
     <h2>Everything you need. Nothing you don't.</h2>
     <p class="section-sub">Built for people who want their AI to actually do things.</p>
 
-    <!-- What's New in v1.4.6 -->
+    <!-- What's New in v1.4.8 -->
     <div class="whats-new">
-      <div class="whats-new-label">✦ NEW IN v1.4.6 — THE IMAGEN FIX UPDATE</div>
+      <div class="whats-new-label">✦ NEW IN v1.4.8 — THE SECURITY HARDENING UPDATE</div>
       <ul>
-        <li><strong>Imagen 4 Model IDs Fixed:</strong> All Imagen models now use the correct API identifiers — no more
-          NOT_FOUND errors from the Google GenAI SDK.</li>
-        <li><strong>AI Hallucination Loop Eliminated:</strong> Image generation now returns a web-embeddable URL with a
-          stop signal, preventing the AI from spiraling into random browser actions.</li>
-        <li><strong>Chrome Navigate Crash Fixed:</strong> Resolved a crash in the redundant navigation check that was
-          silently breaking browser tool usage.</li>
-        <li><strong>Installer Hardened:</strong> VC++ Redistributable now installs with proper UAC elevation on
-          sandboxed systems.</li>
-        <li><strong>Cross-Platform Support:</strong> Added <code>docs/COMPATIBILITY.md</code> and
-          <code>scripts/diagnostic.py</code> for macOS/Linux environment verification.
+        <li><strong>Telegram Access Control:</strong> Implemented strict "Default Deny" logic. Unauthorized users are
+          blocked from all commands and interactions by default.</li>
+        <li><strong>Callback Query Security:</strong> Fixed a vulnerability where buttons could bypass ID checks — the
+          bot now verifies every single interaction.</li>
+        <li><strong>Unified Auth Bridge:</strong> Added a central authorization layer for all messaging bridges to
+          ensure consistent security.</li>
+        <li><strong>New /id Command:</strong> Added a public <code>/id</code> command to help users safely retrieve
+          their
+          Telegram Chat ID.</li>
+        <li><strong>Config Hardening:</strong> Massive warnings and documentation updates in
+          <code>config.example.yaml</code>
+          to prevent insecure deployments.
         </li>
       </ul>
     </div>
@@ -1280,7 +1282,7 @@
     <h2>Ready to run your own AI?</h2>
     <p>Free. Open source. Runs on your machine. No subscriptions, no cloud lock-in, no data leaks.</p>
     <div class="hero-actions">
-      <a href="https://github.com/cmmchsvc-dev/Galactic-AI/releases/latest" class="btn-primary">Download v1.4.7 Free</a>
+      <a href="https://github.com/cmmchsvc-dev/Galactic-AI/releases/latest" class="btn-primary">Download v1.4.8 Free</a>
       <a href="https://github.com/cmmchsvc-dev/Galactic-AI" class="btn-secondary">View Source on GitHub</a>
     </div>
     <p style="margin-top:1.5rem;color:var(--muted);font-size:0.875rem;">Windows · macOS · Linux · Chromebook · WSL2</p>
@@ -1288,7 +1290,7 @@
 
   <!-- FOOTER -->
   <footer>
-    <span>⭐ Galactic AI v1.4.7</span>
+    <span>⭐ Galactic AI v1.4.8</span>
     <a href="https://github.com/cmmchsvc-dev/Galactic-AI">GitHub</a>
     <a href="https://github.com/cmmchsvc-dev/Galactic-AI/releases">Releases</a>
     <a href="https://github.com/cmmchsvc-dev/Galactic-AI/blob/main/README.md">Docs</a>

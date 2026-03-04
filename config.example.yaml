@@ -100,16 +100,21 @@ telegram:
 
 discord:
   enabled: false
-  bot_token: ""
-  admin_user_id: ""
-  allowed_channels: []
+  bot_token: "YOUR_DISCORD_BOT_TOKEN"
+  # CRITICAL: Set this to your Discord User ID to prevent others from controlling your PC.
+  # Use /id or !gal id in your bot to find your ID.
+  admin_user_id: "YOUR_DISCORD_USER_ID"
+  allowed_channels: [] # Optional: List of channel IDs to whitelist (if no admin_user_id)
   timeout_seconds: 120
 
 whatsapp:
   enabled: false
-  access_token: ""
-  phone_number_id: ""
-  verify_token: ""
+  access_token: "YOUR_WHATSAPP_ACCESS_TOKEN"
+  phone_number_id: "YOUR_PHONE_NUMBER_ID"
+  # CRITICAL: Set this to your phone number (e.g. "15551234567") to secure your bot.
+  # Use /id or /start in your bot to find your sender ID.
+  admin_phone_number: "YOUR_PHONE_NUMBER"
+  verify_token: "YOUR_WEBHOOK_VERIFY_TOKEN"
   api_version: "v21.0"
 
 gmail:

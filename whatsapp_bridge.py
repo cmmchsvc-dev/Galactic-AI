@@ -27,6 +27,7 @@ class WhatsAppBridge:
         self._seen_message_ids = set()  # WhatsApp message wamids already handled
         self._seen_max = 5000  # Trim threshold for _seen_message_ids
         self._component = "WhatsApp"
+        self._authorized_phone = str(self.config.get('admin_phone_number', '')).strip()
 
     async def _log(self, message, priority=3):
         """Route logs to the WhatsApp component log file."""
@@ -87,6 +88,16 @@ class WhatsAppBridge:
         except Exception:
             return False
 
+    def _is_authorized(self, phone_number) -> bool:
+        """Check if a WhatsApp phone number is authorized to control the AI.
+
+        Returns True if the phone_number matches admin_phone_number in config.
+        If admin_phone_number is not set, the bot is in 'Locked' mode.
+        """
+        if not self._authorized_phone:
+            return False
+        return str(phone_number) == self._authorized_phone
+
     # ──────────────────────────────────────────────
     #  Webhook payload processing
     # ──────────────────────────────────────────────
@@ -134,19 +145,36 @@ class WhatsAppBridge:
         if msg_type == 'text':
             text = msg.get('text', {}).get('body', '')
             if text:
+                # Handle public setup command
+                if text.lower().strip() in ('/id', 'id', '/start'):
+                    content = f"🆔 *Your WhatsApp ID:* `{sender}`\n\n"
+                    if not self._authorized_phone:
+                        content += "⚠️ *Security Alert:* No `admin_phone_number` is configured. The bot is in a restricted state."
+                    await self.send_message(sender, content)
+                    return
+
+                # Check authorization for everything else
+                if not self._is_authorized(sender):
+                    await self._log(f"[WhatsApp] Unauthorized access attempt from {sender}", priority=2)
+                    return
+
                 await self._handle_text(sender, text, sender_name)
 
         elif msg_type == 'image':
+            if not self._is_authorized(sender): return
             await self._handle_image(sender, msg, sender_name)
 
         elif msg_type in ('audio', 'voice'):
+            if not self._is_authorized(sender): return
             # WhatsApp sends voice notes as type 'audio' with voice=true
             await self._handle_audio(sender, msg, sender_name)
 
         elif msg_type == 'document':
+            if not self._is_authorized(sender): return
             await self._handle_document(sender, msg, sender_name)
 
         elif msg_type == 'location':
+            if not self._is_authorized(sender): return
             loc = msg.get('location', {})
             lat = loc.get('latitude', '')
             lon = loc.get('longitude', '')
