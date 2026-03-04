@@ -1,0 +1,3 @@
+# Force Unix line endings for all shell scripts so they work on Linux/macOS
+# even when cloned from a Windows machine.
+*.sh text eol=lf
