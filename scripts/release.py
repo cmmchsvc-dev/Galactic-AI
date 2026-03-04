@@ -152,6 +152,17 @@ def copy_files():
     for empty_dir in ['logs', 'images', 'chroma_data', 'workspace']:
         os.makedirs(os.path.join(BUILD_DIR, empty_dir), exist_ok=True)
 
+    # Convert all .sh files from CRLF to LF (Windows → Unix line endings)
+    print("Converting shell scripts to Unix line endings...")
+    for sh_file in glob.glob(os.path.join(BUILD_DIR, "**", "*.sh"), recursive=True):
+        with open(sh_file, 'rb') as f:
+            content = f.read()
+        if b'\r\n' in content:
+            content = content.replace(b'\r\n', b'\n')
+            with open(sh_file, 'wb') as f:
+                f.write(content)
+            print(f"  Fixed: {os.path.relpath(sh_file, BUILD_DIR)}")
+
 def scrub_config():
     """Scrub sensitive API keys and tokens from the copied config.yaml."""
     config_path = os.path.join(BUILD_DIR, "config.yaml")
