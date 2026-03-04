@@ -4,6 +4,14 @@ All notable changes to Galactic AI are documented here.
 
 ---
 
+## v1.4.7 — The Security Hardening Update (2026-03-04)
+
+*   🛡️ **Telegram Access Control**: Implemented strict "Default Deny" logic. Unauthorized users are blocked by default.
+*   🛡️ **Callback Security**: Fixed a vulnerability where buttons and menu interactions could bypass ID checks.
+*   🛡️ **Bot Lockdown**: The bot now automatically locks itself if no `admin_chat_id` is configured.
+*   🆔 **ID Discovery**: Added a public `/id` command to help users find their Chat ID safely.
+*   ⚠️ **Security Warning**: Updated `config.example.yaml` with critical setup instructions to prevent remote hijacking.
+
 ## v1.4.6 — The Imagen Fix Update (2026-03-04)
 
 ### Fixed
