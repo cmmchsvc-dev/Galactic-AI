@@ -9,6 +9,34 @@ echo "============================================"
 echo "  GALACTIC AI - Automation Suite Installer"
 echo "  v1.4.6"
 echo "============================================"
+# Determine OS
+OS_TYPE=$(uname -s | tr '[:upper:]' '[:lower:]')
+
+# [Step 0/5] Install System Prerequisites
+echo "[0/5] Checking System Prerequisites..."
+if [[ "$OS_TYPE" == "linux" ]]; then
+    if command -v apt-get &>/dev/null; then
+        echo "  Detected Debian/Ubuntu (apt). Installing dependencies..."
+        sudo apt-get update -y && sudo apt-get install -y xclip wmctrl libnotify-bin
+    elif command -v dnf &>/dev/null; then
+        echo "  Detected Fedora/RHEL (dnf). Installing dependencies..."
+        sudo dnf install -y xclip wmctrl libnotify
+    elif command -v pacman &>/dev/null; then
+        echo "  Detected Arch Linux (pacman). Installing dependencies..."
+        sudo pacman -S --noconfirm xclip wmctrl libnotify
+    else
+        echo "  WARNING: Unknown package manager. Please manually install: xclip, wmctrl, libnotify"
+    fi
+elif [[ "$OS_TYPE" == "darwin" ]]; then
+    echo "  Detected macOS."
+    if command -v brew &>/dev/null; then
+        echo "  Homebrew found. Ensuring wmctrl is installed..."
+        brew install wmctrl || echo "  (Optional) wmctrl install failed. Window management may be limited."
+    else
+        echo "  Homebrew not found. Skipping optional system tools."
+    fi
+fi
+echo "  System prerequisites handled."
 echo ""
 
 # Check Python
