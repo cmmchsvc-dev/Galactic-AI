@@ -43,12 +43,36 @@ echo "[5/5] Creating workspace directories..."
 mkdir -p logs workspace watch memory
 echo "  Directories created."
 
+# Platform-specific dependency checks
+if [[ "$OSTYPE" == "linux-gnu"* ]]; then
+    echo ""
+    echo "--- Linux System Dependency Check ---"
+    MISSING=()
+    command -v xclip >/dev/null 2>&1 || MISSING+=("xclip")
+    command -v wmctrl >/dev/null 2>&1 || MISSING+=("wmctrl")
+    command -v notify-send >/dev/null 2>&1 || MISSING+=("libnotify-bin")
+
+    if [ ${#MISSING[@]} -ne 0 ]; then
+        echo "  WARNING: Missing system tools for desktop automation: ${MISSING[*]}"
+        echo "  Run: sudo apt update && sudo apt install xclip wmctrl libnotify-bin"
+    else
+        echo "  All system dependencies found."
+    fi
+elif [[ "$OSTYPE" == "darwin"* ]]; then
+    echo ""
+    echo "--- macOS System Note ---"
+    echo "  NOTE: Desktop screenshots/control require 'Accessibility' and"
+    echo "  'Screen Recording' permissions in System Settings for your terminal."
+fi
+
 # Make launch script executable
 chmod +x launch.sh 2>/dev/null || true
+chmod +x scripts/diagnostic.py 2>/dev/null || true
 
 echo ""
 echo "============================================"
 echo "  Installation complete!"
+echo "  Run 'python3 scripts/diagnostic.py' to verify setup."
 echo "============================================"
 echo ""
 echo "  To start Galactic AI:"
