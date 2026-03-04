@@ -4,6 +4,19 @@ All notable changes to Galactic AI are documented here.
 
 ---
 
+## v1.4.5 — The Refinement Update (2026-03-03)
+
+### Added
+- **Unified 3D Boot Splash**: Restored the high-aesthetic "GALACTIC AI - AUTOMATION SUITE" banner with corrected 65-character alignment and dynamic cyan-to-purple gradient.
+
+### Fixed
+- **JSON-Wrapped Response Prevention**: Hardened the internal system prompt to strictly forbid the AI from wrapping final user-facing answers in unnecessary JSON blocks, ensuring clean, human-readable responses.
+- **Planner Trigger Refinement**: Optimized the internal "Planner" activation heuristics. Specifically, removed vague meta-conversational keywords that were causing the high-intelligence Planner to trigger on simple status checks.
+- **Smart Routing Provider Restrictions**: Fixed a bug where smart routing would suggest specialized models from providers that the user hadn't configured or enabled. It now strictly respects the user's active provider pool.
+- **Markdown Alignment**: Corrected various alignment artifacts in the Control Deck's Thinking tab where long tool-call outputs were breaking the glassmorphism layout.
+
+---
+
 ## v1.4.0 — The Hive Mind Update (2026-03-03)
 
 ### Added
