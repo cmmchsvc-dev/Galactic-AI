@@ -66,7 +66,7 @@ class GalacticCore:
         config_full_path = os.path.abspath(self.config_path)
         if not os.path.exists(config_full_path):
             config = {
-                'system': {'name': 'Galactic AI', 'version': '1.4.8', 'port': 9999},
+                'system': {'name': 'Galactic AI', 'version': '1.4.9', 'port': 9999},
                 'paths': {'logs': './logs', 'images': './images', 'plugins': './plugins'},
                 'gateway': {'provider': 'placeholder', 'model': 'placeholder'}
             }
