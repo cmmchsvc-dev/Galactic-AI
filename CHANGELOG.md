@@ -4,6 +4,19 @@ All notable changes to Galactic AI are documented here.
 
 ---
 
+## v1.4.6 — The Imagen Fix Update (2026-03-04)
+
+### Fixed
+- **Imagen 4 Model IDs**: Updated `generate_image_imagen` model mapping to use correct `imagen-4.0-generate-001`, `imagen-4.0-ultra-generate-001`, and `imagen-4.0-fast-generate-001` identifiers. Previous Imagen 3 model IDs were returning `NOT_FOUND` errors from the Google GenAI SDK. Legacy Imagen 3 names now fall back to their Imagen 4 equivalents.
+- **Chrome Navigate Crash**: Fixed `'list' object has no attribute 'get'` error in the redundant navigation check within `chrome_navigate`. The code was calling `.get()` on `self.core.skills` (a list), now correctly iterates the list with `next()`.
+- **Imagen AI Hallucination Loop**: After successfully generating an image, the AI would call `generate_image_imagen` again with a rephrased prompt, then spiral into random browser tool calls. Three fixes applied:
+  - Added `generate_image_imagen` and `generate_video` to `_DUPLICATE_EXEMPT` so retries aren't confusingly blocked.
+  - Tool return now includes the web-accessible embed URL (`/api/images/imagen/filename.png`) instead of raw file paths.
+  - Tool return includes a STOP instruction telling the model to present the image and not call additional tools.
+- **Installer VC++ Redistributable**: Added `-Verb RunAs` UAC elevation for the Visual C++ Redistributable silent installer to prevent silent failures on sandboxed systems.
+
+---
+
 ## v1.4.5 — The Refinement Update (2026-03-03)
 
 ### Added
