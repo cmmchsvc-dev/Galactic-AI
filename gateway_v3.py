@@ -2297,6 +2297,8 @@ class GalacticGateway:
                 "4. NEVER use chrome_key_press to type text. chrome_key_press is ONLY for Tab, Escape, arrow keys.\n"
                 "5. For scrolling: use direction='middle' or percent=50 to jump to page midpoint.\n"
                 "6. Tool sequence: chrome_tabs_create → chrome_read_page → chrome_type(text='query') → chrome_wait_for → chrome_read_page → chrome_scroll.\n"
+                "7. NO REDUNDANT NAVIGATION: If you are already on the correct URL (check chrome_tabs_list or history), DO NOT call chrome_navigate again. Re-navigating to the same page is wasteful and resets state.\n"
+                "8. SLOW SCROLLING: For requests like 'scroll down slowly', 'read the posts', or handling feeds (X, Reddit), ALWAYS use chrome_scroll_continuous with multiple steps and pauses to allow content to lazy-load.\n"
             )
             return (
                 f"{personality_prompt}\n\n"
