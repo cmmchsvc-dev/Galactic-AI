@@ -2206,6 +2206,7 @@ class GalacticGateway:
                 # Try all common schemas: tool/args, name/arguments, action/action_input
                 name = data.get('tool') or data.get('name') or data.get('action') or data.get('function')
                 args = data.get('args') or data.get('arguments') or data.get('action_input') or data.get('parameters', {})
+                tc_id = data.get('id') # Preserve original ID if provided
                 
                 # Handle OpenAI-style stringified arguments
                 if isinstance(args, str):
@@ -2219,7 +2220,7 @@ class GalacticGateway:
                             if alias in args and 'prompt' not in args:
                                 args['prompt'] = args.get(alias)
                     
-                    calls.append((name, args))
+                    calls.append((name, args, tc_id))
             except:
                 continue
                 
@@ -2278,13 +2279,26 @@ class GalacticGateway:
             "6. INDEPENDENT VERIFICATION: ALWAYS verify a file exists with `list_dir` or `exec_shell` after creating it.\n"
             "7. NO HALLUCINATION: If a tool fails, do not claim it succeeded. Analyze the error and pivot.\n"
             "8. PROTOCOL: Output ONLY raw JSON for tools. No markdown, no fences, no prose.\n"
+            "9. FILESYSTEM ACCESS: You HAVE full read/write access to the user's filesystem via `write_file`, `read_file`, `edit_file`, and `exec_shell`. You CAN and DO save files to their computer. NEVER say 'I cannot save files' or 'I don't have filesystem access'. When asked where a file was saved, refer to the path from the tool call.\n"
+            "10. TOOL RESULT TRUTH: If a tool was already executed (shown as 'Tool Output' in history), that action DID happen. NEVER deny or contradict a successfully executed tool. If `write_file` ran successfully, the file WAS saved to disk.\n"
         )
 
         if self.supports_native_tools:
+            browser_rules = (
+                "BROWSER TOOL WORKFLOW (MANDATORY for all chrome_* tasks):\n"
+                "1. ALWAYS call chrome_read_page FIRST after navigating to scan the page.\n"
+                "2. Use chrome_type(text='...') to type AND submit — it auto-detects the input AND presses Enter automatically. "
+                "You do NOT need chrome_key_press after chrome_type.\n"
+                "3. NEVER scroll before typing. Type first, THEN scroll the results page.\n"
+                "4. NEVER use chrome_key_press to type text. chrome_key_press is ONLY for Tab, Escape, arrow keys.\n"
+                "5. For scrolling: use direction='middle' or percent=50 to jump to page midpoint.\n"
+                "6. Tool sequence: chrome_tabs_create → chrome_read_page → chrome_type(text='query') → chrome_wait_for → chrome_read_page → chrome_scroll.\n"
+            )
             return (
                 f"{personality_prompt}\n\n"
                 f"{env_block}\n\n"
                 "You have access to tools via the native function calling API. Use them to interact with the system.\n\n"
+                f"{browser_rules}\n"
                 f"{behavioral_rules}\n"
                 f"Context: {context}"
             )
@@ -2677,7 +2691,12 @@ class GalacticGateway:
         _nudge_80_sent = False     # Track whether 80% nudge was sent
         
         # Tools allowed to be repeated with same args (snapshots, searches, images, health)
-        _DUPLICATE_EXEMPT = {'browser_snapshot', 'web_search', 'memory_search', 'generate_image', 'get_system_health'}
+        _DUPLICATE_EXEMPT = {
+            'browser_snapshot', 'web_search', 'memory_search', 'generate_image', 'get_system_health',
+            'chrome_read_page', 'chrome_scroll', 'chrome_wait', 'chrome_wait_for', 'chrome_get_text',
+            'chrome_tabs_list', 'chrome_read_console', 'chrome_read_network', 'chrome_key_press',
+            'chrome_tabs_create', 'chrome_type', 'chrome_click', 'chrome_hover', 'chrome_right_click'
+        }
         _DISCOVERY_TOOLS = {'list_dir', 'read_file', 'find_files', 'grep_search', 'glob', 'system_info', 'process_status'}
         _ACTION_TOOLS = {'edit_file', 'write_file', 'exec_shell', 'process_start', 'git_commit', 'save_memory', 'post_to_social'}
 
@@ -2730,11 +2749,11 @@ class GalacticGateway:
                     tc_list = []
                     tc_map = {} # tool_name -> call_id map for the loop
                     
-                    for i, (tool_name, tool_args) in enumerate(tool_calls):
+                    for i, (tool_name, tool_args, tc_id) in enumerate(tool_calls):
                         # Gemini requires tool names to be strictly alphanumeric/underscores
                         safe_name = re.sub(r'[^a-zA-Z0-9_]', '_', tool_name)
-                        # Generate unique ID for EACH tool call in this turn
-                        t_id = f"call_{turn_count}_{i}_{int(time.time() * 1000)}"
+                        # Use original ID if provided, otherwise generate one
+                        t_id = tc_id or f"call_{turn_count}_{i}_{int(time.time() * 1000)}"
                         tc_list.append({
                             "id": t_id,
                             "type": "function",
@@ -2767,24 +2786,44 @@ class GalacticGateway:
                         "tool_calls": tc_list
                     })
                     
-                    for i, (tool_name, tool_args) in enumerate(tool_calls):
+                    for i, (tool_name, tool_args, tc_id) in enumerate(tool_calls):
                         tool_call_id = tc_map[i]
                         safe_name = re.sub(r'[^a-zA-Z0-9_]', '_', tool_name)
                         
                         # Duplicate Block
                         call_sig = f"{tool_name}:{json.dumps(tool_args, sort_keys=True)}"
-                        if call_sig == last_tool_call and tool_name not in _DUPLICATE_EXEMPT:
-                            await self.core.log(f"⚠️ Duplicate blocked: {tool_name}", priority=2)
-                            messages.append({
-                                "role": "tool",
-                                "tool_call_id": tool_call_id,
-                                "name": safe_name,
-                                "content": f"[ERROR] Duplicate detected: {tool_name} was just called with these exact arguments. Try a different parameter, tool, or approach.",
-                                "tool_name": tool_name
-                            })
-                            continue
+                        
+                        is_chrome = tool_name.startswith('chrome_')
+                        if call_sig == last_tool_call:
+                            if is_chrome or tool_name in _DUPLICATE_EXEMPT:
+                                await self.core.log(f"🚀 Duplicate Bypass: {tool_name}", priority=2)
+                            else:
+                                await self.core.log(f"⚠️ Duplicate blocked: {tool_name}", priority=2)
+                                messages.append({
+                                    "role": "tool",
+                                    "tool_call_id": tool_call_id,
+                                    "name": safe_name,
+                                    "content": f"[ERROR] Duplicate detected: {tool_name} was just called with these exact arguments. Try a different parameter, tool, or approach.",
+                                    "tool_name": tool_name
+                                })
+                                continue
                         last_tool_call = call_sig
                         recent_tools.append(tool_name)
+
+                        # ── Block scroll-before-type ──
+                        # If user wants typing and model tries to scroll before typing, block it
+                        if tool_name == 'chrome_scroll' and 'chrome_type' not in recent_tools:
+                            _lower_input = user_input.lower()
+                            if any(kw in _lower_input for kw in ['type ', "type'", 'type"', 'search for', 'search ', 'antigravity']):
+                                await self.core.log("🛑 Blocked scroll-before-type: must type first!", priority=1)
+                                messages.append({
+                                    "role": "tool",
+                                    "tool_call_id": tool_call_id,
+                                    "name": safe_name,
+                                    "content": "[ERROR] You must call chrome_type BEFORE scrolling. The user asked you to type text. Call chrome_type(text='...') first, then scroll the results.",
+                                    "tool_name": tool_name
+                                })
+                                continue
 
                         # Validation & Execution
                         # Map safe_name back to actual registered tool name
@@ -2868,6 +2907,40 @@ class GalacticGateway:
                             consecutive_failures = 0 
                             break # Break out of tool loop for this turn
 
+                    # ── Chrome scroll loop breaker ──
+                    # Detect when the model is stuck scrolling without typing
+                    consecutive_scrolls = 0
+                    has_typed = False
+                    for rt in recent_tools:
+                        if rt == 'chrome_type':
+                            has_typed = True
+                            consecutive_scrolls = 0
+                        elif rt == 'chrome_scroll':
+                            consecutive_scrolls += 1
+                        else:
+                            consecutive_scrolls = 0
+                    
+                    if consecutive_scrolls >= 2:
+                        if not has_typed:
+                            await self.core.log(f"🛑 Scroll loop detected ({consecutive_scrolls}x without typing). Injecting correction.", priority=1)
+                            messages.append({
+                                "role": "user",
+                                "content": (
+                                    "⚠️ STOP SCROLLING. You have scrolled {} times without typing any text. "
+                                    "To type text into a search box or input field, use chrome_type(text='your text here'). "
+                                    "It will auto-detect the input field. Do NOT use chrome_key_press or chrome_scroll to enter text. "
+                                    "Use chrome_type NOW."
+                                ).format(consecutive_scrolls)
+                            })
+                            recent_tools.clear()
+                        elif consecutive_scrolls >= 5:
+                            await self.core.log(f"🛑 Excessive scrolling ({consecutive_scrolls}x). Breaking loop.", priority=1)
+                            messages.append({
+                                "role": "user",
+                                "content": f"⚠️ You have scrolled {consecutive_scrolls} times. The page may not have more content. Try a different approach or provide your final answer."
+                            })
+                            recent_tools.clear()
+
                     # ── Tool-type repetition guard ──
                     if len(recent_tools) >= 9:
                         from collections import Counter
@@ -2882,6 +2955,31 @@ class GalacticGateway:
                             recent_tools.clear()
 
                     continue # Next Turn (Loop back to LLM)
+
+                # ── Browser task completion validator ──
+                # Catch hallucinations: model claims it typed but never called chrome_type
+                used_chrome = any(t.startswith('chrome_') for t in recent_tools)
+                called_type = 'chrome_type' in recent_tools
+                user_wanted_typing = any(kw in user_input.lower() for kw in [
+                    'type ', 'type\'', 'type"', 'search for', 'search ', 'enter ',
+                    'input ', 'fill in', 'fill out', 'write ', 'antigravity',
+                ])
+                if used_chrome and user_wanted_typing and not called_type and turn_count < max_turns - 2:
+                    await self.core.log("🚫 Browser hallucination caught: model claimed done but never called chrome_type", priority=1)
+                    # Extract quoted text from user input for the nudge
+                    _qt = re.findall(r"['\"]([^'\"]+)['\"]", user_input)
+                    _type_hint = f"chrome_type(text='{_qt[0]}')" if _qt else "chrome_type(text='your search text')"
+                    messages.append({"role": "assistant", "content": response_text})
+                    messages.append({
+                        "role": "user",
+                        "content": (
+                            "⚠️ WRONG. You NEVER actually typed anything. You claimed to type "
+                            "but you never called the chrome_type tool. The search box is still empty. "
+                            f"Call {_type_hint} NOW to actually type into the search field. "
+                            "chrome_type auto-detects the input — no ref or selector needed."
+                        )
+                    })
+                    continue
 
                 # No tool call detected → this is the final answer
                 # Use display_text (think-tags stripped) for the history and relay
@@ -3342,7 +3440,7 @@ class GalacticGateway:
                 return await self._call_openai_compatible_messages(messages)
 
             elif base_provider == "deepseek":
-                return await self._call_deepseek_messages(messages)
+                return await self._call_openai_compatible_messages(messages)
 
             elif base_provider == "anthropic":
                 # Anthropic Messages API: separate system field + messages array
@@ -3797,17 +3895,206 @@ class GalacticGateway:
             pass  # Non-fatal — fall back to estimated cost
         return None
 
+    async def _call_ollama_native_messages(self, messages):
+        """
+        Call Ollama using the native /api/chat endpoint (NOT the OpenAI-compatible one).
+        
+        The OpenAI-compatible /v1/chat/completions endpoint ignores the 'options' field,
+        which means num_ctx cannot be set. The native /api/chat endpoint properly supports
+        options.num_ctx, allowing control over the context window.
+        
+        Streaming format: plain JSON lines (not SSE 'data: ...' prefix).
+        Response format: message.content (not choices[0].delta.content).
+        """
+        import copy
+
+        # Get native Ollama base URL (strip /v1 suffix)
+        ollama_base = self.core.config.get('providers', {}).get('ollama', {}).get(
+            'baseUrl', 'http://127.0.0.1:11434/v1'
+        )
+        native_base = ollama_base.rstrip('/').removesuffix('/v1')
+        url = f"{native_base}/api/chat"
+
+        # Build options
+        ollama_opts = {"temperature": 0.3}
+        ctx_window = self._get_context_window_for_model()
+        if ctx_window and int(ctx_window) > 0:
+            ollama_opts["num_ctx"] = int(ctx_window)
+            await self.core.log(f"🔧 Ollama num_ctx={int(ctx_window)}", priority=1)
+        if hasattr(self, 'thinking_level') and self.thinking_level and self.thinking_level != 'off':
+            ollama_opts["think"] = True
+
+        # ── Format messages (strip OpenAI-specific fields) ──
+        formatted_messages = []
+        for m in messages:
+            fm = copy.deepcopy(m)
+            role = fm.get("role")
+            # Ollama's native API doesn't support tool role — convert to user
+            if role == "tool":
+                fm["role"] = "user"
+                fm.pop("tool_call_id", None)
+                fm.pop("name", None)
+                fm.pop("tool_name", None)
+            elif role == "assistant" and fm.get("tool_calls"):
+                # Strip tool_calls from assistant messages in history
+                fm.pop("tool_calls", None)
+            formatted_messages.append(fm)
+
+        use_streaming = self.core.config.get('models', {}).get('streaming', True)
+        max_tokens = self._get_max_tokens()
+
+        payload = {
+            "model": self.llm.model,
+            "messages": formatted_messages,
+            "stream": use_streaming,
+            "options": ollama_opts,
+        }
+
+        # Inject native tools
+        if self.supports_native_tools and getattr(self, "tools", None):
+            payload["tools"] = [
+                {
+                    "type": "function",
+                    "function": {
+                        "name": re.sub(r'[^a-zA-Z0-9_]', '_', name),
+                        "description": spec.get("description", ""),
+                        "parameters": spec.get("parameters", {})
+                    }
+                }
+                for name, spec in self.tools.items()
+            ]
+
+        if not use_streaming:
+            # ── Non-streaming path ──
+            try:
+                _timeout = httpx.Timeout(connect=30.0, read=600.0, write=30.0, pool=30.0)
+                async with httpx.AsyncClient(timeout=_timeout, verify=False) as client:
+                    resp = await client.post(url, json=payload)
+                    if resp.status_code != 200:
+                        return f"[ERROR] ollama HTTP {resp.status_code}: {resp.text[:500]}"
+                    data = resp.json()
+                    msg = data.get('message', {})
+                    content = (msg.get('content') or '').strip()
+                    # Handle native tool calls
+                    if not content and msg.get('tool_calls'):
+                        tc_list = msg['tool_calls']
+                        synthesized = []
+                        for tc in tc_list:
+                            fn = tc.get('function', {})
+                            synthesized.append(json.dumps({
+                                "tool": fn.get('name', ''),
+                                "args": fn.get('arguments', {}) if isinstance(fn.get('arguments'), dict) else json.loads(fn.get('arguments', '{}')),
+                            }))
+                        return "\n".join(synthesized)
+                    return content or f"[ERROR] ollama: empty response"
+            except Exception as e:
+                return f"[ERROR] ollama: {str(e)}"
+
+        # ── Streaming path (native JSON lines) ──
+        full_response = []
+        try:
+            _timeout = httpx.Timeout(connect=30.0, read=600.0, write=30.0, pool=30.0)
+            async with httpx.AsyncClient(timeout=_timeout, verify=False) as client:
+                async with client.stream("POST", url, json=payload) as response:
+                    if response.status_code != 200:
+                        body = await response.aread()
+                        return f"[ERROR] ollama HTTP {response.status_code}: {body.decode('utf-8', errors='replace')[:500]}"
+                    
+                    token_buf = []
+                    _tc_accumulators = {}
+                    
+                    async for line in response.aiter_lines():
+                        if not line.strip():
+                            continue
+                        try:
+                            chunk = json.loads(line)
+                        except json.JSONDecodeError:
+                            continue
+                        
+                        msg = chunk.get('message', {})
+                        delta = (msg.get('content') or '')
+                        
+                        # Handle thinking content
+                        thinking = (msg.get('thinking') or '')
+                        if thinking and not delta:
+                            delta = thinking
+                        
+                        # Accumulate tool calls (arrive in final chunk when done=true)
+                        tc_list = msg.get('tool_calls', [])
+                        for i, tc in enumerate(tc_list or []):
+                            fn = tc.get('function', {})
+                            if fn.get('name'):
+                                _tc_accumulators[i] = {
+                                    'name': fn['name'],
+                                    'args': fn.get('arguments', {}),
+                                }
+                        
+                        if delta:
+                            full_response.append(delta)
+                            token_buf.append(delta)
+                            if len(token_buf) >= 8:
+                                await self.core.relay.emit(3, "stream_chunk", "".join(token_buf))
+                                token_buf = []
+                                await asyncio.sleep(0)
+                        
+                        # Check if done
+                        if chunk.get('done'):
+                            break
+                    
+                    # Flush remaining buffer
+                    if token_buf:
+                        await self.core.relay.emit(3, "stream_chunk", "".join(token_buf))
+                    
+                    # Handle accumulated tool calls
+                    if _tc_accumulators:
+                        thought = "".join(full_response).strip()
+                        synthesized_list = []
+                        for idx, acc in sorted(_tc_accumulators.items()):
+                            if not acc['name']:
+                                continue
+                            fn_args = acc['args']
+                            if isinstance(fn_args, str):
+                                try:
+                                    fn_args = json.loads(fn_args)
+                                except json.JSONDecodeError:
+                                    fn_args = {}
+                            synthesized_list.append({
+                                "tool": acc['name'],
+                                "args": fn_args,
+                                "thought": thought if idx == 0 else None
+                            })
+                        if synthesized_list:
+                            full_response = [json.dumps(call) + "\n" for call in synthesized_list]
+                            await self.core.log(
+                                f"🔧 Native tool_calls intercepted (stream): "
+                                f"{[ac['name'] for ac in _tc_accumulators.values() if ac['name']]} → converted to text",
+                                priority=2
+                            )
+            
+            result = "".join(full_response)
+            if not result.strip():
+                await self.core.log(
+                    f"⚠️ Ollama native streaming returned empty — model={self.llm.model}",
+                    priority=1
+                )
+                return "[ERROR] ollama: empty streaming response"
+            return result
+        except Exception as e:
+            return f"[ERROR] ollama (streaming): {str(e)}"
+
     async def _call_openai_compatible_messages(self, messages):
         """
         OpenAI-compatible call that passes the FULL messages array.
 
-        Used for: Ollama (local), OpenAI, Groq, Mistral, Cerebras, OpenRouter,
+        Used for: OpenAI, Groq, Mistral, Cerebras, OpenRouter,
                   HuggingFace, Kimi, ZAI/GLM, MiniMax — any provider using
                   the standard /chat/completions messages array format.
 
+        Ollama is routed to _call_ollama_native_messages() instead.
+
         Key features:
           • Passes messages[] directly (preserves multi-turn conversation context)
-          • Supports streaming for Ollama and OpenAI-compatible providers
+          • Supports streaming for OpenAI-compatible providers
           • Reads base URL and API key from config for all providers
           • Injects max_tokens if configured
         """
@@ -3821,6 +4108,10 @@ class GalacticGateway:
                 "prompt": prompt,
                 "model": self.llm.model,
             })
+
+        # Ollama uses native /api/chat (supports options.num_ctx)
+        if provider == "ollama":
+            return await self._call_ollama_native_messages(messages)
 
         url = f"{self._get_provider_base_url(provider)}/chat/completions"
 
@@ -3900,10 +4191,17 @@ class GalacticGateway:
             }
             # Ollama benefits from explicit temperature in options
             if provider == "ollama":
-                payload["options"] = {"temperature": 0.3}
+                ollama_opts = {"temperature": 0.3}
+                # Inject num_ctx from per-model override or global config
+                ctx_window = self._get_context_window_for_model()
+                await self.core.log(f"🔧 Ollama ctx_window lookup: {ctx_window} (model={self.llm.model})", priority=1)
+                if ctx_window and int(ctx_window) > 0:
+                    ollama_opts["num_ctx"] = int(ctx_window)
+                    await self.core.log(f"🔧 Ollama num_ctx set to {int(ctx_window)}", priority=1)
                 # Ollama uses 'think' param (not reasoning_effort) for thinking models
                 if hasattr(self, 'thinking_level') and self.thinking_level and self.thinking_level != 'off':
-                    payload["options"]["think"] = True
+                    ollama_opts["think"] = True
+                payload["options"] = ollama_opts
             # NVIDIA thinking/reasoning models need extra body params
             if provider == "nvidia":
                 extra = _NVIDIA_THINKING_MODELS.get(self.llm.model, {})
@@ -3984,7 +4282,7 @@ class GalacticGateway:
                                     if not tc: continue
                                     tc_idx = tc.get('index', 0)
                                     if tc_idx not in _tc_accumulators:
-                                        _tc_accumulators[tc_idx] = {'name': '', 'args': []}
+                                        _tc_accumulators[tc_idx] = {'name': '', 'args': [], 'id': tc.get('id')}
                                         
                                     fn = tc.get('function', {})
                                     if not fn: continue
@@ -3992,6 +4290,9 @@ class GalacticGateway:
                                         _tc_accumulators[tc_idx]['name'] = fn['name']
                                     if fn.get('arguments'):
                                         _tc_accumulators[tc_idx]['args'].append(fn['arguments'])
+                                    # Capture id from first chunk that provides it
+                                    if tc.get('id') and not _tc_accumulators[tc_idx].get('id'):
+                                        _tc_accumulators[tc_idx]['id'] = tc['id']
 
                                 # ── Capture finish_reason for diagnostics ──
                                 finish_reason = choice.get('finish_reason')
@@ -4041,7 +4342,12 @@ class GalacticGateway:
                                     fn_args = json.loads(args_str)
                                 except json.JSONDecodeError:
                                     fn_args = {}
-                                synthesized_list.append({"tool": acc['name'], "args": fn_args, "thought": thought if idx == 0 else None})
+                                synthesized_list.append({
+                                    "tool": acc['name'],
+                                    "args": fn_args,
+                                    "id": acc.get('id'), # Preserve ID
+                                    "thought": thought if idx == 0 else None
+                                })
                             
                             if synthesized_list:
                                 # Convert all calls into a sequence of JSON blocks text, which _extract_tool_call safely parses
@@ -4087,10 +4393,14 @@ class GalacticGateway:
             "stream": False,
         }
         if provider == "ollama":
-            payload["options"] = {"temperature": 0.3}
+            ollama_opts = {"temperature": 0.3}
+            ctx_window = self._get_context_window_for_model()
+            if ctx_window and int(ctx_window) > 0:
+                ollama_opts["num_ctx"] = int(ctx_window)
             # Ollama uses 'think' param (not reasoning_effort) for thinking models
             if hasattr(self, 'thinking_level') and self.thinking_level and self.thinking_level != 'off':
-                payload["options"]["think"] = True
+                ollama_opts["think"] = True
+            payload["options"] = ollama_opts
         # NVIDIA thinking/reasoning models need extra body params
         if provider == "nvidia":
             extra = _NVIDIA_THINKING_MODELS.get(self.llm.model, {})
@@ -4193,7 +4503,12 @@ class GalacticGateway:
                                     fn_args = json.loads(fn_args_str) if fn_args_str else {}
                                 except json.JSONDecodeError:
                                     fn_args = {}
-                                synthesized_list.append({"tool": fn_name, "args": fn_args, "thought": thought if i == 0 else None})
+                                synthesized_list.append({
+                                    "tool": fn_name,
+                                    "args": fn_args,
+                                    "id": tc.get('id'), # Preserve ID
+                                    "thought": thought if i == 0 else None
+                                })
                                 
                             await self.core.log(
                                 f"🔧 Native tool_calls intercepted (non-stream): {[s['tool'] for s in synthesized_list]}",
