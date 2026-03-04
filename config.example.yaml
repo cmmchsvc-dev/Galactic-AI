@@ -92,6 +92,8 @@ providers:
 telegram:
   enabled: true
   bot_token: "YOUR_TELEGRAM_BOT_TOKEN"
+  # CRITICAL: Set this to your Chat ID to prevent strangers from controlling your PC.
+  # Use /id in your bot to find your ID.
   admin_chat_id: "YOUR_TELEGRAM_CHAT_ID"
   timeout_seconds: 180
   ollama_timeout_seconds: 600
