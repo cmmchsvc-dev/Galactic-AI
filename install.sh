@@ -7,7 +7,7 @@ set -e
 echo ""
 echo "============================================"
 echo "  GALACTIC AI - Automation Suite Installer"
-echo "  v1.4.5"
+echo "  v1.4.6"
 echo "============================================"
 echo ""
 
