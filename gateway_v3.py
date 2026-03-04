@@ -2284,6 +2284,7 @@ class GalacticGateway:
             "8. PROTOCOL: Output ONLY raw JSON for tools. No markdown, no fences, no prose.\n"
             "9. FILESYSTEM ACCESS: You HAVE full read/write access to the user's filesystem via `write_file`, `read_file`, `edit_file`, and `exec_shell`. You CAN and DO save files to their computer. NEVER say 'I cannot save files' or 'I don't have filesystem access'. When asked where a file was saved, refer to the path from the tool call.\n"
             "10. TOOL RESULT TRUTH: If a tool was already executed (shown as 'Tool Output' in history), that action DID happen. NEVER deny or contradict a successfully executed tool. If `write_file` ran successfully, the file WAS saved to disk.\n"
+            "11. STAY ON TASK: Do not autonomously attempt to 'fix' the user's system, search for missing API keys, or modify `config.yaml` unless explicitly asked to do so. Focus ONLY on completing the user's immediate request.\n"
         )
 
         if self.supports_native_tools:
