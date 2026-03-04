@@ -95,7 +95,9 @@ def sync_versions(new_version):
         "FEATURES.md",
         "PROJECT_STATE.md",
         "install.ps1",
-        "install.sh"
+        "install.sh",
+        "manifest.json",
+        "chrome-extension/manifest.json"
     ]
     
     # Add all skill files
