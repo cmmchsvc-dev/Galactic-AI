@@ -4,6 +4,14 @@ All notable changes to Galactic AI are documented here.
 
 ---
 
+## v1.4.8 — Unified Security Protocol (2026-03-04)
+
+*   🛡️ **Unified Security**: Hardened Discord and WhatsApp bridges with strict "Default Deny" authorization.
+*   🛡️ **Discord Authorization**: Implemented `admin_user_id` check and fallback channel whitelist.
+*   🛡️ **WhatsApp Authorization**: Implemented `admin_phone_number` check with lockdown by default.
+*   🆔 **ID Discovery**: Added public `/id` commands to both bridges for easier configuration.
+*   ⚠️ **Config Hardening**: Added critical security warnings to `config.example.yaml`.
+
 ## v1.4.7 — The Security Hardening Update (2026-03-04)
 
 *   🛡️ **Telegram Access Control**: Implemented strict "Default Deny" logic. Unauthorized users are blocked by default.
