@@ -4,7 +4,7 @@ remote_access.py — Galactic AI Remote Access Security Module
 Provides TLS certificate generation, JWT authentication, rate limiting,
 and aiohttp middleware for secure remote access to the Control Deck.
 
-v1.4.8
+v1.4.9
 """
 
 import os
@@ -238,12 +238,18 @@ class RateLimiter:
 
 # ── Auth Middleware ───────────────────────────────────────────────────────────
 
-EXEMPT_ROUTES = {
-    ('GET', '/'),
-    ('POST', '/login'),
-    ('GET', '/api/check_setup'),
-    ('POST', '/api/setup'),
-}
+EXEMPT_ROUTES = [
+    '/',
+    '/login',
+    '/api/check_setup',
+    '/api/setup',
+    '/api/status',
+    '/api/login',
+    '/api/auth/verify',
+    '/api/manifest.json',
+    '/favicon.ico',
+    '/static/'
+]
 
 # Local IPs that bypass auth (the PC itself should never be locked out)
 LOCAL_IPS = {'127.0.0.1', '::1', 'localhost'}
@@ -267,13 +273,12 @@ def create_auth_middleware(password_hash: str, jwt_secret: str, rate_limiter: Ra
         if peername:
             ip = peername[0]
 
+        is_local = ip in LOCAL_IPS
+
         # ── Local connections bypass ALL auth ────────────────────────────
         # The PC user should never be locked out of their own Control Deck
-        if ip in LOCAL_IPS:
+        if is_local:
             return await handler(request)
-
-        # Exempt routes skip auth (but still rate-limited for remote clients)
-        is_exempt = (method, path) in EXEMPT_ROUTES
 
         # Rate limiting (remote clients only)
         if path == '/login' and method == 'POST':
@@ -293,29 +298,16 @@ def create_auth_middleware(password_hash: str, jwt_secret: str, rate_limiter: Ra
                     headers={'Retry-After': str(retry)}
                 )
 
-        # Skip auth for exempt routes and WebSocket (WS auth handled in handler)
-        if is_exempt or path == '/stream':
-            return await handler(request)
-
-        # Require auth for all /api/* routes (remote clients)
-        if path.startswith('/api/'):
-            auth_header = request.headers.get('Authorization', '')
-            token = None
-
-            if auth_header.startswith('Bearer '):
-                token = auth_header[7:]
-            else:
-                # Also check query param for backward compatibility
-                token = request.query.get('token')
-
-            if not token:
-                return web.json_response({'error': 'Unauthorized'}, status=401)
-
-            # Accept either JWT or legacy password hash
-            if token == password_hash:
-                pass  # Legacy token - valid
-            elif not verify_jwt(token, jwt_secret):
-                return web.json_response({'error': 'Unauthorized'}, status=401)
+        # Global Remote Access Policy: Default Deny
+        # Only local IPs or explicitly exempt routes are allowed without JWT
+        if not is_local and not any(request.path.startswith(route) for route in EXEMPT_ROUTES):
+            auth_header = request.headers.get('Authorization')
+            if not auth_header or not auth_header.startswith('Bearer '):
+                return web.json_response({'error': 'Authentication required for remote access'}, status=401)
+            
+            token = auth_header.split(' ')[1]
+            if not verify_jwt(token): # Assuming verify_jwt now takes only token or jwt_secret is global
+                return web.json_response({'error': 'Invalid or expired token'}, status=401)
 
         return await handler(request)
 

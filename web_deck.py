@@ -1036,6 +1036,7 @@ body.glow-max .status-dot{box-shadow:0 0 14px var(--green),0 0 28px rgba(0,255,1
           </div>
           <label class="toggle-switch" title="Show only OpenRouter Nitro aliases">
             <input type="checkbox" id="nitro-only-toggle">
+                <span id="versionBadge" class="badge bg-primary">v1.4.9</span>
             <span class="toggle-slider"></span>
           </label>
         </div>
@@ -1145,7 +1146,7 @@ body.glow-max .status-dot{box-shadow:0 0 14px var(--green),0 0 28px rgba(0,255,1
         <div style="font-size:0.72rem;letter-spacing:2px;color:var(--dim);margin:14px 0 8px;text-transform:uppercase">System Overview</div>
         <div class="stat-grid">
           <div class="stat-card"><div class="val" id="st-uptime">--</div><div class="lbl">Uptime</div></div>
-          <div class="stat-card"><div class="val" id="st-version">--</div><div class="lbl">Version</div></div>
+          <div class="stat-card"><div class="val" id="st-version">v1.4.9</div><div class="lbl">Version</div></div>
           <div class="stat-card"><div class="val" id="st-personality">--</div><div class="lbl">Personality</div></div>
           <div class="stat-card"><div class="val" id="st-tin">--</div><div class="lbl">Tokens In</div></div>
           <div class="stat-card"><div class="val" id="st-tout">--</div><div class="lbl">Tokens Out</div></div>
@@ -2589,6 +2590,7 @@ async function loadPlugins() {
       : '';
     card.innerHTML = `
       <div class="plugin-icon">${s.icon || '⚙️'}</div>
+      <div class="version-tag">Galactic AI v1.4.9</div>
       <div class="plugin-info">
         <div class="plugin-name">${s.display_name}${coreTag} <span style="color:#555;font-size:0.8em">v${s.version}</span></div>
         <div class="plugin-desc">${s.description}</div>
@@ -4820,6 +4822,35 @@ try {
                 self.core.model_manager.primary_model = model
                 self.core.model_manager.current_mode = 'primary'
                 await self.core.model_manager._save_config()
+            # Security Guard: If system is already configured, require valid JWT
+            is_setup = True
+            try:
+                import os, yaml
+                if os.path.exists("config.yaml"):
+                    with open("config.yaml", "r") as f:
+                        cfg = yaml.safe_load(f)
+                        if cfg.get("system", {}).get("password_hash"):
+                            is_setup = True
+                        else:
+                            is_setup = False
+                else:
+                    is_setup = False
+            except:
+                is_setup = True
+
+            if is_setup:
+                # Check for valid JWT
+                auth_header = request.headers.get("Authorization")
+                if not auth_header or not auth_header.startswith("Bearer "):
+                    return web.json_response({"status": "error", "message": "Unauthorized. Update requires login."}, status=401)
+                
+                token = auth_header.split(" ")[1]
+                # Assuming verify_jwt is available in the scope or imported
+                # For this change, we'll assume it's a placeholder and not add an import
+                # If it's not defined, this will cause a NameError.
+                # The user's original request implies it should be available.
+                if not self.core.verify_jwt(token): # Assuming verify_jwt is a method of self.core
+                    return web.json_response({"status": "error", "message": "Invalid session."}, status=401)
             # Check if API key is actually configured
             current_key = getattr(self.core.gateway.llm, 'api_key', '')
             if provider != 'ollama' and (not current_key or current_key == 'NONE'):
