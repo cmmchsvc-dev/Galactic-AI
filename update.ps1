@@ -172,10 +172,10 @@ try {
 # config.yaml is protected so your API keys are never touched, but the version
 # field must be updated so the splash screen and updater stay in sync.
 $configPath = "$InstallDir\config.yaml"
-$configRaw  = Get-Content $configPath -Raw
+$configRaw  = Get-Content $configPath -Raw -Encoding UTF8
 $patched    = $configRaw -replace '(?m)^(\s*version:\s*)[0-9.]+', "`${1}$latestVersion"
 if ($patched -ne $configRaw) {
-    Set-Content -Path $configPath -Value $patched -NoNewline
+    Set-Content -Path $configPath -Value $patched -NoNewline -Encoding UTF8
     Write-Host "  Version stamped    : v$latestVersion" -ForegroundColor Green
 }
 
