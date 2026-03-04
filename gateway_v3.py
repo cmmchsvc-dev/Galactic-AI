@@ -2202,6 +2202,12 @@ class GalacticGateway:
                 data = json.loads(clean_block)
                 if not isinstance(data, dict): continue
                 
+                # Check for "JSON wrapped final answer" anti-pattern (e.g. {"text": "...", "response": "..."})
+                # If it ONLY contains text-like keys and NO tool-like keys, it's not a tool call.
+                if any(k in data for k in ('text', 'response', 'answer', 'content')) and \
+                   not any(k in data for k in ('tool', 'name', 'action', 'function', 'call_id', 'arguments')):
+                    continue
+
                 # 3. Universal Schema Mapping
                 # Try all common schemas: tool/args, name/arguments, action/action_input
                 name = data.get('tool') or data.get('name') or data.get('action') or data.get('function')
@@ -2367,10 +2373,10 @@ class GalacticGateway:
             "1. To use a tool output ONLY a raw JSON object. NO markdown. NO prose. NO code fences.\n"
             "   CORRECT:   {\"tool\": \"read_file\", \"args\": {\"path\": \"C:\\\\data\\\\a.txt\"}}\n"
             "   WRONG:     ```json\\n{...}\\n```   (never use fences)\n"
-            "   WRONG:     \'I will read the file: {...}\'  (never wrap in prose)\n"
-            "2. After a tool output appears as \'Tool Output: ...\' give your FINAL answer in plain text.\n"
-            "3. HALLUCINATION PREVENTION: You MUST use the actual tool to interact with the system. NEVER just output a markdown code block and claim you are writing a file or running a command. If you want to write code to a file, you MUST output the literal JSON for the `write_file` tool containing the code in the \'content\' field.\n"
-            "4. If you don\'t need a tool, just answer in plain text — no JSON.\n\n"
+            "2. After all tool turns are complete, you MUST give your FINAL answer in PLAIN TEXT (Markdown allowed).\n"
+            "   CRITICAL: NEVER wrap your final answer in JSON. NEVER use a 'text' or 'response' key for your final answer.\n"
+            "3. HALLUCINATION PREVENTION: You MUST use the actual tool to interact with the system. NEVER just output a markdown code block and claim you are writing a file or running a command. If you want to write code to a file, you MUST output the literal JSON for the `write_file` tool containing the code in the 'content' field.\n"
+            "4. If you don't need a tool (e.g. answering a question), just answer in PLAIN TEXT — no JSON.\n\n"
             f"{behavioral_rules}"
         )
 
@@ -2675,8 +2681,11 @@ class GalacticGateway:
             if lower_input.startswith("/plan ") or "plan out" in lower_input or "scan the codebase" in lower_input:
                 needs_plan = True
                 user_input = user_input.replace("/plan ", "").strip()
-            elif any(kw in lower_input for kw in ["refactor", "build a ", "create a ", "write a script", "complex task", "update", "add", "fix", "change", "implement"]):
-                needs_plan = True
+            elif any(kw in lower_input for kw in ["refactor", "build a ", "create a ", "write a script", "complex task", "implement"]):
+                # Narrow down the keywords to avoid triggering on meta-talk
+                if not any(meta in lower_input for kw, meta in [("fix", "fix your"), ("fix", "fix the formatting"), ("fix", "fix that name")]):
+                     if any(k in lower_input for k in ["fix ", "update ", "add ", "change "]):
+                         needs_plan = True
 
         if needs_plan and not self.active_plan and not skip_planning:
             plan = await self._generate_plan(user_input)
@@ -2783,12 +2792,22 @@ class GalacticGateway:
                     # Detect if it was a "native" JSON block sequence
                     thought_content = None
                     try:
-                        # Since we may have multiple lines, load the first one to check for thought
+                        # Check for JSON-wrapped final answers (final answer detection)
+                        stripped = response_text.strip()
+                        if stripped.startswith("{") and stripped.endswith("}"):
+                            data = json.loads(stripped)
+                            if isinstance(data, dict) and any(k in data for k in ('text', 'response', 'answer', 'content')) and \
+                               not any(k in data for k in ('tool', 'name', 'action', 'function')):
+                                # This is a final answer wrapped in JSON
+                                response_text = data.get('text') or data.get('response') or data.get('answer') or data.get('content')
+                                tool_calls = [] # Force no tool calls
+                                
+                        # Extraction of thought if still applicable after potential JSON unwrapping
                         first_line = response_text.strip().split("\n")[0]
                         data = json.loads(first_line)
                         if isinstance(data, dict):
                             thought_content = data.get('thought')
-                    except json.JSONDecodeError:
+                    except Exception:
                         # Text + JSON (like from DeepSeek or reasoning models)
                         # Strip think tags from content and synthesized dicts if present
                         thought_content = re.sub(r'<think>.*?</think>', '', response_text, flags=re.DOTALL).strip()
