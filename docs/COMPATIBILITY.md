@@ -1,19 +1,29 @@
 # Galactic AI — Cross-Platform Compatibility Guide
 
-This document outlines the feature parity and setup requirements for Galactic AI across Windows, macOS, and Linux.
+This document outlines feature parity and setup requirements for Galactic AI across Windows, macOS, and Linux.
 
-## 📊 Feature Comparison
+---
 
-| Feature | Windows | macOS | Linux (X11) | Linux (Wayland) |
-| :--- | :---: | :---: | :---: | :---: |
-| **Core AI Engine** (Local/Cloud) | ✅ | ✅ | ✅ | ✅ |
-| **Web Browser Automation** (Playwright) | ✅ | ✅ | ✅ | ✅ |
-| **Desktop Screenshots** | ✅ | ✅¹ | ✅² | ⚠️³ |
-| **Mouse/Keyboard Control** | ✅ | ✅¹ | ✅² | ⚠️³ |
-| **Window Management** | ✅ | ❌ | ✅² | ❌ |
-| **Clipboard Read/Write** | ✅ | ✅ | ✅² | ⚠️ |
-| **Desktop Notifications** | ✅ | ✅ | ✅² | ✅² |
-| **Voice / TTS Playback** | ✅ | ✅ | ✅ | ✅ |
+## 📊 Feature Comparison Matrix
+
+| Feature                                  | Windows | macOS | Linux (X11) | Linux (Wayland) |
+| :--------------------------------------- | :-----: | :---: | :---------: | :-------------: |
+| **Core AI Engine** (Local/Cloud)         | ✅      | ✅     | ✅           | ✅              |
+| **Web Browser Automation** (Playwright)  | ✅      | ✅     | ✅           | ✅              |
+| **Desktop Screenshots**                  | ✅      | ✅¹    | ✅²          | ⚠️³             |
+| **Mouse/Keyboard Control**               | ✅      | ✅¹    | ✅²          | ⚠️³             |
+| **Window Management**                    | ✅      | ❌     | ✅²          | ❌              |
+| **Clipboard Read/Write**                 | ✅      | ✅     | ✅²          | ⚠️              |
+| **Desktop Notifications**                | ✅      | ✅     | ✅²          | ✅²             |
+| **Voice / TTS Playback**                 | ✅      | ✅     | ✅           | ✅              |
+
+**Legend:**
+- ✅ Full Support
+- ❌ Not Supported
+- ⚠️ Experimental / Limited
+- ¹ Requires Accessibility & Screen Recording permissions
+- ² Requires system packages: `xclip`, `wmctrl`, `notify-send`
+- ³ X11 session recommended for stability
 
 ---
 
@@ -21,43 +31,44 @@ This document outlines the feature parity and setup requirements for Galactic AI
 
 ### 1. Permissions (CRITICAL)
 For **Desktop Tools** (screenshots, mouse, keyboard) to work, you must grant permissions to your terminal (e.g., Terminal.app, iTerm2) or Python executable:
-- **System Settings** > **Privacy & Security** > **Accessibility**
-- **System Settings** > **Privacy & Security** > **Screen Recording**
+1. Open **System Settings**
+2. Go to **Privacy & Security** > **Accessibility** (Add and enable your terminal)
+3. Go to **Privacy & Security** > **Screen Recording** (Add and enable your terminal)
 
 ### 2. Limitations
-- **Window Management**: `window_list`, `window_focus`, and `window_resize` are currently **Windows-only**. Desktop automation on Mac relies primarily on coordinate-based clicking and visual recognition.
+- **Window Management**: Common tools (`window_list`, `window_focus`) are currently **Windows-only**. Desktop interaction on Mac relies on visual search and coordinate clicking.
 
 ---
 
 ## 🐧 Linux Setup (Specifics)
 
-### 1. System Dependencies
-Linux requires several system-level utilities that aren't included in Python's `pip`. Run the following to enable full desktop support:
+### 1. Install System Dependencies
+Linux requires utilities not included in Python's `pip`. Run the command for your distribution:
 
 **Ubuntu / Debian / Mint:**
 ```bash
-sudo apt update
-sudo apt install xclip wmctrl libnotify-bin
+sudo apt update && sudo apt install xclip wmctrl libnotify-bin
 ```
 
-**Fedora:**
+**Fedora / RHEL / CentOS:**
 ```bash
 sudo dnf install xclip wmctrl libnotify
 ```
 
+**Arch Linux:**
+```bash
+sudo pacman -S xclip wmctrl libnotify
+```
+
 ### 2. Wayland vs. X11
-Galactic AI's desktop automation (`pyautogui`) currently performs best on **X11**.
-- **Wayland Support**: Most desktop tools (clicking/typing) will fail on Wayland due to security restrictions. If you are on a modern distro (like Ubuntu 22.04+), you may need to switch to an "Ubuntu on Xorg" session at the login screen.
+Global desktop automation (`pyautogui`) perform best on **X11**.
+- **Issue**: Wayland's security blocks remote input/capture in many cases.
+- **Solution**: If tools fail, switch to an "Ubuntu on Xorg" (X11) session at the login screen.
 
 ---
 
 ## 🛠️ Diagnostic Tool
-You can verify your environment at any time by running:
+Verify your environment instantly by running:
 ```bash
 python scripts/diagnostic.py
 ```
-
----
-¹ Requires Accessibility & Screen Recording permissions.  
-² Requires `xclip`, `wmctrl`, and `notify-send`.  
-³ Limited support on Wayland; X11 session recommended.
