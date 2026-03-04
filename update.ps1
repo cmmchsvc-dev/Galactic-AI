@@ -21,7 +21,7 @@ param(
 )
 
 $GITHUB_REPO = "cmmchsvc-dev/Galactic-AI"
-$GITHUB_API  = "https://api.github.com/repos/$GITHUB_REPO/releases"
+$GITHUB_API = "https://api.github.com/repos/$GITHUB_REPO/releases"
 
 Write-Host ""
 Write-Host "============================================" -ForegroundColor Cyan
@@ -60,17 +60,19 @@ try {
 
     if ($Version -eq "latest") {
         $releaseInfo = Invoke-RestMethod -Uri "$GITHUB_API/latest" -Headers $headers
-    } else {
+    }
+    else {
         $releaseInfo = Invoke-RestMethod -Uri "$GITHUB_API/tags/$Version" -Headers $headers
     }
-} catch {
+}
+catch {
     Write-Host "  ERROR: Could not reach GitHub API. Check your internet connection." -ForegroundColor Red
     Write-Host "  $($_.Exception.Message)" -ForegroundColor DarkRed
     exit 1
 }
 
 $latestVersion = $releaseInfo.tag_name -replace '^v', ''
-$latestTag     = $releaseInfo.tag_name
+$latestTag = $releaseInfo.tag_name
 
 Write-Host "  Latest version    : $latestTag" -ForegroundColor Green
 
@@ -100,15 +102,15 @@ if (-not $asset) {
     exit 1
 }
 
-$downloadUrl  = $asset.browser_download_url
-$assetName    = $asset.name
+$downloadUrl = $asset.browser_download_url
+$assetName = $asset.name
 Write-Host "  Downloading       : $assetName" -ForegroundColor DarkGray
 
 # ── Step 3: Back up config.yaml ───────────────────────────────────────────────
 Write-Host "[3/6] Backing up your configuration..." -ForegroundColor Yellow
-$backupDir  = "$InstallDir\logs\backups"
+$backupDir = "$InstallDir\logs\backups"
 New-Item -ItemType Directory -Force -Path $backupDir | Out-Null
-$timestamp  = Get-Date -Format "yyyyMMdd-HHmmss"
+$timestamp = Get-Date -Format "yyyyMMdd-HHmmss"
 $backupPath = "$backupDir\config-backup-$timestamp.yaml"
 Copy-Item "$InstallDir\config.yaml" $backupPath
 Write-Host "  Backed up to: $backupPath" -ForegroundColor Green
@@ -120,7 +122,8 @@ try {
     Invoke-WebRequest -Uri $downloadUrl -OutFile $tempZip -UseBasicParsing
     $zipSizeMB = [math]::Round((Get-Item $tempZip).Length / 1MB, 1)
     Write-Host "  Downloaded $zipSizeMB MB." -ForegroundColor Green
-} catch {
+}
+catch {
     Write-Host "  ERROR: Download failed." -ForegroundColor Red
     Write-Host "  $($_.Exception.Message)" -ForegroundColor DarkRed
     exit 1
@@ -130,7 +133,7 @@ try {
 Write-Host "[5/6] Applying update..." -ForegroundColor Yellow
 
 $protected = @("config.yaml", "logs", "workspace", "watch", "memory",
-               "MEMORY.md", "USER.md", "IDENTITY.md", "SOUL.md", "TOOLS.md", "VAULT.md", "HEARTBEAT.md")
+    "MEMORY.md", "USER.md", "IDENTITY.md", "SOUL.md", "TOOLS.md", "VAULT.md", "HEARTBEAT.md")
 
 $tempDir = "$env:TEMP\galactic-update-extracted-$timestamp"
 New-Item -ItemType Directory -Force -Path $tempDir | Out-Null
@@ -143,7 +146,7 @@ try {
     $sourceDir = if ($innerDir) { $innerDir.FullName } else { $tempDir }
 
     $filesToCopy = Get-ChildItem $sourceDir -Recurse -File | Where-Object {
-        $relPath  = $_.FullName.Substring($sourceDir.Length + 1)
+        $relPath = $_.FullName.Substring($sourceDir.Length + 1)
         $topLevel = $relPath.Split([IO.Path]::DirectorySeparatorChar)[0]
         ($protected -notcontains $topLevel) -and ($protected -notcontains $relPath)
     }
@@ -151,7 +154,7 @@ try {
     $copied = 0
     foreach ($file in $filesToCopy) {
         $relPath = $file.FullName.Substring($sourceDir.Length + 1)
-        $dest    = Join-Path $InstallDir $relPath
+        $dest = Join-Path $InstallDir $relPath
         $destDir = Split-Path $dest -Parent
         if (-not (Test-Path $destDir)) {
             New-Item -ItemType Directory -Force -Path $destDir | Out-Null
@@ -163,7 +166,8 @@ try {
     Write-Host "  Updated $copied files." -ForegroundColor Green
     Write-Host "  Protected (untouched): $($protected -join ', ')" -ForegroundColor DarkGray
 
-} finally {
+}
+finally {
     Remove-Item -Recurse -Force $tempDir  -ErrorAction SilentlyContinue
     Remove-Item -Force        $tempZip   -ErrorAction SilentlyContinue
 }
@@ -172,10 +176,10 @@ try {
 # config.yaml is protected so your API keys are never touched, but the version
 # field must be updated so the splash screen and updater stay in sync.
 $configPath = "$InstallDir\config.yaml"
-$configRaw  = Get-Content $configPath -Raw -Encoding UTF8
-$patched    = $configRaw -replace '(?m)^(\s*version:\s*)[0-9.]+', "`${1}$latestVersion"
+$configRaw = Get-Content $configPath -Raw
+$patched = $configRaw -replace '(?m)^(\s*version:\s*)[0-9.]+', "`${1}$latestVersion"
 if ($patched -ne $configRaw) {
-    Set-Content -Path $configPath -Value $patched -NoNewline -Encoding UTF8
+    Set-Content -Path $configPath -Value $patched -NoNewline
     Write-Host "  Version stamped    : v$latestVersion" -ForegroundColor Green
 }
 
