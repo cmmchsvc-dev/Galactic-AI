@@ -68,7 +68,7 @@ class GalacticCore:
             }
             # Still continue to migration to ensure sections like 'models' are added
         else:
-            with open(config_full_path, 'r', encoding='utf-8') as f:
+            with open(config_full_path, 'r') as f:
                 config = yaml.load(f, Loader=yaml.FullLoader) or {}
 
         # ── Auto-migrate: add missing config sections from newer versions ────
