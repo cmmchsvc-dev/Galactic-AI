@@ -10,12 +10,30 @@ Write-Host ""
 
 # Check Python
 Write-Host "[1/5] Checking Python..." -ForegroundColor Yellow
-$pythonVersion = python --version 2>&1
-if ($LASTEXITCODE -ne 0) {
-    Write-Host "  ERROR: Python not found. Install from https://www.python.org/downloads/" -ForegroundColor Red
-    Write-Host "  Make sure to check 'Add Python to PATH' during installation." -ForegroundColor Red
-    exit 1
+if (-not (Get-Command "python" -ErrorAction SilentlyContinue)) {
+    Write-Host "  Python is not installed. Attempting automatic installation..." -ForegroundColor Yellow
+    
+    [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
+    $pythonUrl = "https://www.python.org/ftp/python/3.11.9/python-3.11.9-amd64.exe"
+    $installerPath = "$env:TEMP\python-installer.exe"
+    
+    Write-Host "  Downloading Python 3.11 (this may take a minute)..." -ForegroundColor Cyan
+    Invoke-WebRequest -Uri $pythonUrl -OutFile $installerPath
+    
+    Write-Host "  Installing Python (this will run silently)..." -ForegroundColor Cyan
+    Start-Process -FilePath $installerPath -ArgumentList "/quiet InstallAllUsers=0 PrependPath=1 Include_test=0" -Wait
+    
+    Write-Host "  Reloading environment variables..." -ForegroundColor DarkCyan
+    $env:Path = [System.Environment]::GetEnvironmentVariable("Path", "Machine") + ";" + [System.Environment]::GetEnvironmentVariable("Path", "User")
+    
+    if (-not (Get-Command "python" -ErrorAction SilentlyContinue)) {
+        Write-Host "  ERROR: Automatic Python install failed or PATH not updated." -ForegroundColor Red
+        Write-Host "  Please install manually from https://www.python.org/downloads/" -ForegroundColor Red
+        Write-Host "  Make sure to check 'Add Python to PATH' during installation, then run this installer again." -ForegroundColor Red
+        exit 1
+    }
 }
+$pythonVersion = python --version 2>&1
 Write-Host "  Found: $pythonVersion" -ForegroundColor Green
 
 # Upgrade pip
@@ -38,7 +56,8 @@ playwright install chromium
 if ($LASTEXITCODE -ne 0) {
     Write-Host "  WARNING: Playwright browser install failed. Browser tools will not work." -ForegroundColor Yellow
     Write-Host "  You can install manually later: playwright install chromium" -ForegroundColor DarkYellow
-} else {
+}
+else {
     Write-Host "  Chromium installed." -ForegroundColor Green
 }
 
