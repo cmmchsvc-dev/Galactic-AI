@@ -2,7 +2,7 @@
 
 **Sovereign. Universal. Fast.**
 
-A powerful, local-first AI automation platform with 188+ built-in tools, an extensible Skills ecosystem, true persistent memory, voice I/O, video generation, Chrome browser extension, social media tools, 14+ AI providers, multi-platform messaging bridges, and a real-time web Control Deck. **v1.4.7**
+A powerful, local-first AI automation platform with 188+ built-in tools, an extensible Skills ecosystem, true persistent memory, voice I/O, video generation, Chrome browser extension, social media tools, 14+ AI providers, multi-platform messaging bridges, and a real-time web Control Deck. **v1.4.8**
 
 Run fully local with Ollama (no API keys, no cloud, no tracking), or connect to any of 14 cloud providers. Your data stays yours.
 
@@ -538,7 +538,8 @@ MIT License — see LICENSE file.
 
 | Version | Highlights |
 |---|---|
-| **v1.4.7** | 🛡️ **Security Hardening Update** • Strict "Default Deny" Telegram access control • Callback Query (button) bypass security fix • Unified authorization bridge lockdown • New `/id` command for secure ID discovery. |
+| v1.4.8 | Security | **Unified Security Protocol** • Hardened Discord & WhatsApp bridges with "Default Deny" policy • Unified authorization helpers • New `/id` commands for setup. |
+| v1.4.7 | Security | 🛡️ **Security Hardening Update** • Strict "Default Deny" Telegram access control • Callback Query (button) bypass security fix • New `/id` command. |
 | **v1.4.6** | 🔧 **Imagen Fix Update** • Fixed Imagen 4 model IDs (`NOT_FOUND` errors resolved) • Fixed `chrome_navigate` crash (`list.get()` error) • Eliminated AI hallucination loop after image generation • Added embed URL + stop signal to image tool returns • VC++ Redistributable installer UAC fix. |
 | **v1.4.5** | ✨ **UX & Reliability Refinement** • Restored unified "AUTOMATION SUITE" boot splash and fixed ASCII alignment • Strictly enforced plain-text final answers (no more JSON wrapping) • Refined planner trigger keywords to prevent meta-conversational loops • Restricted smart routing hints to configured/available providers. |
 | **v1.4.4** | 🐝 **Hive Mind Subagents** architecture for hierarchal multi-agent workflows visible in UI. • 🌐 **Robust Playwright Integration** resolving DOM navigation flaws in Search/Enter behaviors • 🖼️ **Dynamic Image Decoding** directly buffering visions via base64 for reliable parsing • 🚀 Streamlined Engine execution with legacy EXE dependencies completely removed • Version UI consistency. |
