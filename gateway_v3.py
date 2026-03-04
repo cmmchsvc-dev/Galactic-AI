@@ -2337,15 +2337,19 @@ class GalacticGateway:
                 "parameters": params
             }
         tool_block = json.dumps(tool_schemas, indent=2)
+        
+        # Pre-compute escaped paths for few-shot examples (f-strings cannot contain backslashes in expressions)
+        escaped_gateway_path = os.path.join(cwd, "gateway_v3.py").replace("\\", "\\\\")
+        escaped_tools_path = os.path.join(cwd, "skills", "core", "system_tools.py").replace("\\", "\\\\")
 
         few_shot = (
             'EXAMPLES OF CORRECT TOOL CALLS:\n'
             '  1. Search for a pattern in the codebase:\n'
             '  {"tool": "grep_search", "args": {"pattern": "thinking_level", "file_pattern": "*.py"}}\n\n'
             '  2. Read a specific line range of a file:\n'
-            f'  {{"tool": "read_file", "args": {{"path": "{os.path.join(cwd, "gateway_v3.py").replace("\\", "\\\\")}", "start_line": 100, "end_line": 150}}}}\n\n'
+            f'  {{"tool": "read_file", "args": {{"path": "{escaped_gateway_path}", "start_line": 100, "end_line": 150}}}}\n\n'
             '  3. View the structure (classes/functions) of a file:\n'
-            f'  {{"tool": "code_outline", "args": {{"path": "{os.path.join(cwd, "skills", "core", "system_tools.py").replace("\\", "\\\\")}}"}}}}\n\n'
+            f'  {{"tool": "code_outline", "args": {{"path": "{escaped_tools_path}"}}}}\n\n'
             '  4. Run a shell command:\n'
             '  {"tool": "exec_shell", "args": {"command": "dir"}}\n'
         )
