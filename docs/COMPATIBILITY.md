@@ -6,16 +6,16 @@ This document outlines feature parity and setup requirements for Galactic AI acr
 
 ## 📊 Feature Comparison Matrix
 
-| Feature                                  | Windows | macOS | Linux (X11) | Linux (Wayland) |
-| :--------------------------------------- | :-----: | :---: | :---------: | :-------------: |
-| **Core AI Engine** (Local/Cloud)         | ✅      | ✅     | ✅           | ✅              |
-| **Web Browser Automation** (Playwright)  | ✅      | ✅     | ✅           | ✅              |
-| **Desktop Screenshots**                  | ✅      | ✅¹    | ✅²          | ⚠️³             |
-| **Mouse/Keyboard Control**               | ✅      | ✅¹    | ✅²          | ⚠️³             |
-| **Window Management**                    | ✅      | ❌     | ✅²          | ❌              |
-| **Clipboard Read/Write**                 | ✅      | ✅     | ✅²          | ⚠️              |
-| **Desktop Notifications**                | ✅      | ✅     | ✅²          | ✅²             |
-| **Voice / TTS Playback**                 | ✅      | ✅     | ✅           | ✅              |
+| Feature                                  | Windows | macOS | Linux (X11) | Linux (Wayland)|
+| :--------------------------------------- | :-----: | :---: | :---------: | :-------------:|
+| **Core AI Engine** (Local/Cloud)         | ✅      | ✅   | ✅          | ✅            | 
+| **Web Browser Automation** (Playwright)  | ✅      | ✅   | ✅          | ✅            |
+| **Desktop Screenshots**                  | ✅      | ✅¹  | ✅²         | ⚠️³           |
+| **Mouse/Keyboard Control**               | ✅      | ✅¹  | ✅²         | ⚠️³           |
+| **Window Management**                    | ✅      | ❌   | ✅²         | ❌            |
+| **Clipboard Read/Write**                 | ✅      | ✅   | ✅²         | ⚠️            |
+| **Desktop Notifications**                | ✅      | ✅   | ✅²         | ✅²           |
+| **Voice / TTS Playback**                 | ✅      | ✅   | ✅          | ✅            | 
 
 **Legend:**
 - ✅ Full Support
