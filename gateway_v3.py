@@ -2297,8 +2297,8 @@ class GalacticGateway:
                 "4. NEVER use chrome_key_press to type text. chrome_key_press is ONLY for Tab, Escape, arrow keys.\n"
                 "5. For scrolling: use direction='middle' or percent=50 to jump to page midpoint.\n"
                 "6. Tool sequence: chrome_tabs_create → chrome_read_page → chrome_type(text='query') → chrome_wait_for → chrome_read_page → chrome_scroll.\n"
-                "7. NO REDUNDANT NAVIGATION: If you are already on the correct URL (check chrome_tabs_list or history), DO NOT call chrome_navigate again. Re-navigating to the same page is wasteful and resets state.\n"
-                "8. SLOW SCROLLING: For requests like 'scroll down slowly', 'read the posts', or handling feeds (X, Reddit), ALWAYS use chrome_scroll_continuous with multiple steps and pauses to allow content to lazy-load.\n"
+                "7. NO REDUNDANT NAVIGATION: If you are already on the correct URL (check chrome_tabs_list), NEVER call chrome_navigate again. Re-navigating to the same page is a CRITICAL FAILURE that resets state and causes loops. If you need to refresh, use chrome_execute_js('location.reload()') instead, but only if absolutely necessary.\n"
+                "8. SLOW SCROLLING & READING: For requests like 'scroll down slowly' or 'read the posts', ALWAYS use chrome_scroll_continuous. After scrolling, you MUST call chrome_read_page or chrome_screenshot to 'see' the new content before deciding to scroll again. NEVER call chrome_navigate while reading a feed.\n"
             )
             return (
                 f"{personality_prompt}\n\n"
@@ -2353,7 +2353,12 @@ class GalacticGateway:
             '  3. View the structure (classes/functions) of a file:\n'
             f'  {{"tool": "code_outline", "args": {{"path": "{escaped_tools_path}"}}}}\n\n'
             '  4. Run a shell command:\n'
-            '  {"tool": "exec_shell", "args": {"command": "dir"}}\n'
+            '  {"tool": "exec_shell", "args": {"command": "dir"}}\n\n'
+            '  5. Navigate and scroll a feed (X/Reddit):\n'
+            '  {"tool": "chrome_navigate", "args": {"url": "https://x.com"}}\n'
+            '  {"tool": "chrome_read_page", "args": {"filter": "interactive"}}\n'
+            '  {"tool": "chrome_scroll_continuous", "args": {"steps": 10, "pause_per_step": 2}}\n'
+            '  {"tool": "chrome_read_page", "args": {"filter": "all"}}\n'
         )
 
         protocol = (
