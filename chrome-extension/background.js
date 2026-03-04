@@ -181,11 +181,17 @@ async function handleCommand(id, command, args) {
     case 'find_element': return await cmdFindElement(args);
     case 'wait_for': return await cmdWaitFor(args);
     case 'click': return await cmdClick(args);
-    case 'type': return await cmdType(args);
-    case 'scroll': return await cmdScroll(args);
+    case 'type':
+    case 'type_text': return await cmdType(args);
+    case 'scroll':
+    case 'scroll_page': return await cmdScroll(args);
     case 'form_input': return await cmdFormInput(args);
     case 'execute_js': return await cmdExecuteJS(args);
-    case 'get_page_text': return await cmdGetPageText(args);
+    case 'get_page_text':
+    case 'get_text': return await cmdGetPageText(args);
+    case 'get_dom': return await cmdGetDom(args);
+    case 'show_status': return await cmdShowStatus(args);
+    case 'hide_status': return await cmdHideStatus(args);
     case 'tabs_list': return await cmdTabsList(args);
     case 'tabs_create': return await cmdTabsCreate(args);
     case 'key_press': return await cmdKeyPress(args);
@@ -342,6 +348,24 @@ async function cmdGetPageText(args) {
   const tabId = await getTargetTabId(args);
   if (!tabId) return { error: 'No active tab' };
   return await sendToContent(tabId, 'get_text', args);
+}
+
+async function cmdGetDom(args) {
+  const tabId = await getTargetTabId(args);
+  if (!tabId) return { error: 'No active tab' };
+  return await sendToContent(tabId, 'get_dom', args);
+}
+
+async function cmdShowStatus(args) {
+  const tabId = await getTargetTabId(args);
+  if (!tabId) return { error: 'No active tab' };
+  return await sendToContent(tabId, 'show_status', args);
+}
+
+async function cmdHideStatus(args) {
+  const tabId = await getTargetTabId(args);
+  if (!tabId) return { error: 'No active tab' };
+  return await sendToContent(tabId, 'hide_status', args);
 }
 
 async function cmdTabsList(_args) {

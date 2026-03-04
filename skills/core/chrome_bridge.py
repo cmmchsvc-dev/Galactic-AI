@@ -112,20 +112,22 @@ class ChromeBridgeSkill(GalacticSkill):
                 "fn": self._tool_chrome_click
             },
             "chrome_type": {
-                "description": "Type text into the focused element or a specified element in the user's Chrome browser.",
+                "description": "Type text into an element in the user's Chrome browser and optionally press Enter to submit (default: submit=true). If ref and selector are omitted, auto-detects the best input: focused element → search box → first visible text input.",
                 "parameters": {"type": "object", "properties": {
                     "text": {"type": "string", "description": "Text to type"},
-                    "ref": {"type": "string", "description": "Element ref ID to type into"},
-                    "selector": {"type": "string", "description": "CSS selector of element to type into"},
+                    "ref": {"type": "string", "description": "Optional element ref ID from chrome_read_page"},
+                    "selector": {"type": "string", "description": "Optional CSS selector"},
                     "clear": {"type": "boolean", "description": "Clear existing content before typing (default: true)"},
+                    "submit": {"type": "boolean", "description": "Press Enter after typing to submit (default: true)"},
                 }, "required": ["text"]},
                 "fn": self._tool_chrome_type
             },
             "chrome_scroll": {
-                "description": "Scroll the page or a specific element in the user's Chrome browser.",
+                "description": "Scroll the page or a specific element in the user's Chrome browser. Supports named targets: direction='top'|'middle'|'bottom' to jump directly. Use percent (0-100) for precise positioning (e.g. percent=50 scrolls to 50% of the page). For relative scrolling use direction='up'|'down' with amount in pixels.",
                 "parameters": {"type": "object", "properties": {
-                    "direction": {"type": "string", "description": "Scroll direction: up, down, left, right"},
-                    "amount": {"type": "number", "description": "Scroll amount in pixels (default: 300)"},
+                    "direction": {"type": "string", "description": "Scroll direction: up, down, top, middle, bottom"},
+                    "amount": {"type": "number", "description": "Scroll amount in pixels for relative scrolling (default: 300)"},
+                    "percent": {"type": "number", "description": "Scroll to this percentage of total page height (0-100). E.g. 50 = middle, 25 = quarter."},
                     "ref": {"type": "string", "description": "Element ref ID to scroll into view"},
                     "selector": {"type": "string", "description": "CSS selector of element to scroll into view"},
                 }},
@@ -421,18 +423,41 @@ class ChromeBridgeSkill(GalacticSkill):
             ref=args.get('ref'), selector=args.get('selector'),
             clear=args.get('clear', True)
         )
-        if result.get('status') == 'success':
-            return f"[CHROME] Typed {len(args.get('text', ''))} chars"
-        return f"[ERROR] Chrome type: {result.get('error') or result.get('message') or 'unknown error'}"
+        if result.get('status') != 'success':
+            return f"[ERROR] Chrome type: {result.get('error') or result.get('message') or 'unknown error'}"
+        
+        typed_msg = f"[CHROME] Typed {len(args.get('text', ''))} chars"
+        
+        # Auto-submit: press Enter after typing (default: true)
+        should_submit = args.get('submit', True)
+        if should_submit:
+            try:
+                await asyncio.sleep(0.15)  # Brief pause before Enter
+                enter_result = await self.key_press(key='Enter', repeat=1)
+                if enter_result.get('status') == 'success':
+                    typed_msg += " + pressed Enter to submit"
+                else:
+                    typed_msg += " (Enter key failed, try chrome_key_press manually)"
+            except Exception as e:
+                typed_msg += f" (auto-submit error: {e})"
+        
+        return typed_msg
 
     async def _tool_chrome_scroll(self, args):
         if not self.ws_connection: return "[ERROR] Chrome extension not connected."
         result = await self.scroll(
             direction=args.get('direction'), amount=args.get('amount'),
-            ref=args.get('ref'), selector=args.get('selector')
+            ref=args.get('ref'), selector=args.get('selector'),
+            percent=args.get('percent')
         )
         if result.get('status') == 'success':
-            return f"[CHROME] Scrolled {args.get('direction', 'element into view')}"
+            pos_info = ''
+            if result.get('y') is not None:
+                pos_info = f" (now at {result['y']}/{result.get('max_y', '?')}px)"
+            pct = args.get('percent')
+            if pct is not None:
+                return f"[CHROME] Scrolled to {pct}% of page{pos_info}"
+            return f"[CHROME] Scrolled {args.get('direction', 'element into view')}{pos_info}"
         return f"[ERROR] Chrome scroll: {result.get('error') or result.get('message') or 'unknown error'}"
 
     async def _tool_chrome_form_input(self, args):
@@ -619,6 +644,18 @@ class ChromeBridgeSkill(GalacticSkill):
         if result.get("status") == "success":
             return f"[CHROME] Viewport resized to {result['width']}\u00d7{result['height']}"
         return f"[ERROR] chrome_resize: {result.get('error') or result.get('message') or 'unknown error'}"
+
+    async def _tool_chrome_wait_for(self, args: dict) -> str:
+        if not self.ws_connection: return "[ERROR] Chrome extension not connected."
+        selector = args.get('selector')
+        text = args.get('text')
+        timeout = args.get('timeout', 10000)
+        
+        result = await self.wait_for(selector=selector, text=text, timeout=timeout)
+        if result.get('status') == 'success':
+            target = f"selector '{selector}'" if selector else f"text '{text}'"
+            return f"[CHROME] Element found: {target}"
+        return f"[ERROR] Chrome wait_for: {result.get('error') or result.get('message') or 'timed out'}"
 
     async def _tool_chrome_wait(self, args: dict) -> str:
         try:
@@ -916,15 +953,18 @@ class ChromeBridgeSkill(GalacticSkill):
             "tab_id": tab_id,
         })
 
-    async def scroll(self, direction: str = "down", amount: int = 3, selector=None, ref=None, tab_id=None):
-        """Scroll the page or a specific element."""
-        return await self.send_command("scroll", {
+    async def scroll(self, direction: str = "down", amount: int = 3, selector=None, ref=None, tab_id=None, percent=None):
+        """Scroll the page or a specific element. Use percent (0-100) for absolute positioning."""
+        payload = {
             "direction": direction,
             "amount": amount,
             "selector": selector,
             "ref": ref,
             "tab_id": tab_id,
-        })
+        }
+        if percent is not None:
+            payload["percent"] = percent
+        return await self.send_command("scroll", payload)
 
     async def form_input(self, ref: str = None, selector: str = None, value=None, tab_id=None):
         """Set the value of a form element identified by ref or selector."""

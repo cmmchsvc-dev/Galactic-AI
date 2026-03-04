@@ -521,7 +521,7 @@ body.glow-max .status-dot{box-shadow:0 0 14px var(--green),0 0 28px rgba(0,255,1
   <div class="login-box">
     <div style="font-size:2em;margin-bottom:8px">⬡</div>
     <h2>GALACTIC AI</h2>
-    <p>AUTOMATION SUITE v1.3.0</p>
+    <p>AUTOMATION SUITE v1.4.0</p>
     <input id="pw-input" type="password" placeholder="Enter passphrase" autocomplete="off">
     <button id="login-btn" onclick="doLogin()">ACCESS</button>
     <div id="login-err" style="display:none;color:var(--red);font-size:0.8em;margin-top:8px">Invalid passphrase</div>
@@ -843,7 +843,7 @@ body.glow-max .status-dot{box-shadow:0 0 14px var(--green),0 0 28px rgba(0,255,1
   <div id="topbar-left">
     <div class="logo">⬡ GALACTIC AI</div>
     <div style="font-size:0.7em;color:var(--cyan);letter-spacing:2px;opacity:0.7;font-weight:600">CONTROL DECK</div>
-    <div id="version-badge" style="font-size:0.65em;color:var(--dim);letter-spacing:1px;padding:2px 7px;border:1px solid var(--border);border-radius:10px;cursor:default" title="Galactic AI version">v1.3.0</div>
+    <div id="version-badge" style="font-size:0.65em;color:var(--dim);letter-spacing:1px;padding:2px 7px;border:1px solid var(--border);border-radius:10px;cursor:default" title="Galactic AI version">v1.4.0</div>
     <div id='ollama-pill' onclick='switchTab("models")'>
       <div class="status-dot" id="ollama-dot"></div>
       <span id="ollama-label">Ollama</span>
@@ -1047,29 +1047,9 @@ body.glow-max .status-dot{box-shadow:0 0 14px var(--green),0 0 28px rgba(0,255,1
           <button onclick="refreshOllama()" style="padding:3px 10px;background:var(--bg);border:1px solid var(--border);border-radius:5px;color:var(--text);cursor:pointer;font-size:0.75em">Refresh</button>
         </div>
         <div class="model-config-box">
-          <h4>ACTIVE MODEL OVERRIDE</h4>
-          <div class="model-config-row">
-            <label>Provider</label>
-            <select id="cfg-provider" onchange="updateModelList()">
-              <option value="google">Google</option>
-              <option value="anthropic">Anthropic</option>
-              <option value="openai">OpenAI</option>
-              <option value="xai">xAI</option>
-              <option value="groq">Groq</option>
-              <option value="mistral">Mistral</option>
-              <option value="cerebras">Cerebras</option>
-              <option value="openrouter">OpenRouter</option>
-              <option value="huggingface">HuggingFace</option>
-              <option value="kimi">Kimi</option>
-              <option value="zai">ZAI/GLM</option>
-              <option value="minimax">MiniMax</option>
-              <option value="nvidia">NVIDIA</option>
-              <option value="ollama">Ollama</option>
-            </select>
-          </div>
-          <div class="model-config-row">
-            <label>Model ID</label>
-            <input id="cfg-model" type="text" placeholder="model-id">
+          <h4>GLOBAL TOKEN CONFIG</h4>
+          <div style="font-size:0.78em;color:var(--dim);margin-bottom:10px">
+            Set global max tokens and context window defaults applicable to all models.
           </div>
           <div class="model-config-row">
             <label title="Max output tokens (0 = provider default)">Max Tokens</label>
@@ -1080,7 +1060,6 @@ body.glow-max .status-dot{box-shadow:0 0 14px var(--green),0 0 28px rgba(0,255,1
             <input id="cfg-context-window" type="number" placeholder="0 = auto" min="0" max="2000000">
           </div>
           <div style="margin-top:8px;display:flex;gap:8px">
-            <button class="btn primary" onclick="applyModelOverride()">Apply Model</button>
             <button class="btn secondary" onclick="applyModelConfig()">Save Token Config</button>
           </div>
         </div>
@@ -1204,8 +1183,8 @@ body.glow-max .status-dot{box-shadow:0 0 14px var(--green),0 0 28px rgba(0,255,1
           <div class="stat-card"><div class="val" id="st-model" style="font-size:1.1em">--</div><div class="lbl">Active Model</div></div>
           <div class="stat-card"><div class="val" id="st-provider">--</div><div class="lbl">Provider</div></div>
           <div class="stat-card"><div class="val" id="st-mode">--</div><div class="lbl">Mode</div></div>
-          <div class="stat-card"><div class="val" id="st-max-turns">--</div><div class="lbl">Max Turns</div></div>
-          <div class="stat-card"><div class="val" id="st-streaming">--</div><div class="lbl">Streaming</div></div>
+          <div class="stat-card"><div class="val" id="st-ctx-used">--</div><div class="lbl">Context Used</div></div>
+          <div class="stat-card"><div class="val" id="st-ctx-max">--</div><div class="lbl">Context Limit</div></div>
           <div class="stat-card"><div class="val" id="st-auto-fb">--</div><div class="lbl">Auto-Fallback</div></div>
         </div>
         <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:12px">
@@ -2720,8 +2699,12 @@ function updateOllamaHealth(d) {
 
 function renderOllamaModels(models) {
   const ollamaKey = Object.keys(ALL_MODELS).find(k => k.toLowerCase().includes('ollama')) || '🦙 Ollama (Local)';
-  ALL_MODELS[ollamaKey] = models.map(m => ({name: m + ' \ud83e\udd99', id: m, provider: 'ollama'}));
+  ALL_MODELS[ollamaKey] = models.map(m => ({name: m + ' 🦙', id: m, provider: 'ollama'}));
   renderModelGrid();
+  if (typeof populateSettingsProviders === 'function') populateSettingsProviders();
+  if (typeof populatePmoDropdown === 'function') populatePmoDropdown();
+  // Re-load settings values so dropdowns reflect the actual config (e.g. Ollama as primary)
+  if (typeof loadSettingsValues === 'function') loadSettingsValues();
 }
 
 async function refreshOllama() {
@@ -3051,11 +3034,18 @@ async function refreshStatus() {
     const mode = d.model?.mode || 'primary';
     el('st-mode').textContent = mode.toUpperCase();
     el('st-mode').style.color = mode === 'primary' ? 'var(--green)' : 'var(--yellow)';
-    el('st-max-turns').textContent = d.max_turns || '--';
-    el('st-streaming').textContent = d.streaming ? 'ON' : 'OFF';
-    el('st-streaming').style.color = d.streaming ? 'var(--green)' : 'var(--dim)';
+    if (el('st-ctx-used')) el('st-ctx-used').textContent = d.model?.context_used != null ? Number(d.model.context_used).toLocaleString() : '--';
+    if (el('st-ctx-max')) el('st-ctx-max').textContent = d.model?.context_max ? Number(d.model.context_max).toLocaleString() : 'Auto';
     el('st-auto-fb').textContent = d.auto_fallback ? 'ON' : 'OFF';
     el('st-auto-fb').style.color = d.auto_fallback ? 'var(--green)' : 'var(--dim)';
+
+    // Populate token settings UI
+    const mt = document.getElementById('cfg-max-tokens');
+    if (mt && !mt.dataset.loaded) {
+      mt.value = d.global_max_tokens != null && d.global_max_tokens != 0 ? d.global_max_tokens : '';
+      document.getElementById('cfg-context-window').value = d.global_context_window != null && d.global_context_window != 0 ? d.global_context_window : '';
+      mt.dataset.loaded = "true";
+    }
     el('st-primary').textContent = d.primary_model || '--';
     el('st-fallback').textContent = d.fallback_model || '--';
 
@@ -3252,18 +3242,25 @@ function _modelProviders() {
 
 function populateSettingsProviders() {
   const provs = _modelProviders();
+  // ALWAYS include all known providers — ollama loads async so it may not be in ALL_MODELS yet
   const fallbackOrder = [
     'google','anthropic','openai','xai','groq','mistral','cerebras',
-    'openrouter','huggingface','kimi','zai','minimax','nvidia','ollama','deepseek'
+    'openrouter','huggingface','kimi','zai','minimax','nvidia','ollama','deepseek',
+    'together','vllm','moonshot','qwen-portal','qianfan','doubao','byteplus',
+    'cloudflare-ai-gateway','amazon-bedrock','xiaomi','kilocode','github-copilot'
   ];
 
   ['primary', 'fallback', 'planner', 'planner_fallback'].forEach(role => {
     const sel = document.getElementById(`set-${role}-provider`);
     if (!sel) return;
+    const prev = sel.value;  // Preserve current selection
     sel.innerHTML = '';
 
-    let list = Array.from(provs.keys());
-    if (!list.length) list = fallbackOrder.slice();
+    // Start with fallbackOrder, then add any extras from ALL_MODELS not already included
+    const list = fallbackOrder.slice();
+    for (const prov of provs.keys()) {
+      if (!list.includes(prov)) list.push(prov);
+    }
 
     list.forEach(prov => {
       const opt = document.createElement('option');
@@ -3272,7 +3269,12 @@ function populateSettingsProviders() {
       sel.appendChild(opt);
     });
 
-    if (!sel.value && sel.options.length) sel.value = sel.options[0].value;
+    // Restore previous selection if it still exists, otherwise default
+    if (prev && Array.from(sel.options).some(o => o.value === prev)) {
+      sel.value = prev;
+    } else if (!sel.value && sel.options.length) {
+      sel.value = sel.options[0].value;
+    }
     updateSettingsModelList(role);
   });
 }
@@ -4618,10 +4620,19 @@ try {
         model_status = {}
         mm = getattr(self.core, 'model_manager', None)
         if mm:
+            gw = self.core.gateway
+            ctx_max = 0
+            if hasattr(gw, '_get_context_window_for_model'):
+                ctx_max = gw._get_context_window_for_model(0)
+            if not ctx_max and hasattr(self.core, 'ollama_manager') and gw.llm.provider == 'ollama':
+                ctx_max = self.core.ollama_manager.get_context_window(gw.llm.model) or 0
+                
             model_status = {
-                'provider': self.core.gateway.llm.provider,
-                'model': self.core.gateway.llm.model,
+                'provider': gw.llm.provider,
+                'model': gw.llm.model,
                 'mode': mm.current_mode,
+                'context_used': getattr(gw, '_last_usage', {}).get('prompt_tokens', 0) if getattr(gw, '_last_usage', None) else 0,
+                'context_max': ctx_max,
             }
 
         # Fallback chain + provider health
@@ -4646,6 +4657,8 @@ try {
         models_cfg = self.core.config.get('models', {})
 
         return web.json_response({
+            'global_max_tokens': models_cfg.get('max_tokens', 0),
+            'global_context_window': models_cfg.get('context_window', 0),
             # Core stats
             'uptime': uptime,
             'uptime_formatted': _fmt_uptime(uptime),
@@ -5342,8 +5355,13 @@ try {
         except Exception:
             on_disk = {}
         # 2. Deep-merge: update top-level sections from in-memory cfg
+        #    IMPORTANT: 'model_overrides' must be REPLACED entirely (not merged)
+        #    so that deletions actually take effect on disk.
+        _REPLACE_KEYS = {'model_overrides', 'aliases'}  # Keys that should overwrite, not merge
         for key, value in cfg.items():
-            if isinstance(value, dict) and isinstance(on_disk.get(key), dict):
+            if key in _REPLACE_KEYS:
+                on_disk[key] = value  # Full replacement — deletions are preserved
+            elif isinstance(value, dict) and isinstance(on_disk.get(key), dict):
                 on_disk[key].update(value)
             else:
                 on_disk[key] = value
