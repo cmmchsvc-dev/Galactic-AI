@@ -581,6 +581,19 @@ class ModelManager:
             return
 
         provider, model = routing
+        
+        # Only log the hint if the provider is actually available/configured
+        if not self._is_provider_available(provider):
+             return
+             
+        providers_cfg = self.core.config.get('providers', {})
+        prov_cfg = providers_cfg.get(provider, {})
+        api_key = (prov_cfg.get('apiKey', '') or prov_cfg.get('api_key', '')
+                   or prov_cfg.get('apikey', ''))
+        
+        if provider != 'ollama' and (not api_key or api_key in ('', 'NONE')):
+             return
+
         # Log the suggestion but DO NOT switch the model
         await self.core.log(
             f"🎯 Smart routing hint: {provider}/{model} (task: {task_type}) — using primary model",
