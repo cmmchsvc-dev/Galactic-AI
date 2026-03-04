@@ -178,8 +178,7 @@ class DesktopSkill(GalacticSkill):
                 parts = [int(v.strip()) for v in region_str.split(',')]
                 if len(parts) == 4:
                     region = tuple(parts)
-            save_path = args.get('save_path')
-            result = await self.screenshot(region=region, save_path=save_path)
+            result = await self.screenshot(region=region)
             if result['status'] != 'success':
                 return f"[ERROR] Desktop screenshot failed: {result.get('message')}"
 
