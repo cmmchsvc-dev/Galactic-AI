@@ -306,6 +306,19 @@ class ChromeBridgeSkill(GalacticSkill):
                 "required": [],
                 "fn": self._tool_chrome_gif_export
             },
+            "chrome_scroll_continuous": {
+                "description": "Slowly scroll the page in increments to simulate reading or to trigger lazy-loading of content. Scrolls down by default.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "direction": {"type": "string", "description": "Direction to scroll: 'down' (default) or 'up'"},
+                        "steps": {"type": "integer", "description": "Number of scroll increments (default: 5)"},
+                        "amount_per_step": {"type": "integer", "description": "Pixels to scroll per step (default: 400)"},
+                        "pause_per_step": {"type": "number", "description": "Seconds to wait between increments (default: 1.5)"}
+                    }
+                },
+                "fn": self._tool_chrome_scroll_continuous
+            },
         }
 
     # ── Tool handlers ────────────────────────────────────────────────────
@@ -459,6 +472,28 @@ class ChromeBridgeSkill(GalacticSkill):
                 return f"[CHROME] Scrolled to {pct}% of page{pos_info}"
             return f"[CHROME] Scrolled {args.get('direction', 'element into view')}{pos_info}"
         return f"[ERROR] Chrome scroll: {result.get('error') or result.get('message') or 'unknown error'}"
+
+    async def _tool_chrome_scroll_continuous(self, args):
+        """Simulate slow/continuous scrolling."""
+        if not self.ws_connection: return "[ERROR] Chrome extension not connected."
+        direction = args.get('direction', 'down')
+        steps = int(args.get('steps', 5))
+        amount = int(args.get('amount_per_step', 400))
+        pause = float(args.get('pause_per_step', 1.5))
+        
+        if steps > 20: steps = 20
+        if pause > 5: pause = 5
+        
+        total_pixels = 0
+        for i in range(steps):
+            res = await self.scroll(direction=direction, amount=amount)
+            if res.get('status') != 'success':
+                return f"[ERROR] Continuous scroll failed at step {i+1}: {res.get('error') or res.get('message')}"
+            total_pixels += amount
+            if i < steps - 1:
+                await asyncio.sleep(pause)
+                
+        return f"[CHROME] Finished slow scroll: {steps} increments of {amount}px {direction} (total ~{total_pixels}px)"
 
     async def _tool_chrome_form_input(self, args):
         if not self.ws_connection: return "[ERROR] Chrome extension not connected."
