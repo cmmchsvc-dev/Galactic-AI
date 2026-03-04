@@ -2718,6 +2718,7 @@ class GalacticGateway:
         # Tools allowed to be repeated with same args (snapshots, searches, images, health)
         _DUPLICATE_EXEMPT = {
             'browser_snapshot', 'web_search', 'memory_search', 'generate_image', 'get_system_health',
+            'generate_image_imagen', 'generate_video',
             'chrome_read_page', 'chrome_scroll', 'chrome_wait', 'chrome_wait_for', 'chrome_get_text',
             'chrome_tabs_list', 'chrome_read_console', 'chrome_read_network', 'chrome_key_press',
             'chrome_tabs_create', 'chrome_type', 'chrome_click', 'chrome_hover', 'chrome_right_click'
@@ -2868,7 +2869,7 @@ class GalacticGateway:
                             target_url = tool_args.get('url', '').rstrip('/')
                             # Fetch current URL from extension
                             try:
-                                chrome_skill = self.core.skills.get('chrome_bridge')
+                                chrome_skill = next((s for s in self.core.skills if getattr(s, 'skill_name', '') == 'chrome_bridge'), None)
                                 if chrome_skill:
                                     current_url = await chrome_skill.get_active_tab_url()
                                     if current_url and current_url.rstrip('/') == target_url:
@@ -2944,6 +2945,10 @@ class GalacticGateway:
                                     ]
                                 }
                                 messages.append(img_msg)
+                                
+                                # Automatically stage the image for delivery to Telegram/Discord/WebUI
+                                if "path" in result and os.path.exists(result["path"]):
+                                    self.last_image_file = result["path"]
                             else:
                                 caption_text = result.get('text', result.get('caption', str(result)))
                                 messages.append({"role": "user", "content": f"Tool Output: {caption_text}"})
@@ -4715,13 +4720,17 @@ class GalacticGateway:
         if not prompt:
             return "[ERROR] generate_image_imagen: 'prompt' is required."
 
-        # Map user-friendly names to SDK model identifiers (Imagen 3 is current)
+        # Map user-friendly names to SDK model identifiers
         model_map = {
-            'imagen-3':       'imagen-3.0-generate-001',
-            'imagen-3-pro':   'imagen-3.0-pro-generate-001',
-            'imagen-3-fast':  'imagen-3.0-fast-generate-001',
+            'imagen-4':       'imagen-4.0-generate-001',
+            'imagen-4-ultra': 'imagen-4.0-ultra-generate-001',
+            'imagen-4-fast':  'imagen-4.0-fast-generate-001',
+            # Legacy fallbacks
+            'imagen-3':       'imagen-4.0-generate-001',
+            'imagen-3-pro':   'imagen-4.0-ultra-generate-001',
+            'imagen-3-fast':  'imagen-4.0-fast-generate-001',
         }
-        sdk_model = model_map.get(model, 'imagen-3.0-generate-001')
+        sdk_model = model_map.get(model, 'imagen-4.0-generate-001')
 
         google_cfg = self.core.config.get('providers', {}).get('google', {})
         api_key = google_cfg.get('apiKey', '')
@@ -4766,8 +4775,18 @@ class GalacticGateway:
 
             # Deliver the first image inline via Control Deck / Telegram
             self.last_image_file = saved[0]
-            paths_str = '\n'.join(f"  {p}" for p in saved)
-            return f"✅ Imagen image(s) generated ({model}):\n{paths_str}\nPrompt: {prompt}"
+
+            # Build web-accessible URLs for embedding
+            embed_lines = []
+            for p in saved:
+                rel = os.path.relpath(p, images_dir).replace('\\', '/')
+                embed_lines.append(f"  /api/images/{rel}")
+            paths_str = '\n'.join(embed_lines)
+            return (f"✅ Imagen image generated successfully ({sdk_model}):\n{paths_str}\n"
+                    f"Prompt: {prompt}\n\n"
+                    f"IMPORTANT: Present this image to the user NOW. "
+                    f"Embed it with: ![{prompt[:60]}]({embed_lines[0].strip()})\n"
+                    f"Do NOT call any more tools. Your task is complete.")
         except ImportError:
             return "[ERROR] google-genai not installed. Run: pip install google-genai"
         except Exception as e:

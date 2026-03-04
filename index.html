@@ -1,10 +1,12 @@
 <!DOCTYPE html>
 <html lang="en">
+
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Galactic AI — Sovereign. Universal. Fast.</title>
-  <meta name="description" content="A local-first AI automation platform with 150+ built-in tools, an AI-extensible Skills ecosystem, true persistent memory (ChromaDB + MEMORY.md), voice I/O, Chrome browser extension, Sub-Agents, computer vision control, 14 providers, and a real-time deck. Runs locally. No subscriptions." />
+  <meta name="description"
+    content="A local-first AI automation platform with 150+ built-in tools, an AI-extensible Skills ecosystem, true persistent memory (ChromaDB + MEMORY.md), voice I/O, Chrome browser extension, Sub-Agents, computer vision control, 14 providers, and a real-time deck. Runs locally. No subscriptions." />
   <style>
     :root {
       --bg: #030305;
@@ -24,47 +26,100 @@
       --shadow-primary: 0 8px 32px rgba(124, 58, 237, 0.15);
       --glow-accent: 0 0 20px rgba(168, 85, 247, 0.4);
     }
-    * { box-sizing: border-box; margin: 0; padding: 0; }
-    html { scroll-behavior: smooth; }
+
+    * {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+    }
+
+    html {
+      scroll-behavior: smooth;
+    }
+
     body {
       background: var(--bg);
       background-image: radial-gradient(circle at 15% 50%, rgba(124, 58, 237, 0.08), transparent 25%),
-                        radial-gradient(circle at 85% 30%, rgba(6, 182, 212, 0.08), transparent 25%);
+        radial-gradient(circle at 85% 30%, rgba(6, 182, 212, 0.08), transparent 25%);
       color: var(--text);
       font-family: 'Inter', system-ui, -apple-system, sans-serif;
       line-height: 1.6;
       overflow-x: hidden;
     }
-    
+
     /* ANIMATIONS */
     @keyframes float {
-      0% { transform: translateY(0px); }
-      50% { transform: translateY(-10px); }
-      100% { transform: translateY(0px); }
+      0% {
+        transform: translateY(0px);
+      }
+
+      50% {
+        transform: translateY(-10px);
+      }
+
+      100% {
+        transform: translateY(0px);
+      }
     }
+
     @keyframes pulse-glow {
-      0% { box-shadow: 0 0 0 0 rgba(168, 85, 247, 0.4); }
-      70% { box-shadow: 0 0 0 10px rgba(168, 85, 247, 0); }
-      100% { box-shadow: 0 0 0 0 rgba(168, 85, 247, 0); }
+      0% {
+        box-shadow: 0 0 0 0 rgba(168, 85, 247, 0.4);
+      }
+
+      70% {
+        box-shadow: 0 0 0 10px rgba(168, 85, 247, 0);
+      }
+
+      100% {
+        box-shadow: 0 0 0 0 rgba(168, 85, 247, 0);
+      }
     }
 
     /* NAV */
     nav {
-      position: sticky; top: 0; z-index: 100;
+      position: sticky;
+      top: 0;
+      z-index: 100;
       background: var(--glass-bg);
       backdrop-filter: blur(16px);
       -webkit-backdrop-filter: blur(16px);
       border-bottom: 1px solid var(--glass-border);
       padding: 0 2rem;
-      display: flex; align-items: center; justify-content: space-between;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
       height: 70px;
       box-shadow: 0 4px 30px rgba(0, 0, 0, 0.1);
     }
-    .nav-logo { font-weight: 700; font-size: 1.1rem; letter-spacing: 0.02em; }
-    .nav-logo span { color: var(--accent2); }
-    .nav-links { display: flex; gap: 1.5rem; list-style: none; }
-    .nav-links a { color: var(--muted); text-decoration: none; font-size: 0.9rem; transition: color 0.2s; }
-    .nav-links a:hover { color: var(--text); }
+
+    .nav-logo {
+      font-weight: 700;
+      font-size: 1.1rem;
+      letter-spacing: 0.02em;
+    }
+
+    .nav-logo span {
+      color: var(--accent2);
+    }
+
+    .nav-links {
+      display: flex;
+      gap: 1.5rem;
+      list-style: none;
+    }
+
+    .nav-links a {
+      color: var(--muted);
+      text-decoration: none;
+      font-size: 0.9rem;
+      transition: color 0.2s;
+    }
+
+    .nav-links a:hover {
+      color: var(--text);
+    }
+
     .nav-cta {
       background: var(--accent);
       color: white;
@@ -75,7 +130,10 @@
       font-weight: 600;
       transition: background 0.2s;
     }
-    .nav-cta:hover { background: var(--accent2); }
+
+    .nav-cta:hover {
+      background: var(--accent2);
+    }
 
     /* HERO */
     .hero {
@@ -84,10 +142,11 @@
       max-width: 860px;
       margin: 0 auto;
     }
+
     .hero-badge {
       display: inline-block;
-      background: rgba(124,58,237,0.15);
-      border: 1px solid rgba(124,58,237,0.4);
+      background: rgba(124, 58, 237, 0.15);
+      border: 1px solid rgba(124, 58, 237, 0.4);
       color: var(--accent2);
       padding: 0.3rem 0.9rem;
       border-radius: 999px;
@@ -96,6 +155,7 @@
       letter-spacing: 0.05em;
       margin-bottom: 1.5rem;
     }
+
     .hero h1 {
       font-size: clamp(2.4rem, 6vw, 4rem);
       font-weight: 800;
@@ -103,19 +163,28 @@
       letter-spacing: -0.02em;
       margin-bottom: 1.25rem;
     }
+
     .hero h1 .grad {
       background: linear-gradient(135deg, var(--accent2), var(--accent3));
       -webkit-background-clip: text;
       -webkit-text-fill-color: transparent;
       background-clip: text;
     }
+
     .hero p {
       font-size: 1.2rem;
       color: var(--muted);
       max-width: 640px;
       margin: 0 auto 2.5rem;
     }
-    .hero-actions { display: flex; gap: 1rem; justify-content: center; flex-wrap: wrap; }
+
+    .hero-actions {
+      display: flex;
+      gap: 1rem;
+      justify-content: center;
+      flex-wrap: wrap;
+    }
+
     .btn-primary {
       background: linear-gradient(135deg, var(--accent), var(--accent2));
       color: white;
@@ -126,13 +195,15 @@
       font-size: 1.05rem;
       transition: all 0.3s ease;
       box-shadow: var(--shadow-primary);
-      border: 1px solid rgba(255,255,255,0.1);
+      border: 1px solid rgba(255, 255, 255, 0.1);
     }
+
     .btn-primary:hover {
       transform: translateY(-2px);
       box-shadow: var(--glow-accent);
       filter: brightness(1.1);
     }
+
     .btn-secondary {
       background: var(--glass-bg);
       backdrop-filter: blur(10px);
@@ -145,11 +216,13 @@
       border: 1px solid var(--border);
       transition: all 0.3s ease;
     }
+
     .btn-secondary:hover {
       border-color: var(--accent2);
       transform: translateY(-2px);
-      background: rgba(255,255,255,0.02);
+      background: rgba(255, 255, 255, 0.02);
     }
+
     .hero-sub {
       margin-top: 2rem;
       font-size: 0.85rem;
@@ -161,7 +234,7 @@
     .stats-bar {
       border-top: 1px solid var(--glass-border);
       border-bottom: 1px solid var(--glass-border);
-      background: linear-gradient(90deg, transparent, rgba(15,16,22,0.8), transparent);
+      background: linear-gradient(90deg, transparent, rgba(15, 16, 22, 0.8), transparent);
       padding: 2rem 2rem;
       display: flex;
       justify-content: center;
@@ -169,20 +242,52 @@
       flex-wrap: wrap;
       backdrop-filter: blur(5px);
     }
-    .stat { text-align: center; transition: transform 0.3s ease; cursor: default; }
-    .stat:hover { transform: translateY(-5px); }
-    .stat-num { font-size: 2.2rem; font-weight: 800; color: var(--accent2); display: block; filter: drop-shadow(0 0 8px rgba(168,85,247,0.3)); }
-    .stat-label { font-size: 0.85rem; color: var(--text-dim); text-transform: uppercase; letter-spacing: 1px; margin-top: 0.25rem; }
+
+    .stat {
+      text-align: center;
+      transition: transform 0.3s ease;
+      cursor: default;
+    }
+
+    .stat:hover {
+      transform: translateY(-5px);
+    }
+
+    .stat-num {
+      font-size: 2.2rem;
+      font-weight: 800;
+      color: var(--accent2);
+      display: block;
+      filter: drop-shadow(0 0 8px rgba(168, 85, 247, 0.3));
+    }
+
+    .stat-label {
+      font-size: 0.85rem;
+      color: var(--text-dim);
+      text-transform: uppercase;
+      letter-spacing: 1px;
+      margin-top: 0.25rem;
+    }
 
     /* SECTIONS */
-    section { padding: 5rem 2rem; max-width: 1100px; margin: 0 auto; }
+    section {
+      padding: 5rem 2rem;
+      max-width: 1100px;
+      margin: 0 auto;
+    }
+
     h2 {
       font-size: clamp(1.6rem, 3vw, 2.2rem);
       font-weight: 800;
       letter-spacing: -0.02em;
       margin-bottom: 0.5rem;
     }
-    .section-sub { color: var(--muted); font-size: 1.05rem; margin-bottom: 3rem; }
+
+    .section-sub {
+      color: var(--muted);
+      font-size: 1.05rem;
+      margin-bottom: 3rem;
+    }
 
     /* MEMORY FEATURE — HIGHLIGHT */
     .memory-section {
@@ -191,18 +296,29 @@
       border-bottom: 1px solid var(--border);
       padding: 5rem 2rem;
     }
-    .memory-inner { max-width: 1100px; margin: 0 auto; }
+
+    .memory-inner {
+      max-width: 1100px;
+      margin: 0 auto;
+    }
+
     .memory-grid {
       display: grid;
       grid-template-columns: 1fr 1fr;
       gap: 4rem;
       align-items: center;
     }
-    @media (max-width: 768px) { .memory-grid { grid-template-columns: 1fr; } }
+
+    @media (max-width: 768px) {
+      .memory-grid {
+        grid-template-columns: 1fr;
+      }
+    }
+
     .memory-label {
       display: inline-block;
-      background: rgba(16,185,129,0.12);
-      border: 1px solid rgba(16,185,129,0.3);
+      background: rgba(16, 185, 129, 0.12);
+      border: 1px solid rgba(16, 185, 129, 0.3);
       color: var(--green);
       padding: 0.25rem 0.75rem;
       border-radius: 999px;
@@ -211,6 +327,7 @@
       letter-spacing: 0.08em;
       margin-bottom: 1rem;
     }
+
     .memory-code {
       background: #0d0d14;
       border: 1px solid var(--border);
@@ -221,29 +338,64 @@
       line-height: 1.7;
       overflow-x: auto;
     }
-    .memory-code .comment { color: #4a5568; }
-    .memory-code .key { color: var(--accent3); }
-    .memory-code .val { color: #a3e635; }
-    .memory-code .head { color: var(--accent2); font-weight: bold; }
-    .memory-code .entry { color: var(--text); }
+
+    .memory-code .comment {
+      color: #4a5568;
+    }
+
+    .memory-code .key {
+      color: var(--accent3);
+    }
+
+    .memory-code .val {
+      color: #a3e635;
+    }
+
+    .memory-code .head {
+      color: var(--accent2);
+      font-weight: bold;
+    }
+
+    .memory-code .entry {
+      color: var(--text);
+    }
 
     /* HOW IT WORKS */
-    .steps { display: flex; flex-direction: column; gap: 1.5rem; }
+    .steps {
+      display: flex;
+      flex-direction: column;
+      gap: 1.5rem;
+    }
+
     .step {
       display: flex;
       gap: 1.25rem;
       align-items: flex-start;
     }
+
     .step-num {
       flex-shrink: 0;
-      width: 36px; height: 36px;
+      width: 36px;
+      height: 36px;
       background: var(--accent);
       border-radius: 50%;
-      display: flex; align-items: center; justify-content: center;
-      font-weight: 800; font-size: 0.9rem;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-weight: 800;
+      font-size: 0.9rem;
     }
-    .step-body h4 { font-size: 1rem; font-weight: 700; margin-bottom: 0.25rem; }
-    .step-body p { color: var(--muted); font-size: 0.95rem; }
+
+    .step-body h4 {
+      font-size: 1rem;
+      font-weight: 700;
+      margin-bottom: 0.25rem;
+    }
+
+    .step-body p {
+      color: var(--muted);
+      font-size: 0.95rem;
+    }
 
     /* FEATURE GRID */
     .feature-grid {
@@ -251,6 +403,7 @@
       grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
       gap: 1.5rem;
     }
+
     .feature-card {
       background: var(--glass-bg);
       backdrop-filter: blur(10px);
@@ -262,31 +415,54 @@
       position: relative;
       overflow: hidden;
     }
+
     .feature-card::before {
       content: '';
       position: absolute;
-      top: 0; left: 0; width: 100%; height: 100%;
-      background: radial-gradient(circle at 50% 0%, rgba(124,58,237,0.1), transparent 60%);
+      top: 0;
+      left: 0;
+      width: 100%;
+      height: 100%;
+      background: radial-gradient(circle at 50% 0%, rgba(124, 58, 237, 0.1), transparent 60%);
       opacity: 0;
       transition: opacity 0.4s ease;
     }
-    .feature-card:hover { 
-      border-color: rgba(168,85,247,0.5); 
-      transform: translateY(-8px) scale(1.02); 
-      box-shadow: 0 15px 30px rgba(0,0,0,0.3), var(--glow-accent);
+
+    .feature-card:hover {
+      border-color: rgba(168, 85, 247, 0.5);
+      transform: translateY(-8px) scale(1.02);
+      box-shadow: 0 15px 30px rgba(0, 0, 0, 0.3), var(--glow-accent);
     }
-    .feature-card:hover::before { opacity: 1; }
+
+    .feature-card:hover::before {
+      opacity: 1;
+    }
+
     .feature-icon {
       font-size: 2.2rem;
       margin-bottom: 1rem;
       display: inline-block;
       transition: transform 0.3s ease;
     }
+
     .feature-card:hover .feature-icon {
       transform: scale(1.1) rotate(5deg);
     }
-    .feature-card h3 { font-size: 1.15rem; font-weight: 700; margin-bottom: 0.6rem; color: var(--text); }
-    .feature-card p { color: var(--muted); font-size: 0.95rem; line-height: 1.5; position: relative; z-index: 1; }
+
+    .feature-card h3 {
+      font-size: 1.15rem;
+      font-weight: 700;
+      margin-bottom: 0.6rem;
+      color: var(--text);
+    }
+
+    .feature-card p {
+      color: var(--muted);
+      font-size: 0.95rem;
+      line-height: 1.5;
+      position: relative;
+      z-index: 1;
+    }
 
     /* PROVIDERS */
     .provider-grid {
@@ -294,6 +470,7 @@
       grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
       gap: 1rem;
     }
+
     .provider-pill {
       background: var(--bg2);
       border: 1px solid var(--border);
@@ -305,19 +482,48 @@
       align-items: center;
       gap: 0.5rem;
     }
+
     .provider-pill .dot {
-      width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0;
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      flex-shrink: 0;
       background: var(--green);
     }
-    .provider-pill .dot.free { background: var(--green); }
-    .provider-pill .dot.paid { background: var(--yellow); }
-    .provider-pill .dot.local { background: var(--accent3); }
-    .provider-legend {
-      display: flex; gap: 1.5rem; margin-top: 1.25rem;
-      font-size: 0.8rem; color: var(--muted); flex-wrap: wrap;
+
+    .provider-pill .dot.free {
+      background: var(--green);
     }
-    .provider-legend span { display: flex; align-items: center; gap: 0.4rem; }
-    .legend-dot { width: 8px; height: 8px; border-radius: 50%; display: inline-block; }
+
+    .provider-pill .dot.paid {
+      background: var(--yellow);
+    }
+
+    .provider-pill .dot.local {
+      background: var(--accent3);
+    }
+
+    .provider-legend {
+      display: flex;
+      gap: 1.5rem;
+      margin-top: 1.25rem;
+      font-size: 0.8rem;
+      color: var(--muted);
+      flex-wrap: wrap;
+    }
+
+    .provider-legend span {
+      display: flex;
+      align-items: center;
+      gap: 0.4rem;
+    }
+
+    .legend-dot {
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      display: inline-block;
+    }
 
     /* TOOLS PREVIEW */
     .tools-categories {
@@ -325,16 +531,35 @@
       grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
       gap: 1rem;
     }
+
     .tool-cat {
       background: var(--bg2);
       border: 1px solid var(--border);
       border-radius: 10px;
       padding: 1.25rem;
     }
-    .tool-cat h4 { font-size: 0.875rem; font-weight: 700; color: var(--accent2); margin-bottom: 0.5rem; }
-    .tool-cat ul { list-style: none; }
-    .tool-cat ul li { font-size: 0.825rem; color: var(--muted); padding: 0.15rem 0; }
-    .tool-cat ul li::before { content: '·  '; color: var(--accent); }
+
+    .tool-cat h4 {
+      font-size: 0.875rem;
+      font-weight: 700;
+      color: var(--accent2);
+      margin-bottom: 0.5rem;
+    }
+
+    .tool-cat ul {
+      list-style: none;
+    }
+
+    .tool-cat ul li {
+      font-size: 0.825rem;
+      color: var(--muted);
+      padding: 0.15rem 0;
+    }
+
+    .tool-cat ul li::before {
+      content: '·  ';
+      color: var(--accent);
+    }
 
     /* TERMINAL DEMO */
     .terminal {
@@ -345,23 +570,70 @@
       max-width: 680px;
       margin: 0 auto;
     }
+
     .terminal-bar {
       background: #1a1a24;
       padding: 0.6rem 1rem;
-      display: flex; align-items: center; gap: 0.5rem;
+      display: flex;
+      align-items: center;
+      gap: 0.5rem;
     }
-    .terminal-dot { width: 12px; height: 12px; border-radius: 50%; }
-    .t-red { background: #ff5f57; }
-    .t-yellow { background: #ffbd2e; }
-    .t-green { background: #28c840; }
-    .terminal-title { font-size: 0.75rem; color: var(--muted); margin-left: auto; margin-right: auto; }
-    .terminal-body { padding: 1.5rem; font-family: 'Fira Code','Cascadia Code','Consolas',monospace; font-size: 0.85rem; line-height: 1.8; }
-    .t-prompt { color: var(--accent2); }
-    .t-cmd { color: var(--text); }
-    .t-out { color: var(--green); }
-    .t-muted { color: #4a5568; }
-    .t-cyan { color: var(--accent3); }
-    .t-purple { color: var(--accent2); }
+
+    .terminal-dot {
+      width: 12px;
+      height: 12px;
+      border-radius: 50%;
+    }
+
+    .t-red {
+      background: #ff5f57;
+    }
+
+    .t-yellow {
+      background: #ffbd2e;
+    }
+
+    .t-green {
+      background: #28c840;
+    }
+
+    .terminal-title {
+      font-size: 0.75rem;
+      color: var(--muted);
+      margin-left: auto;
+      margin-right: auto;
+    }
+
+    .terminal-body {
+      padding: 1.5rem;
+      font-family: 'Fira Code', 'Cascadia Code', 'Consolas', monospace;
+      font-size: 0.85rem;
+      line-height: 1.8;
+    }
+
+    .t-prompt {
+      color: var(--accent2);
+    }
+
+    .t-cmd {
+      color: var(--text);
+    }
+
+    .t-out {
+      color: var(--green);
+    }
+
+    .t-muted {
+      color: #4a5568;
+    }
+
+    .t-cyan {
+      color: var(--accent3);
+    }
+
+    .t-purple {
+      color: var(--accent2);
+    }
 
     /* QUICK START */
     .qs-grid {
@@ -369,12 +641,14 @@
       grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
       gap: 1.5rem;
     }
+
     .qs-card {
       background: var(--bg2);
       border: 1px solid var(--border);
       border-radius: 10px;
       overflow: hidden;
     }
+
     .qs-header {
       background: var(--bg3);
       padding: 0.75rem 1.25rem;
@@ -383,24 +657,32 @@
       color: var(--muted);
       border-bottom: 1px solid var(--border);
     }
+
     .qs-body {
       padding: 1.25rem;
-      font-family: 'Fira Code','Cascadia Code','Consolas',monospace;
+      font-family: 'Fira Code', 'Cascadia Code', 'Consolas', monospace;
       font-size: 0.825rem;
       line-height: 1.9;
       color: var(--text);
     }
-    .qs-comment { color: #4a5568; }
-    .qs-cmd { color: var(--accent3); }
+
+    .qs-comment {
+      color: #4a5568;
+    }
+
+    .qs-cmd {
+      color: var(--accent3);
+    }
 
     /* WHATS NEW BANNER */
     .whats-new {
-      background: rgba(124,58,237,0.08);
-      border: 1px solid rgba(124,58,237,0.25);
+      background: rgba(124, 58, 237, 0.08);
+      border: 1px solid rgba(124, 58, 237, 0.25);
       border-radius: 10px;
       padding: 1.25rem 1.75rem;
       margin-bottom: 3rem;
     }
+
     .whats-new-label {
       font-size: 0.7rem;
       font-weight: 700;
@@ -408,9 +690,23 @@
       color: var(--accent2);
       margin-bottom: 0.5rem;
     }
-    .whats-new ul { list-style: none; display: flex; flex-wrap: wrap; gap: 0.5rem 1.5rem; }
-    .whats-new ul li { font-size: 0.875rem; color: var(--muted); }
-    .whats-new ul li::before { content: '✦ '; color: var(--accent2); }
+
+    .whats-new ul {
+      list-style: none;
+      display: flex;
+      flex-wrap: wrap;
+      gap: 0.5rem 1.5rem;
+    }
+
+    .whats-new ul li {
+      font-size: 0.875rem;
+      color: var(--muted);
+    }
+
+    .whats-new ul li::before {
+      content: '✦ ';
+      color: var(--accent2);
+    }
 
     /* CTA */
     .cta-section {
@@ -419,8 +715,16 @@
       background: var(--bg2);
       border-top: 1px solid var(--border);
     }
-    .cta-section h2 { margin-bottom: 1rem; }
-    .cta-section p { color: var(--muted); margin-bottom: 2rem; font-size: 1.05rem; }
+
+    .cta-section h2 {
+      margin-bottom: 1rem;
+    }
+
+    .cta-section p {
+      color: var(--muted);
+      margin-bottom: 2rem;
+      font-size: 1.05rem;
+    }
 
     /* FOOTER */
     footer {
@@ -436,419 +740,558 @@
       gap: 2rem;
       flex-wrap: wrap;
     }
-    footer a { color: var(--muted); text-decoration: none; }
-    footer a:hover { color: var(--text); }
+
+    footer a {
+      color: var(--muted);
+      text-decoration: none;
+    }
+
+    footer a:hover {
+      color: var(--text);
+    }
 
     /* RESPONSIVE NAV */
     @media (max-width: 600px) {
-      .nav-links { display: none; }
+      .nav-links {
+        display: none;
+      }
     }
   </style>
 </head>
+
 <body>
 
-<!-- NAV -->
-<nav>
-  <div class="nav-logo">⭐ Galactic <span>AI</span></div>
-  <ul class="nav-links">
-    <li><a href="#memory">Memory</a></li>
-    <li><a href="#features">Features</a></li>
-    <li><a href="#providers">Providers</a></li>
-    <li><a href="#tools">Tools</a></li>
-    <li><a href="#quickstart">Quick Start</a></li>
-  </ul>
-  <a href="https://github.com/cmmchsvc-dev/Galactic-AI/releases/latest" class="nav-cta">Download Free</a>
-</nav>
-
-<!-- HERO -->
-<div class="hero">
-  <div class="hero-badge">v1.4.4 — Hive Mind Subagents · Robust Playwright Integration · Rich Terminal Deck</div>
-  <h1>Your AI that actually<br><span class="grad">does everything.</span></h1>
-  <p>A local-first AI automation platform with 188+ built-in tools, a dual-brain Strategic Planner, true persistent memory (ChromaDB), interruptible Live Voice mode, and advanced vision-based computer use. Runs on your machine. No subscriptions. No cloud required.</p>
-  <div class="hero-actions">
-    <a href="https://github.com/cmmchsvc-dev/Galactic-AI/releases/latest" class="btn-primary" style="animation: pulse-glow 2s infinite;">Download v1.4.4 Free</a>
-    <a href="https://github.com/cmmchsvc-dev/Galactic-AI" class="btn-secondary">View on GitHub</a>
-  </div>
-  <p class="hero-sub">Free &amp; open source · Python 3.10+ · Windows / macOS / Linux</p>
-</div>
-
-<!-- STATS BAR -->
-<div class="stats-bar">
-  <div class="stat"><span class="stat-num">188+</span><span class="stat-label">Built-in Tools</span></div>
-  <div class="stat"><span class="stat-num">14</span><span class="stat-label">AI Providers</span></div>
-  <div class="stat"><span class="stat-num">Hive</span><span class="stat-label">Mind Subagents</span></div>
-  <div class="stat"><span class="stat-num">100%</span><span class="stat-label">Local Mode Available</span></div>
-  <div class="stat"><span class="stat-num">0</span><span class="stat-label">Subscriptions</span></div>
-</div>
-
-<!-- MEMORY HIGHLIGHT -->
-<div class="memory-section" id="memory">
-  <div class="memory-inner">
-    <div class="memory-grid">
-      <div>
-        <div class="memory-label">FLAGSHIP FEATURE</div>
-        <h2>True Persistent Memory.<br>Near-Zero Token Cost.</h2>
-        <p style="color:var(--muted);margin:1rem 0 2rem;">Most AI tools forget everything when you close the window. Galactic AI builds a living memory file that persists across restarts — and costs almost nothing extra to use.</p>
-        <div class="steps">
-          <div class="step">
-            <div class="step-num">1</div>
-            <div class="step-body">
-              <h4>The AI learns something</h4>
-              <p>You teach it something, or it decides to remember it on its own.</p>
-            </div>
-          </div>
-          <div class="step">
-            <div class="step-num">2</div>
-            <div class="step-body">
-              <h4>It writes to MEMORY.md</h4>
-              <p>A timestamped entry is appended to a file on your disk. The in-memory personality hot-reloads instantly.</p>
-            </div>
-          </div>
-          <div class="step">
-            <div class="step-num">3</div>
-            <div class="step-body">
-              <h4>Every future session starts knowing</h4>
-              <p>MEMORY.md is loaded into the system prompt on startup — alongside your identity files. No searches, no extra API calls.</p>
-            </div>
-          </div>
-        </div>
-      </div>
-      <div>
-        <div class="memory-code">
-<span class="head"># MEMORY.md — grows automatically over time</span>
-
-<span class="comment"># Injected into every system prompt on startup</span>
-<span class="comment"># Written to automatically when the AI imprints</span>
-<span class="comment"># Editable directly in the Control Deck</span>
-
-<span class="entry">- 2026-02-18: User prefers concise replies</span>
-<span class="entry">- 2026-02-18 [truck]: Drives a 1967 F100</span>
-<span class="entry">- 2026-02-19: Working on Galactic AI project</span>
-<span class="entry">- 2026-02-19 [prefs]: Dark mode, no emojis</span>
-<span class="entry">- 2026-02-19: Deploying to GitHub releases</span>
-
-<span class="comment"></span>
-<span class="comment"># IDENTITY.md, SOUL.md, USER.md, VAULT.md also loaded</span>
-<span class="comment"># Total token cost: size of your .md files, once.</span>
-        </div>
-        <p style="color:var(--muted);font-size:0.8rem;margin-top:0.75rem;text-align:center;">All .md files live on your machine. Edit them any time in the Memory tab.</p>
-      </div>
-    </div>
-  </div>
-</div>
-
-<!-- FEATURES -->
-<section id="features">
-  <h2>Everything you need. Nothing you don't.</h2>
-  <p class="section-sub">Built for people who want their AI to actually do things.</p>
-
-  <!-- What's New in v1.4.4 -->
-  <div class="whats-new">
-    <div class="whats-new-label">✦ NEW IN v1.4.4 — THE HIVE MIND UPDATE</div>
-    <ul>
-      <li><strong>Hive Mind Subagents:</strong> Spawn a hierarchy of worker agents visible in the Control Deck UI to parallelize development securely and quickly.</li>
-      <li><strong>Robust Playwright Browsing:</strong> Vastly improved `chrome_type` with seamless Search & Navigation handling complex sites perfectly.</li>
-      <li><strong>Dynamic Image Decoding:</strong> Render and parse screenshot memory buffers directly in chat, skipping object references.</li>
-      <li><strong>Streamlined Engine:</strong> Removed legacy EXE layers to ensure the application executes pure python, running significantly faster natively.</li>
+  <!-- NAV -->
+  <nav>
+    <div class="nav-logo">⭐ Galactic <span>AI</span></div>
+    <ul class="nav-links">
+      <li><a href="#memory">Memory</a></li>
+      <li><a href="#features">Features</a></li>
+      <li><a href="#providers">Providers</a></li>
+      <li><a href="#tools">Tools</a></li>
+      <li><a href="#quickstart">Quick Start</a></li>
     </ul>
+    <a href="https://github.com/cmmchsvc-dev/Galactic-AI/releases/latest" class="nav-cta">Download Free</a>
+  </nav>
+
+  <!-- HERO -->
+  <div class="hero">
+    <div class="hero-badge">v1.4.6 — Imagen Fix · AI Loop Prevention · Installer Hardening</div>
+    <h1>Your AI that actually<br><span class="grad">does everything.</span></h1>
+    <p>A local-first AI automation platform with 188+ built-in tools, a dual-brain Strategic Planner, true persistent
+      memory (ChromaDB), interruptible Live Voice mode, and advanced vision-based computer use. Runs on your machine. No
+      subscriptions. No cloud required.</p>
+    <div class="hero-actions">
+      <a href="https://github.com/cmmchsvc-dev/Galactic-AI/releases/latest" class="btn-primary"
+        style="animation: pulse-glow 2s infinite;">Download v1.4.6 Free</a>
+      <a href="https://github.com/cmmchsvc-dev/Galactic-AI" class="btn-secondary">View on GitHub</a>
+    </div>
+    <p class="hero-sub">Free &amp; open source · Python 3.10+ · Windows / macOS / Linux</p>
   </div>
 
-  <div class="feature-grid">
-    <div class="feature-card">
-      <span class="feature-icon">🧠</span>
-      <h3>Persistent Memory + VAULT</h3>
-      <p>MEMORY.md, IDENTITY.md, SOUL.md, USER.md, and VAULT.md are loaded into every prompt. The AI always knows who it is, who you are, and how to log into your services.</p>
-    </div>
-    <div class="feature-card">
-      <span class="feature-icon">🐝</span>
-      <h3>Hive Mind Subagents</h3>
-      <p>Spawn isolated AI background workers nested in a Hive Mind architecture. Subagents communicate seamlessly while keeping main UI responsive for review.</p>
-    </div>
-    <div class="feature-card">
-      <span class="feature-icon">👁️</span>
-      <h3>Computer Vision Control</h3>
-      <p>Ask the AI to look at your screen and directly click UI elements. Bypasses the DOM entirely for unscrapable apps, interacting just like a human.</p>
-    </div>
-    <div class="feature-card">
-      <span class="feature-icon">💻</span>
-      <h3>Test-Driven Coder</h3>
-      <p>Galactic AI can write Python scripts, execute them locally, read the error output, and autonomously loop until the code runs flawlessly.</p>
-    </div>
-    <div class="feature-card">
-      <span class="feature-icon">⚙️</span>
-      <h3>Settings Tab</h3>
-      <p>Switch primary/fallback models from dropdowns, toggle auto-fallback, change TTS voice, tune the speak timeout and max ReAct turns — all saved live to config.yaml.</p>
-    </div>
-    <div class="feature-card">
-      <span class="feature-icon">🎙️</span>
-      <h3>Voice I/O + Voice Selector</h3>
-      <p>Send voice messages via Telegram, get voice replies. Choose from 7 voices (Guy, Aria, Jenny, Davis via Edge TTS — free; Nova, Byte via ElevenLabs) from the Quick Tools sidebar.</p>
-    </div>
-    <div class="feature-card">
-      <span class="feature-icon">🌐</span>
-      <h3>Full Browser Control</h3>
-      <p>56 Playwright browser actions. Click, type, scroll, extract, intercept network traffic, manage sessions, spoof geolocation. Chromium, Firefox, or WebKit.</p>
-    </div>
-    <div class="feature-card">
-      <span class="feature-icon">🔌</span>
-      <h3>Chrome Extension</h3>
-      <p>Galactic Browser extension for Chrome. Side panel chat, real-time page control, accessibility tree reading, form filling, tab management — all through your actual browser.</p>
-    </div>
-    <div class="feature-card">
-      <span class="feature-icon">⚡</span>
-      <h3>Skills Ecosystem</h3>
-      <p>Every capability is a GalacticSkill. Byte can write, validate, and load new skills at runtime — no restart needed. Community skills persist across sessions in skills/community/.</p>
-    </div>
-    <div class="feature-card">
-      <span class="feature-icon">📱</span>
-      <h3>Social Media Tools</h3>
-      <p>Post tweets, reply to mentions, submit Reddit posts, search subreddits, and read your inbox — all through natural language commands to your AI.</p>
-    </div>
-    <div class="feature-card">
-      <span class="feature-icon">🤖</span>
-      <h3>ReAct Agent Loop</h3>
-      <p>Think → Act → Observe → Answer. The AI chains tool calls autonomously until the task is done. Per-tool timeouts + a speak() wall-clock cap prevent runaway loops.</p>
-    </div>
-    <div class="feature-card">
-      <span class="feature-icon">📱</span>
-      <h3>Telegram + Discord + Gmail</h3>
-      <p>Full control from your phone via Telegram. Plus Discord bot, WhatsApp, and Gmail inbox monitoring — all bridges included.</p>
-    </div>
-    <div class="feature-card">
-      <span class="feature-icon">🖥️</span>
-      <h3>Web Control Deck</h3>
-      <p>Chat, Status, Models, Tools, Skills, Memory, Settings, Ollama, and Logs — a full control panel at localhost:17789.</p>
-    </div>
-    <div class="feature-card">
-      <span class="feature-icon">🔒</span>
-      <h3>100% Local Mode</h3>
-      <p>Run with Ollama and zero internet required. No data leaves your machine. No API keys. No tracking. Full capability offline.</p>
-    </div>
-    <div class="feature-card">
-      <span class="feature-icon">🎬</span>
-      <h3>Video Generation</h3>
-      <p>Text-to-video and image-to-video via Google Veo. Generate 4-8 second MP4 clips up to 4K resolution. Inline HTML5 player in the Control Deck chat.</p>
-    </div>
-    <div class="feature-card">
-      <span class="feature-icon">⚡</span>
-      <h3>AsyncIO Core</h3>
-      <p>Every subsystem — LLM gateway, web server, Telegram, Ollama manager, scheduler — runs non-blocking on a single asyncio event loop.</p>
-    </div>
-    <div class="feature-card">
-      <span class="feature-icon">🔄</span>
-      <h3>Resilient Auto-Fallback</h3>
-      <p>Error-type-specific cooldowns (rate limit: 60s, auth error: 24h). Automatic recovery when providers come back. Toggle on/off from the Settings tab.</p>
-    </div>
-    <div class="feature-card">
-      <span class="feature-icon">💰</span>
-      <h3>Token Cost Dashboard</h3>
-      <p>Real-time cost tracking in the Status tab. 6 summary cards (session, daily, weekly, monthly), 9 currencies, persistent logging. Free providers show FREE.</p>
-    </div>
-    <div class="feature-card">
-      <span class="feature-icon">🎤</span>
-      <h3>Voice Input in Control Deck</h3>
-      <p>Click the mic button in the chat bar to record your voice. Audio is sent to Whisper (OpenAI or Groq) for transcription and inserted into the chat automatically.</p>
-    </div>
-    <div class="feature-card">
-      <span class="feature-icon">🔑</span>
-      <h3>Remote Access + JWT</h3>
-      <p>Access remotely over LAN with plain HTTP + JWT auth (24h expiry), rate limiting, CORS protection, and auto Windows Firewall rule. No TLS cert issues.</p>
-    </div>
+  <!-- STATS BAR -->
+  <div class="stats-bar">
+    <div class="stat"><span class="stat-num">188+</span><span class="stat-label">Built-in Tools</span></div>
+    <div class="stat"><span class="stat-num">14</span><span class="stat-label">AI Providers</span></div>
+    <div class="stat"><span class="stat-num">Hive</span><span class="stat-label">Mind Subagents</span></div>
+    <div class="stat"><span class="stat-num">100%</span><span class="stat-label">Local Mode Available</span></div>
+    <div class="stat"><span class="stat-num">0</span><span class="stat-label">Subscriptions</span></div>
   </div>
-</section>
 
-<!-- PROVIDERS -->
-<div style="background:var(--bg2);border-top:1px solid var(--border);border-bottom:1px solid var(--border);">
-<section id="providers">
-  <h2>14 AI Providers. One Interface.</h2>
-  <p class="section-sub">Switch mid-conversation. Set automatic fallback. Use free tiers or run completely offline.</p>
-  <div class="provider-grid">
-    <div class="provider-pill"><span class="dot free"></span>Google Gemini</div>
-    <div class="provider-pill"><span class="dot paid"></span>Anthropic Claude</div>
-    <div class="provider-pill"><span class="dot paid"></span>OpenAI GPT</div>
-    <div class="provider-pill"><span class="dot paid"></span>xAI Grok</div>
-    <div class="provider-pill"><span class="dot free"></span>Groq (fast)</div>
-    <div class="provider-pill"><span class="dot free"></span>Mistral</div>
-    <div class="provider-pill"><span class="dot free"></span>NVIDIA AI</div>
-    <div class="provider-pill"><span class="dot free"></span>DeepSeek</div>
-    <div class="provider-pill"><span class="dot free"></span>Together AI</div>
-    <div class="provider-pill"><span class="dot paid"></span>Perplexity</div>
-    <div class="provider-pill"><span class="dot free"></span>HuggingFace</div>
-    <div class="provider-pill"><span class="dot free"></span>Cerebras</div>
-    <div class="provider-pill"><span class="dot free"></span>OpenRouter</div>
-    <div class="provider-pill"><span class="dot local"></span>Ollama (local)</div>
-  </div>
-  <div class="provider-legend">
-    <span><span class="legend-dot" style="background:var(--green)"></span>Free tier available</span>
-    <span><span class="legend-dot" style="background:var(--yellow)"></span>Paid only</span>
-    <span><span class="legend-dot" style="background:var(--accent3)"></span>Completely free, runs locally</span>
-  </div>
-</section>
-</div>
+  <!-- MEMORY HIGHLIGHT -->
+  <div class="memory-section" id="memory">
+    <div class="memory-inner">
+      <div class="memory-grid">
+        <div>
+          <div class="memory-label">FLAGSHIP FEATURE</div>
+          <h2>True Persistent Memory.<br>Near-Zero Token Cost.</h2>
+          <p style="color:var(--muted);margin:1rem 0 2rem;">Most AI tools forget everything when you close the window.
+            Galactic AI builds a living memory file that persists across restarts — and costs almost nothing extra to
+            use.</p>
+          <div class="steps">
+            <div class="step">
+              <div class="step-num">1</div>
+              <div class="step-body">
+                <h4>The AI learns something</h4>
+                <p>You teach it something, or it decides to remember it on its own.</p>
+              </div>
+            </div>
+            <div class="step">
+              <div class="step-num">2</div>
+              <div class="step-body">
+                <h4>It writes to MEMORY.md</h4>
+                <p>A timestamped entry is appended to a file on your disk. The in-memory personality hot-reloads
+                  instantly.</p>
+              </div>
+            </div>
+            <div class="step">
+              <div class="step-num">3</div>
+              <div class="step-body">
+                <h4>Every future session starts knowing</h4>
+                <p>MEMORY.md is loaded into the system prompt on startup — alongside your identity files. No searches,
+                  no extra API calls.</p>
+              </div>
+            </div>
+          </div>
+        </div>
+        <div>
+          <div class="memory-code">
+            <span class="head"># MEMORY.md — grows automatically over time</span>
 
-<!-- TOOLS -->
-<section id="tools">
-  <h2>147 Built-In Tools</h2>
-  <p class="section-sub">The AI can use all of these autonomously, chaining them together to complete complex tasks.</p>
-  <div class="tools-categories">
-    <div class="tool-cat">
-      <h4>File System</h4>
-      <ul><li>read_file / write_file / edit_file</li><li>list_dir (rich listing)</li><li>find_files (glob search)</li><li>hash_file (SHA256/MD5)</li><li>diff_files (unified diff)</li><li>zip_create / zip_extract</li><li>image_info (dimensions/format)</li></ul>
-    </div>
-    <div class="tool-cat">
-      <h4>Shell &amp; Process</h4>
-      <ul><li>exec_shell (PowerShell/bash)</li><li>process_start / status / kill</li><li>kill_process_by_name</li><li>schedule_task / list_tasks</li><li>system_info (CPU/RAM/disk)</li><li>env_get / env_set</li></ul>
-    </div>
-    <div class="tool-cat">
-      <h4>Web &amp; HTTP</h4>
-      <ul><li>web_search (DuckDuckGo)</li><li>web_fetch (read pages)</li><li>http_request (raw REST API)</li></ul>
-    </div>
-    <div class="tool-cat">
-      <h4>Memory</h4>
-      <ul><li>store_memory (ChromaDB)</li><li>recall_memories</li><li>memory_search</li><li>memory_imprint → MEMORY.md</li></ul>
-    </div>
-    <div class="tool-cat">
-      <h4>Dev &amp; Sub-Agents</h4>
-      <ul><li>spawn_subagent / check</li><li>test_driven_coder</li><li>gemini_code (Dev Expert)</li><li>search_workspace</li><li>git_status / diff / commit / log</li></ul>
-    </div>
-    <div class="tool-cat">
-      <h4>Vision, Audio, Image &amp; Video</h4>
-      <ul><li>analyze_image (vision AI)</li><li>text_to_speech (7 voices)</li><li>generate_image (Imagen 4)</li><li>generate_image_flux (FLUX.1)</li><li>generate_image_sd35 (SD 3.5)</li><li>generate_video (Google Veo)</li><li>generate_video_from_image</li></ul>
-    </div>
-    <div class="tool-cat">
-      <h4>Clipboard &amp; Notifications</h4>
-      <ul><li>clipboard_get / clipboard_set</li><li>notify (desktop toast)</li><li>qr_generate (QR code images)</li><li>text_transform (15 operations)</li></ul>
-    </div>
-    <div class="tool-cat">
-      <h4>Window Management</h4>
-      <ul><li>window_list (all open windows)</li><li>window_focus (bring to front)</li><li>window_resize (move/resize)</li></ul>
-    </div>
-    <div class="tool-cat">
-      <h4>Desktop Automation</h4>
-      <ul><li>desktop_screenshot + AI analysis</li><li>desktop_click / type / move</li><li>desktop_scroll / hotkey</li><li>desktop_drag / locate</li></ul>
-    </div>
-    <div class="tool-cat">
-      <h4>Browser Navigation</h4>
-      <ul><li>open_browser / browser_search</li><li>screenshot / browser_snapshot</li><li>browser_pdf / browser_new_tab</li></ul>
-    </div>
-    <div class="tool-cat">
-      <h4>Browser Interaction</h4>
-      <ul><li>click / type / hover</li><li>fill_form / select / drag</li><li>download / upload / scroll</li><li>by selector, ref, or coords</li></ul>
-    </div>
-    <div class="tool-cat">
-      <h4>Browser Data</h4>
-      <ul><li>browser_extract / execute_js</li><li>network_requests / console_logs</li><li>local / session storage</li><li>browser_response_body</li></ul>
-    </div>
-    <div class="tool-cat">
-      <h4>Advanced Browser</h4>
-      <ul><li>intercept / mock network</li><li>geolocation / media emulation</li><li>save / load sessions</li><li>trace recording / proxy routing</li></ul>
-    </div>
-    <div class="tool-cat">
-      <h4>Chrome Extension (27 tools)</h4>
-      <ul><li>chrome_navigate / chrome_tabs_list</li><li>chrome_read_page / chrome_find</li><li>chrome_click / chrome_form_input</li><li>chrome_screenshot / chrome_zoom</li><li>chrome_drag / chrome_right_click</li><li>chrome_triple_click / chrome_upload</li><li>chrome_resize / chrome_wait</li><li>chrome_read_network / chrome_get_network_body</li><li>chrome_gif_start / stop / export</li></ul>
-    </div>
-    <div class="tool-cat">
-      <h4>Social Media</h4>
-      <ul><li>twitter_post / twitter_reply</li><li>twitter_search / twitter_mentions</li><li>reddit_post / reddit_comment</li><li>reddit_search / reddit_inbox</li></ul>
-    </div>
-  </div>
-</section>
+            <span class="comment"># Injected into every system prompt on startup</span>
+            <span class="comment"># Written to automatically when the AI imprints</span>
+            <span class="comment"># Editable directly in the Control Deck</span>
 
-<!-- QUICK START -->
-<div style="background:var(--bg2);border-top:1px solid var(--border);border-bottom:1px solid var(--border);">
-<section id="quickstart">
-  <h2>Up in 60 seconds.</h2>
-  <p class="section-sub">Extract the ZIP, run the installer, open your browser.</p>
-  <div class="qs-grid">
-    <div class="qs-card">
-      <div class="qs-header">Windows (PowerShell)</div>
-      <div class="qs-body">
-        <span class="qs-comment"># Extract ZIP, open PowerShell here</span><br>
-        <span class="qs-cmd">.\install.ps1</span>&nbsp;&nbsp;<span class="qs-comment"># install deps</span><br>
-        <span class="qs-cmd">.\launch.ps1</span>&nbsp;&nbsp;&nbsp;<span class="qs-comment"># start Galactic AI</span>
-      </div>
-    </div>
-    <div class="qs-card">
-      <div class="qs-header">macOS / Linux</div>
-      <div class="qs-body">
-        <span class="qs-comment"># Extract archive, open terminal here</span><br>
-        <span class="qs-cmd">chmod +x install.sh launch.sh</span><br>
-        <span class="qs-cmd">./install.sh</span>&nbsp;&nbsp;&nbsp;<span class="qs-comment"># install deps</span><br>
-        <span class="qs-cmd">./launch.sh</span>&nbsp;&nbsp;&nbsp;&nbsp;<span class="qs-comment"># start Galactic AI</span>
-      </div>
-    </div>
-    <div class="qs-card">
-      <div class="qs-header">100% Local (No API Keys)</div>
-      <div class="qs-body">
-        <span class="qs-comment"># Install Ollama first: ollama.com</span><br>
-        <span class="qs-cmd">ollama pull qwen3:8b</span><br>
-        <span class="qs-comment"># Choose Ollama in Step 1 of wizard</span><br>
-        <span class="qs-comment"># Zero API keys, zero cloud</span>
+            <span class="entry">- 2026-02-18: User prefers concise replies</span>
+            <span class="entry">- 2026-02-18 [truck]: Drives a 1967 F100</span>
+            <span class="entry">- 2026-02-19: Working on Galactic AI project</span>
+            <span class="entry">- 2026-02-19 [prefs]: Dark mode, no emojis</span>
+            <span class="entry">- 2026-02-19: Deploying to GitHub releases</span>
+
+            <span class="comment"></span>
+            <span class="comment"># IDENTITY.md, SOUL.md, USER.md, VAULT.md also loaded</span>
+            <span class="comment"># Total token cost: size of your .md files, once.</span>
+          </div>
+          <p style="color:var(--muted);font-size:0.8rem;margin-top:0.75rem;text-align:center;">All .md files live on
+            your machine. Edit them any time in the Memory tab.</p>
+        </div>
       </div>
     </div>
   </div>
-  <p style="text-align:center;margin-top:2rem;color:var(--muted);font-size:0.9rem;">
-    Then open <strong style="color:var(--accent3)">http://127.0.0.1:17789</strong> — the Setup Wizard guides you through the rest.
-  </p>
-</section>
-</div>
 
-<!-- TERMINAL DEMO -->
-<section>
-  <h2 style="text-align:center;">See it in action.</h2>
-  <p class="section-sub" style="text-align:center;">The AI chaining tools autonomously — this is a real interaction.</p>
-  <div class="terminal">
-    <div class="terminal-bar">
-      <div class="terminal-dot t-red"></div>
-      <div class="terminal-dot t-yellow"></div>
-      <div class="terminal-dot t-green"></div>
-      <div class="terminal-title">Galactic AI — Control Deck Chat</div>
+  <!-- FEATURES -->
+  <section id="features">
+    <h2>Everything you need. Nothing you don't.</h2>
+    <p class="section-sub">Built for people who want their AI to actually do things.</p>
+
+    <!-- What's New in v1.4.6 -->
+    <div class="whats-new">
+      <div class="whats-new-label">✦ NEW IN v1.4.6 — THE IMAGEN FIX UPDATE</div>
+      <ul>
+        <li><strong>Imagen 4 Model IDs Fixed:</strong> All Imagen models now use the correct API identifiers — no more
+          NOT_FOUND errors from the Google GenAI SDK.</li>
+        <li><strong>AI Hallucination Loop Eliminated:</strong> Image generation now returns a web-embeddable URL with a
+          stop signal, preventing the AI from spiraling into random browser actions.</li>
+        <li><strong>Chrome Navigate Crash Fixed:</strong> Resolved a crash in the redundant navigation check that was
+          silently breaking browser tool usage.</li>
+        <li><strong>Installer Hardened:</strong> VC++ Redistributable now installs with proper UAC elevation on
+          sandboxed systems.</li>
+      </ul>
     </div>
-    <div class="terminal-body">
-      <div><span class="t-prompt">You:</span> <span class="t-cmd">Search for the latest Playwright release, summarize it, and save it to a file.</span></div>
-      <br>
-      <div><span class="t-purple">Byte:</span> <span class="t-muted">On it. Let me search first...</span></div>
-      <div><span class="t-muted">  [tool: web_search] "Playwright latest release"</span></div>
-      <div><span class="t-out">  → Found: Playwright v1.50.0 released Feb 2026...</span></div>
-      <div><span class="t-muted">  [tool: web_fetch] https://playwright.dev/docs/release-notes</span></div>
-      <div><span class="t-out">  → Fetched 8,400 chars. Parsing...</span></div>
-      <div><span class="t-muted">  [tool: write_file] ./workspace/playwright-notes.md</span></div>
-      <div><span class="t-out">  → Written. 612 bytes.</span></div>
-      <br>
-      <div><span class="t-purple">Byte:</span> <span class="t-cmd">Done. Playwright v1.50 adds aria snapshot assertions, improved</span></div>
-      <div><span class="t-cmd">       clock mocking, and MCP server support. Saved summary to</span></div>
-      <div><span class="t-cyan">       ./workspace/playwright-notes.md</span></div>
-      <br>
-      <div><span class="t-prompt">You:</span> <span class="t-cmd">Remember that we use Playwright for browser automation here.</span></div>
-      <br>
-      <div><span class="t-purple">Byte:</span> <span class="t-muted">[tool: memory_imprint] "We use Playwright for browser automation"</span></div>
-      <div><span class="t-out">  → [MEMORY] Saved. Appended to MEMORY.md.</span></div>
-      <div><span class="t-cmd">  Got it. I'll remember that for all future sessions.</span></div>
+
+    <div class="feature-grid">
+      <div class="feature-card">
+        <span class="feature-icon">🧠</span>
+        <h3>Persistent Memory + VAULT</h3>
+        <p>MEMORY.md, IDENTITY.md, SOUL.md, USER.md, and VAULT.md are loaded into every prompt. The AI always knows who
+          it is, who you are, and how to log into your services.</p>
+      </div>
+      <div class="feature-card">
+        <span class="feature-icon">🐝</span>
+        <h3>Hive Mind Subagents</h3>
+        <p>Spawn isolated AI background workers nested in a Hive Mind architecture. Subagents communicate seamlessly
+          while keeping main UI responsive for review.</p>
+      </div>
+      <div class="feature-card">
+        <span class="feature-icon">👁️</span>
+        <h3>Computer Vision Control</h3>
+        <p>Ask the AI to look at your screen and directly click UI elements. Bypasses the DOM entirely for unscrapable
+          apps, interacting just like a human.</p>
+      </div>
+      <div class="feature-card">
+        <span class="feature-icon">💻</span>
+        <h3>Test-Driven Coder</h3>
+        <p>Galactic AI can write Python scripts, execute them locally, read the error output, and autonomously loop
+          until the code runs flawlessly.</p>
+      </div>
+      <div class="feature-card">
+        <span class="feature-icon">⚙️</span>
+        <h3>Settings Tab</h3>
+        <p>Switch primary/fallback models from dropdowns, toggle auto-fallback, change TTS voice, tune the speak timeout
+          and max ReAct turns — all saved live to config.yaml.</p>
+      </div>
+      <div class="feature-card">
+        <span class="feature-icon">🎙️</span>
+        <h3>Voice I/O + Voice Selector</h3>
+        <p>Send voice messages via Telegram, get voice replies. Choose from 7 voices (Guy, Aria, Jenny, Davis via Edge
+          TTS — free; Nova, Byte via ElevenLabs) from the Quick Tools sidebar.</p>
+      </div>
+      <div class="feature-card">
+        <span class="feature-icon">🌐</span>
+        <h3>Full Browser Control</h3>
+        <p>56 Playwright browser actions. Click, type, scroll, extract, intercept network traffic, manage sessions,
+          spoof geolocation. Chromium, Firefox, or WebKit.</p>
+      </div>
+      <div class="feature-card">
+        <span class="feature-icon">🔌</span>
+        <h3>Chrome Extension</h3>
+        <p>Galactic Browser extension for Chrome. Side panel chat, real-time page control, accessibility tree reading,
+          form filling, tab management — all through your actual browser.</p>
+      </div>
+      <div class="feature-card">
+        <span class="feature-icon">⚡</span>
+        <h3>Skills Ecosystem</h3>
+        <p>Every capability is a GalacticSkill. Byte can write, validate, and load new skills at runtime — no restart
+          needed. Community skills persist across sessions in skills/community/.</p>
+      </div>
+      <div class="feature-card">
+        <span class="feature-icon">📱</span>
+        <h3>Social Media Tools</h3>
+        <p>Post tweets, reply to mentions, submit Reddit posts, search subreddits, and read your inbox — all through
+          natural language commands to your AI.</p>
+      </div>
+      <div class="feature-card">
+        <span class="feature-icon">🤖</span>
+        <h3>ReAct Agent Loop</h3>
+        <p>Think → Act → Observe → Answer. The AI chains tool calls autonomously until the task is done. Per-tool
+          timeouts + a speak() wall-clock cap prevent runaway loops.</p>
+      </div>
+      <div class="feature-card">
+        <span class="feature-icon">📱</span>
+        <h3>Telegram + Discord + Gmail</h3>
+        <p>Full control from your phone via Telegram. Plus Discord bot, WhatsApp, and Gmail inbox monitoring — all
+          bridges included.</p>
+      </div>
+      <div class="feature-card">
+        <span class="feature-icon">🖥️</span>
+        <h3>Web Control Deck</h3>
+        <p>Chat, Status, Models, Tools, Skills, Memory, Settings, Ollama, and Logs — a full control panel at
+          localhost:17789.</p>
+      </div>
+      <div class="feature-card">
+        <span class="feature-icon">🔒</span>
+        <h3>100% Local Mode</h3>
+        <p>Run with Ollama and zero internet required. No data leaves your machine. No API keys. No tracking. Full
+          capability offline.</p>
+      </div>
+      <div class="feature-card">
+        <span class="feature-icon">🎬</span>
+        <h3>Video Generation</h3>
+        <p>Text-to-video and image-to-video via Google Veo. Generate 4-8 second MP4 clips up to 4K resolution. Inline
+          HTML5 player in the Control Deck chat.</p>
+      </div>
+      <div class="feature-card">
+        <span class="feature-icon">⚡</span>
+        <h3>AsyncIO Core</h3>
+        <p>Every subsystem — LLM gateway, web server, Telegram, Ollama manager, scheduler — runs non-blocking on a
+          single asyncio event loop.</p>
+      </div>
+      <div class="feature-card">
+        <span class="feature-icon">🔄</span>
+        <h3>Resilient Auto-Fallback</h3>
+        <p>Error-type-specific cooldowns (rate limit: 60s, auth error: 24h). Automatic recovery when providers come
+          back. Toggle on/off from the Settings tab.</p>
+      </div>
+      <div class="feature-card">
+        <span class="feature-icon">💰</span>
+        <h3>Token Cost Dashboard</h3>
+        <p>Real-time cost tracking in the Status tab. 6 summary cards (session, daily, weekly, monthly), 9 currencies,
+          persistent logging. Free providers show FREE.</p>
+      </div>
+      <div class="feature-card">
+        <span class="feature-icon">🎤</span>
+        <h3>Voice Input in Control Deck</h3>
+        <p>Click the mic button in the chat bar to record your voice. Audio is sent to Whisper (OpenAI or Groq) for
+          transcription and inserted into the chat automatically.</p>
+      </div>
+      <div class="feature-card">
+        <span class="feature-icon">🔑</span>
+        <h3>Remote Access + JWT</h3>
+        <p>Access remotely over LAN with plain HTTP + JWT auth (24h expiry), rate limiting, CORS protection, and auto
+          Windows Firewall rule. No TLS cert issues.</p>
+      </div>
     </div>
-  </div>
-</section>
+  </section>
 
-<!-- FINAL CTA -->
-<div class="cta-section">
-  <h2>Ready to run your own AI?</h2>
-  <p>Free. Open source. Runs on your machine. No subscriptions, no cloud lock-in, no data leaks.</p>
-  <div class="hero-actions">
-    <a href="https://github.com/cmmchsvc-dev/Galactic-AI/releases/latest" class="btn-primary">Download v1.4.4 Free</a>
-    <a href="https://github.com/cmmchsvc-dev/Galactic-AI" class="btn-secondary">View Source on GitHub</a>
+  <!-- PROVIDERS -->
+  <div style="background:var(--bg2);border-top:1px solid var(--border);border-bottom:1px solid var(--border);">
+    <section id="providers">
+      <h2>14 AI Providers. One Interface.</h2>
+      <p class="section-sub">Switch mid-conversation. Set automatic fallback. Use free tiers or run completely offline.
+      </p>
+      <div class="provider-grid">
+        <div class="provider-pill"><span class="dot free"></span>Google Gemini</div>
+        <div class="provider-pill"><span class="dot paid"></span>Anthropic Claude</div>
+        <div class="provider-pill"><span class="dot paid"></span>OpenAI GPT</div>
+        <div class="provider-pill"><span class="dot paid"></span>xAI Grok</div>
+        <div class="provider-pill"><span class="dot free"></span>Groq (fast)</div>
+        <div class="provider-pill"><span class="dot free"></span>Mistral</div>
+        <div class="provider-pill"><span class="dot free"></span>NVIDIA AI</div>
+        <div class="provider-pill"><span class="dot free"></span>DeepSeek</div>
+        <div class="provider-pill"><span class="dot free"></span>Together AI</div>
+        <div class="provider-pill"><span class="dot paid"></span>Perplexity</div>
+        <div class="provider-pill"><span class="dot free"></span>HuggingFace</div>
+        <div class="provider-pill"><span class="dot free"></span>Cerebras</div>
+        <div class="provider-pill"><span class="dot free"></span>OpenRouter</div>
+        <div class="provider-pill"><span class="dot local"></span>Ollama (local)</div>
+      </div>
+      <div class="provider-legend">
+        <span><span class="legend-dot" style="background:var(--green)"></span>Free tier available</span>
+        <span><span class="legend-dot" style="background:var(--yellow)"></span>Paid only</span>
+        <span><span class="legend-dot" style="background:var(--accent3)"></span>Completely free, runs locally</span>
+      </div>
+    </section>
   </div>
-  <p style="margin-top:1.5rem;color:var(--muted);font-size:0.875rem;">Windows · macOS · Linux · Chromebook · WSL2</p>
-</div>
 
-<!-- FOOTER -->
-<footer>
-  <span>⭐ Galactic AI v1.4.4</span>
-  <a href="https://github.com/cmmchsvc-dev/Galactic-AI">GitHub</a>
-  <a href="https://github.com/cmmchsvc-dev/Galactic-AI/releases">Releases</a>
-  <a href="https://github.com/cmmchsvc-dev/Galactic-AI/blob/main/README.md">Docs</a>
-  <a href="https://github.com/cmmchsvc-dev/Galactic-AI/blob/main/LICENSE">MIT License</a>
-  <a href="/privacy.html">Privacy Policy</a>
-  <a href="/terms.html">Terms of Service</a>
-</footer>
+  <!-- TOOLS -->
+  <section id="tools">
+    <h2>147 Built-In Tools</h2>
+    <p class="section-sub">The AI can use all of these autonomously, chaining them together to complete complex tasks.
+    </p>
+    <div class="tools-categories">
+      <div class="tool-cat">
+        <h4>File System</h4>
+        <ul>
+          <li>read_file / write_file / edit_file</li>
+          <li>list_dir (rich listing)</li>
+          <li>find_files (glob search)</li>
+          <li>hash_file (SHA256/MD5)</li>
+          <li>diff_files (unified diff)</li>
+          <li>zip_create / zip_extract</li>
+          <li>image_info (dimensions/format)</li>
+        </ul>
+      </div>
+      <div class="tool-cat">
+        <h4>Shell &amp; Process</h4>
+        <ul>
+          <li>exec_shell (PowerShell/bash)</li>
+          <li>process_start / status / kill</li>
+          <li>kill_process_by_name</li>
+          <li>schedule_task / list_tasks</li>
+          <li>system_info (CPU/RAM/disk)</li>
+          <li>env_get / env_set</li>
+        </ul>
+      </div>
+      <div class="tool-cat">
+        <h4>Web &amp; HTTP</h4>
+        <ul>
+          <li>web_search (DuckDuckGo)</li>
+          <li>web_fetch (read pages)</li>
+          <li>http_request (raw REST API)</li>
+        </ul>
+      </div>
+      <div class="tool-cat">
+        <h4>Memory</h4>
+        <ul>
+          <li>store_memory (ChromaDB)</li>
+          <li>recall_memories</li>
+          <li>memory_search</li>
+          <li>memory_imprint → MEMORY.md</li>
+        </ul>
+      </div>
+      <div class="tool-cat">
+        <h4>Dev &amp; Sub-Agents</h4>
+        <ul>
+          <li>spawn_subagent / check</li>
+          <li>test_driven_coder</li>
+          <li>gemini_code (Dev Expert)</li>
+          <li>search_workspace</li>
+          <li>git_status / diff / commit / log</li>
+        </ul>
+      </div>
+      <div class="tool-cat">
+        <h4>Vision, Audio, Image &amp; Video</h4>
+        <ul>
+          <li>analyze_image (vision AI)</li>
+          <li>text_to_speech (7 voices)</li>
+          <li>generate_image (Imagen 4)</li>
+          <li>generate_image_flux (FLUX.1)</li>
+          <li>generate_image_sd35 (SD 3.5)</li>
+          <li>generate_video (Google Veo)</li>
+          <li>generate_video_from_image</li>
+        </ul>
+      </div>
+      <div class="tool-cat">
+        <h4>Clipboard &amp; Notifications</h4>
+        <ul>
+          <li>clipboard_get / clipboard_set</li>
+          <li>notify (desktop toast)</li>
+          <li>qr_generate (QR code images)</li>
+          <li>text_transform (15 operations)</li>
+        </ul>
+      </div>
+      <div class="tool-cat">
+        <h4>Window Management</h4>
+        <ul>
+          <li>window_list (all open windows)</li>
+          <li>window_focus (bring to front)</li>
+          <li>window_resize (move/resize)</li>
+        </ul>
+      </div>
+      <div class="tool-cat">
+        <h4>Desktop Automation</h4>
+        <ul>
+          <li>desktop_screenshot + AI analysis</li>
+          <li>desktop_click / type / move</li>
+          <li>desktop_scroll / hotkey</li>
+          <li>desktop_drag / locate</li>
+        </ul>
+      </div>
+      <div class="tool-cat">
+        <h4>Browser Navigation</h4>
+        <ul>
+          <li>open_browser / browser_search</li>
+          <li>screenshot / browser_snapshot</li>
+          <li>browser_pdf / browser_new_tab</li>
+        </ul>
+      </div>
+      <div class="tool-cat">
+        <h4>Browser Interaction</h4>
+        <ul>
+          <li>click / type / hover</li>
+          <li>fill_form / select / drag</li>
+          <li>download / upload / scroll</li>
+          <li>by selector, ref, or coords</li>
+        </ul>
+      </div>
+      <div class="tool-cat">
+        <h4>Browser Data</h4>
+        <ul>
+          <li>browser_extract / execute_js</li>
+          <li>network_requests / console_logs</li>
+          <li>local / session storage</li>
+          <li>browser_response_body</li>
+        </ul>
+      </div>
+      <div class="tool-cat">
+        <h4>Advanced Browser</h4>
+        <ul>
+          <li>intercept / mock network</li>
+          <li>geolocation / media emulation</li>
+          <li>save / load sessions</li>
+          <li>trace recording / proxy routing</li>
+        </ul>
+      </div>
+      <div class="tool-cat">
+        <h4>Chrome Extension (27 tools)</h4>
+        <ul>
+          <li>chrome_navigate / chrome_tabs_list</li>
+          <li>chrome_read_page / chrome_find</li>
+          <li>chrome_click / chrome_form_input</li>
+          <li>chrome_screenshot / chrome_zoom</li>
+          <li>chrome_drag / chrome_right_click</li>
+          <li>chrome_triple_click / chrome_upload</li>
+          <li>chrome_resize / chrome_wait</li>
+          <li>chrome_read_network / chrome_get_network_body</li>
+          <li>chrome_gif_start / stop / export</li>
+        </ul>
+      </div>
+      <div class="tool-cat">
+        <h4>Social Media</h4>
+        <ul>
+          <li>twitter_post / twitter_reply</li>
+          <li>twitter_search / twitter_mentions</li>
+          <li>reddit_post / reddit_comment</li>
+          <li>reddit_search / reddit_inbox</li>
+        </ul>
+      </div>
+    </div>
+  </section>
+
+  <!-- QUICK START -->
+  <div style="background:var(--bg2);border-top:1px solid var(--border);border-bottom:1px solid var(--border);">
+    <section id="quickstart">
+      <h2>Up in 60 seconds.</h2>
+      <p class="section-sub">Extract the ZIP, run the installer, open your browser.</p>
+      <div class="qs-grid">
+        <div class="qs-card">
+          <div class="qs-header">Windows (PowerShell)</div>
+          <div class="qs-body">
+            <span class="qs-comment"># Extract ZIP, open PowerShell here</span><br>
+            <span class="qs-cmd">.\install.ps1</span>&nbsp;&nbsp;<span class="qs-comment"># install deps</span><br>
+            <span class="qs-cmd">.\launch.ps1</span>&nbsp;&nbsp;&nbsp;<span class="qs-comment"># start Galactic
+              AI</span>
+          </div>
+        </div>
+        <div class="qs-card">
+          <div class="qs-header">macOS / Linux</div>
+          <div class="qs-body">
+            <span class="qs-comment"># Extract archive, open terminal here</span><br>
+            <span class="qs-cmd">chmod +x install.sh launch.sh</span><br>
+            <span class="qs-cmd">./install.sh</span>&nbsp;&nbsp;&nbsp;<span class="qs-comment"># install deps</span><br>
+            <span class="qs-cmd">./launch.sh</span>&nbsp;&nbsp;&nbsp;&nbsp;<span class="qs-comment"># start Galactic
+              AI</span>
+          </div>
+        </div>
+        <div class="qs-card">
+          <div class="qs-header">100% Local (No API Keys)</div>
+          <div class="qs-body">
+            <span class="qs-comment"># Install Ollama first: ollama.com</span><br>
+            <span class="qs-cmd">ollama pull qwen3:8b</span><br>
+            <span class="qs-comment"># Choose Ollama in Step 1 of wizard</span><br>
+            <span class="qs-comment"># Zero API keys, zero cloud</span>
+          </div>
+        </div>
+      </div>
+      <p style="text-align:center;margin-top:2rem;color:var(--muted);font-size:0.9rem;">
+        Then open <strong style="color:var(--accent3)">http://127.0.0.1:17789</strong> — the Setup Wizard guides you
+        through the rest.
+      </p>
+    </section>
+  </div>
+
+  <!-- TERMINAL DEMO -->
+  <section>
+    <h2 style="text-align:center;">See it in action.</h2>
+    <p class="section-sub" style="text-align:center;">The AI chaining tools autonomously — this is a real interaction.
+    </p>
+    <div class="terminal">
+      <div class="terminal-bar">
+        <div class="terminal-dot t-red"></div>
+        <div class="terminal-dot t-yellow"></div>
+        <div class="terminal-dot t-green"></div>
+        <div class="terminal-title">Galactic AI — Control Deck Chat</div>
+      </div>
+      <div class="terminal-body">
+        <div><span class="t-prompt">You:</span> <span class="t-cmd">Search for the latest Playwright release, summarize
+            it, and save it to a file.</span></div>
+        <br>
+        <div><span class="t-purple">Byte:</span> <span class="t-muted">On it. Let me search first...</span></div>
+        <div><span class="t-muted"> [tool: web_search] "Playwright latest release"</span></div>
+        <div><span class="t-out"> → Found: Playwright v1.50.0 released Feb 2026...</span></div>
+        <div><span class="t-muted"> [tool: web_fetch] https://playwright.dev/docs/release-notes</span></div>
+        <div><span class="t-out"> → Fetched 8,400 chars. Parsing...</span></div>
+        <div><span class="t-muted"> [tool: write_file] ./workspace/playwright-notes.md</span></div>
+        <div><span class="t-out"> → Written. 612 bytes.</span></div>
+        <br>
+        <div><span class="t-purple">Byte:</span> <span class="t-cmd">Done. Playwright v1.50 adds aria snapshot
+            assertions, improved</span></div>
+        <div><span class="t-cmd"> clock mocking, and MCP server support. Saved summary to</span></div>
+        <div><span class="t-cyan"> ./workspace/playwright-notes.md</span></div>
+        <br>
+        <div><span class="t-prompt">You:</span> <span class="t-cmd">Remember that we use Playwright for browser
+            automation here.</span></div>
+        <br>
+        <div><span class="t-purple">Byte:</span> <span class="t-muted">[tool: memory_imprint] "We use Playwright for
+            browser automation"</span></div>
+        <div><span class="t-out"> → [MEMORY] Saved. Appended to MEMORY.md.</span></div>
+        <div><span class="t-cmd"> Got it. I'll remember that for all future sessions.</span></div>
+      </div>
+    </div>
+  </section>
+
+  <!-- FINAL CTA -->
+  <div class="cta-section">
+    <h2>Ready to run your own AI?</h2>
+    <p>Free. Open source. Runs on your machine. No subscriptions, no cloud lock-in, no data leaks.</p>
+    <div class="hero-actions">
+      <a href="https://github.com/cmmchsvc-dev/Galactic-AI/releases/latest" class="btn-primary">Download v1.4.4 Free</a>
+      <a href="https://github.com/cmmchsvc-dev/Galactic-AI" class="btn-secondary">View Source on GitHub</a>
+    </div>
+    <p style="margin-top:1.5rem;color:var(--muted);font-size:0.875rem;">Windows · macOS · Linux · Chromebook · WSL2</p>
+  </div>
+
+  <!-- FOOTER -->
+  <footer>
+    <span>⭐ Galactic AI v1.4.4</span>
+    <a href="https://github.com/cmmchsvc-dev/Galactic-AI">GitHub</a>
+    <a href="https://github.com/cmmchsvc-dev/Galactic-AI/releases">Releases</a>
+    <a href="https://github.com/cmmchsvc-dev/Galactic-AI/blob/main/README.md">Docs</a>
+    <a href="https://github.com/cmmchsvc-dev/Galactic-AI/blob/main/LICENSE">MIT License</a>
+    <a href="/privacy.html">Privacy Policy</a>
+    <a href="/terms.html">Terms of Service</a>
+  </footer>
 
 </body>
+
 </html>

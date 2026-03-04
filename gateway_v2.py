@@ -4153,6 +4153,10 @@ class GalacticGateway:
             'imagen-4':       'imagen-4.0-generate-001',
             'imagen-4-ultra': 'imagen-4.0-ultra-generate-001',
             'imagen-4-fast':  'imagen-4.0-fast-generate-001',
+            # Legacy fallbacks
+            'imagen-3':       'imagen-4.0-generate-001',
+            'imagen-3-pro':   'imagen-4.0-ultra-generate-001',
+            'imagen-3-fast':  'imagen-4.0-fast-generate-001',
         }
         sdk_model = model_map.get(model, 'imagen-4.0-generate-001')
 
@@ -4199,8 +4203,18 @@ class GalacticGateway:
 
             # Deliver the first image inline via Control Deck / Telegram
             self.last_image_file = saved[0]
-            paths_str = '\n'.join(f"  {p}" for p in saved)
-            return f"✅ Imagen image(s) generated ({model}):\n{paths_str}\nPrompt: {prompt}"
+
+            # Build web-accessible URLs for embedding
+            embed_lines = []
+            for p in saved:
+                rel = os.path.relpath(p, images_dir).replace('\\', '/')
+                embed_lines.append(f"  /api/images/{rel}")
+            paths_str = '\n'.join(embed_lines)
+            return (f"✅ Imagen image generated successfully ({sdk_model}):\n{paths_str}\n"
+                    f"Prompt: {prompt}\n\n"
+                    f"IMPORTANT: Present this image to the user NOW. "
+                    f"Embed it with: ![{prompt[:60]}]({embed_lines[0].strip()})\n"
+                    f"Do NOT call any more tools. Your task is complete.")
         except ImportError:
             return "[ERROR] google-genai not installed. Run: pip install google-genai"
         except Exception as e:
