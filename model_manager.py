@@ -565,8 +565,12 @@ class ModelManager:
 
     async def auto_route(self, user_input: str):
         """
-        Temporarily switch to the best model for the detected task type.
+        Classify the task type for informational logging.
         Only active when config.models.smart_routing = true.
+        
+        IMPORTANT: This does NOT override the primary model.
+        The user's selected primary and fallback models are always respected.
+        Smart routing only logs a suggestion for debugging purposes.
         """
         if not self.core.config.get('models', {}).get('smart_routing', False):
             return  # Feature is opt-in
@@ -574,57 +578,14 @@ class ModelManager:
         task_type = self.classify_task(user_input)
         routing = self.smart_routing_table.get(task_type)
         if not routing or task_type == "default":
-            return  # No change for unclassified tasks
-
-        provider, model = routing
-
-        # For ollama: pick first discovered model
-        if provider == "ollama" and model is None:
-            ollama_mgr = getattr(self.core, 'ollama_manager', None)
-            if ollama_mgr and ollama_mgr.discovered_models:
-                model = ollama_mgr.discovered_models[0]
-            else:
-                return  # No Ollama models available, skip
-
-        # Availability guard: don't route to providers in cooldown or missing API keys
-        if not self._is_provider_available(provider):
-            await self.core.log(
-                f"Smart routing: {provider} is in cooldown, skipping route",
-                priority=3
-            )
             return
 
-        if provider != 'ollama':
-            providers_cfg = self.core.config.get('providers', {})
-            prov_cfg = providers_cfg.get(provider, {})
-            api_key = (prov_cfg.get('apiKey', '') or prov_cfg.get('api_key', '')
-                       or prov_cfg.get('apikey', ''))
-            if provider == 'nvidia' and not api_key:
-                sub_keys = prov_cfg.get('keys', {})
-                api_key = next((v for v in sub_keys.values() if v), '') if sub_keys else ''
-            if not api_key or api_key == 'NONE':
-                await self.core.log(
-                    f"Smart routing: {provider} has no API key, skipping route",
-                    priority=3
-                )
-                return
-
-        if model:
-            # Save current state so speak() can restore after the request
-            self._pre_route_state = {
-                'provider': self.core.gateway.llm.provider,
-                'model': self.core.gateway.llm.model,
-                'api_key': getattr(self.core.gateway.llm, 'api_key', 'NONE'),
-            }
-            self._routed = True
-
-            self.core.gateway.llm.provider = provider
-            self.core.gateway.llm.model = model
-            self._set_api_key(provider)
-            await self.core.log(
-                f"🎯 Smart routing: {provider}/{model} (task: {task_type})",
-                priority=3
-            )
+        provider, model = routing
+        # Log the suggestion but DO NOT switch the model
+        await self.core.log(
+            f"🎯 Smart routing hint: {provider}/{model} (task: {task_type}) — using primary model",
+            priority=4
+        )
 
     def get_status_report(self):
         """Get formatted status report."""
