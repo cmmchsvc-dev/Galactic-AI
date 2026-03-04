@@ -1129,9 +1129,18 @@ class TelegramBridge:
 
                 # Context window + % used
                 context_limit_tokens = self._get_context_limit_tokens(active_provider, active_model)
-                # Estimate tokens used from injected chars (most relevant to prompt) if present, else raw
                 basis_chars = injected_chars if isinstance(injected_chars, int) and injected_chars > 0 else (raw_chars or 0)
                 est_tokens_used = int(basis_chars / 4) if basis_chars else 0
+                
+                # Check for exact token usage from last API call
+                try:
+                    last_usage = getattr(self.core.gateway, '_last_usage', {}) or {}
+                    exact_tokens = last_usage.get('prompt_tokens', 0)
+                    if exact_tokens and exact_tokens > 0:
+                        est_tokens_used = exact_tokens
+                except Exception:
+                    pass
+
                 pct_used = None
                 if context_limit_tokens and context_limit_tokens > 0:
                     pct_used = (est_tokens_used / context_limit_tokens) * 100
@@ -1155,6 +1164,7 @@ class TelegramBridge:
                     condition = "Degraded"
 
                 if not full_mode:
+                    ctx_str = f" `{est_tokens_used:,} / {f'{context_limit_tokens:,}' if context_limit_tokens else 'Auto'} tok`"
                     lite = (
                         f"🌌 **GALACTIC AI STATUS**\n"
                         f"⏰ **Time:** `{now}` ({tz}) | 🛸 **Version:** `{version}`\n"
@@ -1163,6 +1173,7 @@ class TelegramBridge:
                         f"🔄 **Configured Mode:** `{configured_mode}` | ⚙️ **System Mode:** `{mode}`\n"
                         f"━━━━━━━━━━━━━━━━━━━━━━━━\n"
                         f"🧮 **Tokens:** `{tok_in:.1f}k in` / `{tok_out:.1f}k out`\n"
+                        f"📏 **Context:**{ctx_str}\n"
                         f"{cost_info}"
                         f"━━━━━━━━━━━━━━━━━━━━━━━━\n"
                         f"🛰️ **Uptime:** `{uptime}s` | **PID:** `{os.getpid()}`\n"

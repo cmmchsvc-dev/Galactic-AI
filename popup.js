@@ -3,11 +3,11 @@
  * Handles connection UI, passphrase hashing, and status polling.
  */
 
-const connectBtn     = document.getElementById('connect-btn');
+const connectBtn = document.getElementById('connect-btn');
 const passphraseInput = document.getElementById('passphrase');
-const statusDot      = document.getElementById('status-dot');
-const statusText     = document.getElementById('status-text');
-const chatBtn        = document.getElementById('chat-btn');
+const statusDot = document.getElementById('status-dot');
+const statusText = document.getElementById('status-text');
+const chatBtn = document.getElementById('chat-btn');
 
 let isConnected = false;
 let statusPollInterval = null;
@@ -57,6 +57,12 @@ function setConnectingUI() {
 }
 
 function setAuthFailedUI() {
+  /* If user is currently typing, don't clear the field or show the error state 
+     to avoid "Mission Impossible" race condition where input clears every 2s */
+  if (document.activeElement === passphraseInput) {
+    return;
+  }
+
   isConnected = false;
   statusDot.className = 'status-dot error';
   statusText.textContent = 'Wrong password!';
