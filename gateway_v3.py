@@ -3628,7 +3628,7 @@ class GalacticGateway:
             else:
                 self.llm.model = fast_model
                 
-            summary = await self._call_llm_resilient([{"role": "user", "content": prompt}], fallback_chain=[fast_model])
+            summary = await self._call_llm_resilient([{"role": "user", "content": prompt}])
             
             self.llm.provider = orig_p
             self.llm.model = orig_m
