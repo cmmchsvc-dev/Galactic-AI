@@ -1,12 +1,12 @@
-# Galactic AI v1.1.0 — Python Dependencies
+# Galactic AI v1.5.1 — Python Dependencies
 # Install with: pip install -r requirements.txt
 
 # ─── Core web framework & networking ─────────────────────────────────────────
-aiohttp>=3.9.0
+aiohttp>=3.10.11
 httpx[http2]>=0.27.0
-pyyaml>=6.0
+pyyaml>=6.0.1
 jinja2>=3.1.0
-requests>=2.31.0
+requests>=2.32.3
 urllib3>=2.0.0
 
 # ─── Browser & desktop automation ────────────────────────────────────────────
@@ -51,7 +51,7 @@ apscheduler>=3.10.0          # Advanced task scheduling
 
 # ─── Remote Access / Security ────────────────────────────────────────────────
 qrcode[pil]>=8.0             # QR code generation for mobile pairing
-cryptography>=42.0.0         # TLS certificate generation
+cryptography>=44.0.0         # TLS certificate generation
 
 # ─── Social Media & Messaging ────────────────────────────────────────────────
 discord.py>=2.3.0            # Discord integration (discord_bridge.py)
