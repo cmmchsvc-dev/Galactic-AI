@@ -2276,7 +2276,7 @@ class GalacticGateway:
         essential_prefixes = (
             'read_', 'write_', 'exec', 'list_', 'generate_', 'analyze_', 
             'spawn_', 'memory_', 'browser_', 'chrome_', 'wait', 'find_', 
-            'regex_', 'http_', 'image_', 'text_', 'post_'
+            'regex_', 'http_', 'image_', 'text_', 'post_', 'web_', 'open_'
         )
         
         # Filter self.tools
