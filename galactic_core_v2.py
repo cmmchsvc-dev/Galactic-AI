@@ -130,7 +130,7 @@ class GalacticCore:
     async def setup_systems(self):
         """Initialize core sub-systems."""
         from gateway_v3 import GalacticGateway
-        from memory_module_v2 import GalacticMemory
+        from galactic_memory import GalacticMemory
         from telegram_bridge import TelegramBridge
         from web_deck import GalacticWebDeck
         from scheduler import GalacticScheduler
@@ -138,6 +138,7 @@ class GalacticCore:
         
         self.memory = GalacticMemory(self)
         self.gateway = GalacticGateway(self)
+        self.gateway.galactic_memory = self.memory # Link them
         # Cost tracking (persistent JSONL)
         from gateway_v3 import CostTracker
         logs_dir = self.config.get('paths', {}).get('logs', './logs')

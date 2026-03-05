@@ -704,8 +704,10 @@ class BrowserProSkill(GalacticSkill):
             from urllib.parse import urlparse
             url = page.url
             hostname = urlparse(url).hostname or ""
-            if hostname.endswith("youtube.com") or hostname.endswith("google.com"):
-                selector = 'input[name="search_query"]' if hostname.endswith("youtube.com") else 'input[name="q"]'
+            is_youtube = hostname == "youtube.com" or hostname.endswith(".youtube.com")
+            is_google = hostname == "google.com" or hostname.endswith(".google.com")
+            if is_youtube or is_google:
+                selector = 'input[name="search_query"]' if is_youtube else 'input[name="q"]'
                 result = await self.type_text(selector, query, press_enter=True)
                 if result['status'] == 'success':
                     return f"[BROWSER] Searched for: {query}"

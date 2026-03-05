@@ -37,7 +37,7 @@ pandas>=2.0.0                # Data analysis and system tools
 pdfplumber>=0.11.0           # High-accuracy PDF extraction (gateway_v3.py)
 openpyxl>=3.1.0              # Excel file support (.xlsx)
 python-docx>=1.1.0           # Read .docx Word documents
-PyPDF2>=3.0.0                # Basic PDF support (legacy)
+pypdf>=5.0.0                 # Modern PDF support (successor to PyPDF2)
 Pillow>=10.4.0               # Image processing (analyze_image tool)
 
 # ─── Memory & ML (Core) ──────────────────────────────────────────────────────
