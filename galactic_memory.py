@@ -12,7 +12,7 @@ from pathlib import Path
 import hashlib
 import os
 
-BASE_DIR = Path(__file__).resolve().parent.parent
+BASE_DIR = Path(__file__).resolve().parent
 DB_PATH = BASE_DIR / "galactic_memory.db"
 CHROMA_PATH = BASE_DIR / "chroma_data"
 EMBEDDING_MODEL = "all-MiniLM-L6-v2" # Fast, local, lightweight (approx 80MB)
