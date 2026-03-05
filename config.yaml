@@ -5,14 +5,14 @@ system:
   heartbeat_interval: 5
   update_check_interval: 21600
 models:
-  primary_provider: google
-  primary_model: gemini-2.5-flash
+  primary_provider: ollama
+  primary_model: hf.co/unsloth/Qwen3-Coder-30B-A3B-Instruct-GGUF:Q4_K_M
   fallback_provider: google
-  fallback_model: gemini-2.5-pro
+  fallback_model: gemini-3-flash-preview
   planner_provider: google
   planner_model: gemini-3.1-pro-preview
   planner_fallback_provider: google
-  planner_fallback_model: gemini-2.5-flash
+  planner_fallback_model: gemini-3-flash-preview
   auto_fallback: true
   smart_routing: false
   streaming: true
@@ -28,7 +28,6 @@ models:
     SERVER_ERROR: 30
     TIMEOUT: 10
   max_tokens: 0
-  thinking_level: low
   nitro_only: false
 providers:
   google:
@@ -56,17 +55,17 @@ providers:
     apiKey: YOUR_NVIDIA_API_KEY
     baseUrl: https://integrate.api.nvidia.com/v1
     keys:
-      deepseek: ""
-      glm: ""
-      kimi: ""
-      qwen: ""
-      stepfun: ""
-    fluxApiKey: ""
-    fluxDevApiKey: ""
+      deepseek: YOUR_DEEPSEEK_API_KEY
+      glm: YOUR_GLM_API_KEY
+      kimi: YOUR_KIMI_API_KEY
+      qwen: YOUR_QWEN_API_KEY
+      stepfun: YOUR_STEPFUN_API_KEY
+    fluxApiKey: YOUR_FLUX_API_KEY
+    fluxDevApiKey: YOUR_FLUX_DEV_API_KEY
   ollama:
     baseUrl: http://127.0.0.1:11434/v1
   huggingface:
-    apiKey: YOUR_HF_TOKEN
+    apiKey: YOUR_HUGGINGFACE_API_KEY
 telegram:
   enabled: true
   bot_token: YOUR_TELEGRAM_BOT_TOKEN
@@ -89,16 +88,16 @@ whatsapp:
   webhook_secret: ''
 gmail:
   enabled: false
-  email: chesley@cmmchsvc.net
-  app_password: YOUR_GMAIL_APP_PASSWORD
+  email: YOUR_EMAIL
+  app_password: YOUR_APP_PASSWORD
   check_interval: 60
   notify_telegram: true
 social_media:
   twitter:
-    consumer_key: ""
-    consumer_secret: ""
-    access_token: ""
-    access_token_secret: ""
+    consumer_key: YOUR_CONSUMER_KEY
+    consumer_secret: YOUR_CONSUMER_SECRET
+    access_token: YOUR_ACCESS_TOKEN
+    access_token_secret: YOUR_ACCESS_TOKEN_SECRET
   reddit:
     client_id: ''
     client_secret: ''
@@ -110,8 +109,8 @@ web:
   host: 127.0.0.1
   port: 17789
   remote_access: false
-  jwt_secret: ""
-  password_hash: ""
+  jwt_secret: YOUR_JWT_SECRET
+  password_hash: YOUR_PASSWORD_HASH
 browser:
   engine: chromium
   headless: false
@@ -152,24 +151,12 @@ webhooks:
   secret: ''
 aliases: {}
 gateway:
-  provider: google
-  model: gemini-2.5-flash
+  provider: ollama
+  model: hf.co/unsloth/Qwen3-Coder-30B-A3B-Instruct-GGUF:Q4_K_M
 model_overrides:
   hf.co/unsloth/Qwen3-Coder-30B-A3B-Instruct-GGUF:Q4_K_M:
     max_tokens: 0
     context_window: 65536
-  hf.co/unsloth/Qwen3-Coder-30B-A3B-Instruct-GGUF:Q5_K_M:
-    max_tokens: 0
-    context_window: 32768
-  deepseek-r1:32b:
-    max_tokens: 0
-    context_window: 22768
-  hf.co/unsloth/glm-4.7-flash-GGUF:Q4_K_M:
-    max_tokens: 0
-    context_window: 32536
   qwen3.5:27b-q4_K_M:
     max_tokens: 0
-    context_window: 20768
-  lfm2:24b-a2b:
-    max_tokens: 0
-    context_window: 131072
+    context_window: 18000
