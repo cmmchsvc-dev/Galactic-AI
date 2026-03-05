@@ -715,6 +715,8 @@ async function cmdReadConsole(args) {
   /* Filter by pattern if provided */
   if (args?.pattern) {
     try {
+      // Security: Validate regex and escape if it's meant to be a literal, or just catch errors.
+      // Since this is a power-user tool, we allow the regex but catch invalid ones.
       const re = new RegExp(args.pattern, 'i');
       messages = messages.filter(m => re.test(m.text));
     } catch (_) { /* invalid regex, return all */ }

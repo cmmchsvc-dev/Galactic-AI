@@ -3,6 +3,7 @@ import json
 import hashlib
 import time
 import os
+import secrets
 from aiohttp import web
 import jinja2
 
@@ -4405,9 +4406,14 @@ try {
         """GET /api/video/{filename} — serve a generated video."""
         filename = request.match_info.get('filename', '')
         filename = os.path.basename(filename)
-        images_dir = self.core.config.get('paths', {}).get('images', './images')
+        images_dir = os.path.abspath(self.core.config.get('paths', {}).get('images', './images'))
         video_dir = os.path.join(images_dir, 'video')
-        path = os.path.join(video_dir, filename)
+        path = os.path.abspath(os.path.join(video_dir, filename))
+        
+        # Security: verify path is within video_dir
+        if not path.startswith(video_dir + os.sep) and path != video_dir:
+            return web.Response(status=403, text='Forbidden')
+            
         if not os.path.exists(path):
             return web.Response(status=404, text='Video not found')
         return web.FileResponse(path, headers={
@@ -4421,8 +4427,13 @@ try {
         filename = request.match_info.get('filename', '')
         # Security: no path traversal — basename only
         filename = os.path.basename(filename)
-        logs_dir = self.core.config.get('paths', {}).get('logs', './logs')
-        path = os.path.join(logs_dir, filename)
+        logs_dir = os.path.abspath(self.core.config.get('paths', {}).get('logs', './logs'))
+        path = os.path.abspath(os.path.join(logs_dir, filename))
+        
+        # Security: verify path is within logs_dir
+        if not path.startswith(logs_dir + os.sep) and path != logs_dir:
+            return web.Response(status=403, text='Forbidden')
+
         if not os.path.exists(path):
             return web.Response(status=404, text='Image not found')
         mime = mimetypes.guess_type(filename)[0] or 'image/jpeg'
@@ -5206,30 +5217,49 @@ try {
         password = data.get('password', '')
         if not password:
             return web.json_response({'success': False, 'error': 'No password'}, status=400)
-        h = hashlib.sha256(password.encode()).hexdigest()
 
-        # If no password_hash is set yet (or it's the default placeholder), 
-        # treat as first-run (accept any password and save it)
-        current_hash = (self.password_hash or "").strip()
-        if not current_hash or current_hash == "SHA256_HASH_OF_YOUR_PASSWORD":
+        # Hashing logic with PBKDF2
+        def _hash(pw, salt=None):
+            if salt is None: salt = secrets.token_hex(16)
+            dk = hashlib.pbkdf2_hmac('sha256', pw.encode(), salt.encode(), 100000)
+            return f"{dk.hex()}:{salt}"
+
+        current_hash_entry = (self.password_hash or "").strip()
+        
+        # 1. Handle First-Run or Placeholder
+        if not current_hash_entry or current_hash_entry == "SHA256_HASH_OF_YOUR_PASSWORD":
             await self.core.log(f"[Auth] First-run bypass: setting master password", priority=2)
-            self.password_hash = h
+            new_entry = _hash(password)
+            self.password_hash = new_entry
             cfg = self.core.config
-            if 'web' not in cfg:
-                cfg['web'] = {}
-            cfg['web']['password_hash'] = h
-            # Save to config.yaml (safe read-modify-write)
-            try:
-                self._save_config(cfg)
-            except Exception:
-                pass  # Non-fatal — hash saved in memory
-            # Return JWT if remote access is enabled, otherwise legacy hash token
-            token_resp = self._make_token_response(h)
-            token_resp['first_run'] = True
-            return web.json_response(token_resp)
+            if 'web' not in cfg: cfg['web'] = {}
+            cfg['web']['password_hash'] = new_entry
+            try: self._save_config(cfg)
+            except: pass
+            return web.json_response(self._make_token_response(new_entry))
 
-        if h == self.password_hash:
-            return web.json_response(self._make_token_response(h))
+        # 2. Verify Hashing
+        if ':' in current_hash_entry:
+            # New format: hash:salt
+            try:
+                stored_h, salt = current_hash_entry.split(':', 1)
+                dk = hashlib.pbkdf2_hmac('sha256', password.encode(), salt.encode(), 100000)
+                if secrets.compare_digest(dk.hex(), stored_h):
+                    return web.json_response(self._make_token_response(current_hash_entry))
+            except: pass
+        else:
+            # Legacy format: plain sha256
+            legacy_h = hashlib.sha256(password.encode()).hexdigest()
+            if secrets.compare_digest(legacy_h, current_hash_entry):
+                # auto-upgrade to new format
+                new_entry = _hash(password)
+                self.password_hash = new_entry
+                cfg = self.core.config
+                if 'web' in cfg: cfg['web']['password_hash'] = new_entry
+                try: self._save_config(cfg)
+                except: pass
+                return web.json_response(self._make_token_response(new_entry))
+
         return web.json_response({'success': False, 'error': 'Invalid passphrase'}, status=401)
 
     def _make_token_response(self, password_hash):
@@ -5252,7 +5282,12 @@ try {
         # Password
         pw = data.get('password', '')
         if pw:
-            h = hashlib.sha256(pw.encode()).hexdigest()
+            def _hash(pw, salt=None):
+                if salt is None: salt = secrets.token_hex(16)
+                dk = hashlib.pbkdf2_hmac('sha256', pw.encode(), salt.encode(), 100000)
+                return f"{dk.hex()}:{salt}"
+            
+            h = _hash(pw)
             if 'web' not in cfg:
                 cfg['web'] = {}
             cfg['web']['password_hash'] = h
@@ -5436,10 +5471,19 @@ try {
             if fname not in allowed:
                 failed.append(fname + ' (not allowed)')
                 continue
-            src = openclaw_workspace / fname
-            dst = dest_dir / fname
+            src = os.path.abspath(openclaw_workspace / fname)
+            dst = os.path.abspath(dest_dir / fname)
+            
+            # Security: verify source is within openclaw_workspace and dest is within dest_dir
+            if not src.startswith(str(openclaw_workspace) + os.sep):
+                failed.append(f"{fname} (source outside workspace)")
+                continue
+            if not dst.startswith(str(dest_dir) + os.sep):
+                failed.append(f"{fname} (destination outside workspace)")
+                continue
+
             try:
-                shutil.copy2(str(src), str(dst))
+                shutil.copy2(src, dst)
                 imported.append(fname)
                 await self.core.log(f"Migrated from OpenClaw: {fname}", priority=2)
             except Exception as e:
@@ -5983,8 +6027,12 @@ try {
                         pass
 
             files = []
+            workspace_abs = os.path.abspath(workspace)
             for f in ['MEMORY.md', 'USER.md', 'SOUL.md', 'IDENTITY.md', 'TOOLS.md', 'VAULT.md', 'HEARTBEAT.md']:
-                path = os.path.join(workspace, f)
+                path = os.path.abspath(os.path.join(workspace_abs, f))
+                # Security: verify path is within workspace
+                if not path.startswith(workspace_abs + os.sep) and path != workspace_abs:
+                    continue
                 if os.path.exists(path):
                     files.append({'name': f, 'size': os.path.getsize(path)})
             return web.json_response({'files': files})

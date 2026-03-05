@@ -776,7 +776,8 @@
 
       if (!el) {
         /* WIKIPEDIA SPECIFIC: Fallback for search bar */
-        const isWiki = window.location.hostname.includes('wikipedia.org');
+        const host = window.location.hostname;
+        const isWiki = host === 'wikipedia.org' || host.endsWith('.wikipedia.org');
         if (isWiki) {
           el = document.querySelector('input[name="search"], input#searchInput, .cdx-text-input__input, input.mw-ui-background-icon-search');
         }
@@ -921,9 +922,15 @@
       }
 
       const text = args?.text || '';
+      const secureRandom = () => {
+        const arr = new Uint32Array(1);
+        crypto.getRandomValues(arr);
+        return arr[0] / 0xFFFFFFFF;
+      };
+
       for (const char of text) {
         // Organic Jitter: 40ms - 110ms
-        const jitter = 40 + Math.random() * 70;
+        const jitter = 40 + secureRandom() * 70;
 
         // Full keyboard event suite for EVERY character to feel "organic"
         const eventInit = {
@@ -1607,9 +1614,10 @@
         const el = getElementByRef(args.ref);
         if (!el) return { error: `Ref not found: ${args.ref} ` };
         /* Generate a unique attribute-based selector by temporarily tagging the element */
-        const uid = `gal_${Date.now()}_${Math.random().toString(36).slice(2, 7)} `;
+        const randomHex = Array.from(crypto.getRandomValues(new Uint8Array(4))).map(b => b.toString(16).padStart(2, '0')).join('');
+        const uid = `gal_${Date.now()}_${randomHex}`;
         el.setAttribute('data-galactic-uid', uid);
-        return { status: 'success', selector: `[data - galactic - uid= "${uid}"]` };
+        return { status: 'success', selector: `[data-galactic-uid="${uid}"]` };
       default: return { error: `Unknown content command: ${command} ` };
     }
   }
