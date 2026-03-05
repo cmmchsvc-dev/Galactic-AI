@@ -1481,6 +1481,98 @@
     });
   }
 
+  /* ─── Bulk Form Fill ────────────────────────────────────────────────── */
+
+  async function performFillForm(args) {
+    if (!args || typeof args !== 'object') return { error: 'Invalid arguments for fill_form' };
+
+    // args should ideally be { fields: { "ref_1": "value", "#email": "my@email.com" } }
+    // fallback to just using args directly if no fields property exists.
+    const fields = args.fields || args;
+    const results = [];
+    const errors = [];
+
+    showStatusPill('Filling Form...');
+
+    for (const [key, value] of Object.entries(fields)) {
+      if (key === 'fields') continue; // skip if wrapper
+
+      let el = null;
+      if (key.startsWith('ref_')) {
+        el = getElementByRef(key);
+      }
+      if (!el) {
+        try { el = document.querySelector(key); } catch (e) { }
+      }
+
+      if (!el) {
+        errors.push(`Element not found for key: ${key}`);
+        continue;
+      }
+
+      // Use existing performFormInput logic which correctly handles selects/radios/checkboxes/text
+      const res = performFormInput({ selector: key, value: value });
+      if (res.error) {
+        // Fallback if the key was a ref but performFormInput expects the ref object specifically
+        const fallbackRes = performFormInput({ ref: key.startsWith('ref_') ? key : null, selector: key, value: value });
+        if (fallbackRes.error) errors.push(`Error filling ${key}: ${fallbackRes.error}`);
+        else results.push(`Filled ${key}`);
+      } else {
+        results.push(`Filled ${key}`);
+      }
+
+      // Small stagger to let SPA frameworks react to the input events emitted by performFormInput
+      await new Promise(r => setTimeout(r, 50));
+    }
+
+    hideStatusPill();
+
+    if (errors.length > 0 && results.length === 0) {
+      return { error: 'Failed to fill any fields', details: errors };
+    }
+
+    return {
+      status: 'success',
+      message: `Successfully filled ${results.length} fields. ${errors.length > 0 ? '(' + errors.length + ' errors)' : ''}`,
+      details: errors
+    };
+  }
+
+
+
+  /* ─── Extract Element ───────────────────────────────────────────────── */
+
+  function performExtractElement(args) {
+    let el = null;
+    if (args?.ref) {
+      el = getElementByRef(args.ref);
+    } else if (args?.selector) {
+      el = document.querySelector(args.selector);
+    }
+
+    if (!el) return { error: 'Element not found' };
+
+    const rect = el.getBoundingClientRect();
+    const attrs = {};
+    for (const attr of el.attributes) {
+      attrs[attr.name] = attr.value;
+    }
+
+    return {
+      status: 'success',
+      element: {
+        tagName: el.tagName.toLowerCase(),
+        id: el.id || undefined,
+        className: el.className || undefined,
+        innerText: el.innerText || undefined,
+        innerHTML: Object.keys(attrs).length > 20 ? undefined : el.innerHTML, // limit huge dumps
+        value: el.value !== undefined ? el.value : undefined,
+        attributes: attrs,
+        rect: rect.toJSON()
+      }
+    };
+  }
+
   /* ─── Command Dispatcher ────────────────────────────────────────────── */
 
   async function handleCommand(command, args) {
@@ -1493,6 +1585,7 @@
       case 'click': return await performClick(args);
       case 'type':
       case 'type_text': return await performType(args);
+      case 'fill_form': return await performFillForm(args);
       case 'scroll':
       case 'scroll_page': return await performScroll(args);
       case 'form_input': return performFormInput(args);
@@ -1503,6 +1596,7 @@
       case 'triple_click': return performTripleClick(args);
       case 'get_text':
       case 'get_page_text': return getPageText();
+      case 'extract_element': return performExtractElement(args);
       case 'get_dom': return getPageDom();
       case 'show_status': return showStatusPill(args?.text || 'Working...');
       case 'hide_status':
