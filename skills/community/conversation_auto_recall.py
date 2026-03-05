@@ -64,6 +64,7 @@ class ConversationAutoRecallSkill(GalacticSkill):
 
         self._orig_speak = None
         self._patched = False
+        self.galactic_memory = None
 
     async def on_load(self):
         self._install_patch()
@@ -260,11 +261,41 @@ class ConversationAutoRecallSkill(GalacticSkill):
         if not keywords:
             return ""
 
-        # Decide scan depth
+        matches: List[_Match] = []
+
+        # 4) Vector Memory (ChromaDB auto-compacted summaries)
+        if self.galactic_memory is None:
+            try:
+                from galactic_memory import GalacticMemory
+                self.galactic_memory = GalacticMemory()
+            except ImportError: pass
+            except Exception: pass
+
+        if self.galactic_memory:
+            try:
+                queries = [user_input]
+                # Combine a few keywords for a broader vector search if needed
+                if len(keywords) > 2:
+                    queries.append(" ".join(keywords[:5]))
+                
+                for q in queries:
+                    results = self.galactic_memory.query_memory(q, n_results=3)
+                    for res in results:
+                        content = res.get('content', '')
+                        if not content: continue
+                        matches.append(_Match(
+                            ts="ARCHIVED",
+                            role="system",
+                            source="vector_db",
+                            content=content,
+                            path="chromadb",
+                            score=12, # Higher base score for dense summaries
+                        ))
+            except Exception: pass
+
+        # Decide scan depth (for filesystem logs)
         t = user_input.lower()
         deep = any(x in t for x in ["previous session", "last session", "last time", "earlier", "before", "yesterday"]) 
-
-        matches: List[_Match] = []
 
         # 1) Hot buffer (fast)
         for e in reversed(self._load_hot_messages()):

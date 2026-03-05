@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "Galactic Browser",
-  "version": "1.4.4",
+  "version": "1.5.1",
   "description": "Connect your Chrome browser to Galactic AI for real-browser automation",
   "permissions": [
     "activeTab",

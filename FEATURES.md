@@ -1,6 +1,6 @@
 # Galactic AI — Feature Reference
 
-Complete feature reference for Galactic AI Automation Suite **v1.3.0**.
+Complete feature reference for Galactic AI Automation Suite **v1.5.1**.
 
 ---
 
@@ -134,22 +134,23 @@ MEMORY.md is loaded once at startup. There is no per-message search, no embeddin
 
 ---
 
-### Restart Resilience (Conversation Recall)
-Two community skills reduce "amnesia" after restarts without running heavy retrieval on every message:
+### Restart Resilience (Auto-Compaction & Recall)
+Two community skills and a core gateway monitor reduce "amnesia" while keeping costs low:
+
+- **Auto-Compacting Gateway** — `gateway_v3.py`
+  - Automatically summarizes oldest history blocks when context limits (80-90%) are reached.
+  - Archives summaries to ChromaDB Vector Memory.
+  - Manual commands: `/context` (usage info), `/compact` (force compression), `/clear` (wipe session).
 
 - **Auto-Recall Injection** — `skills/community/conversation_auto_recall.py`
   - Runtime-patches `GalacticGateway.speak()`.
   - Triggers when the user asks remember/earlier/last time questions.
+  - Queries both the **Hot Buffer** and **ChromaDB Vector Memory**.
   - Tool: `conversation_auto_recall_status`
-
-- **Boot Recall Banner** — `skills/community/boot_recall_banner.py`
-  - Prints the last N hot-buffer messages at boot and writes: `logs/conversations/boot_recall_banner.txt`
-  - Config: `conversation.boot_recall_messages: 10`
-  - Tool: `boot_recall_show`
 
 ---
 
-## Agentic Code Intelligence (v1.3.0)
+## Agentic Code Intelligence (v1.5.1)
 
 ### Deep Codebase Research
 Galactic AI now possesses "eyes" for complex codebases. Instead of reading files one-by-one, it can use surgical search tools:
