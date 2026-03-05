@@ -134,13 +134,23 @@ class ChromeBridgeSkill(GalacticSkill):
                 "fn": self._tool_chrome_scroll
             },
             "chrome_form_input": {
-                "description": "Set the value of a form element (input, select, checkbox) in the user's Chrome browser.",
+                "description": "Set the value of a single form element (input, select, checkbox) in the user's Chrome browser.",
                 "parameters": {"type": "object", "properties": {
                     "ref": {"type": "string", "description": "Element ref ID"},
                     "selector": {"type": "string", "description": "CSS selector"},
                     "value": {"type": "string", "description": "Value to set"},
                 }, "required": ["value"]},
                 "fn": self._tool_chrome_form_input
+            },
+            "chrome_fill_form": {
+                "description": "Rapidly fill multiple form fields at once by passing a dictionary of selectors or ref IDs mapped to values. Use this over chrome_form_input when filling out more than 1 field on the same page.",
+                "parameters": {"type": "object", "properties": {
+                    "fields": {
+                        "type": "object",
+                        "description": "A dictionary where keys are ref IDs (e.g. 'ref_1') or CSS selectors (e.g. '#email'), and values are the text/boolean to input."
+                    }
+                }, "required": ["fields"]},
+                "fn": self._tool_chrome_fill_form
             },
             "chrome_execute_js": {
                 "description": "Execute JavaScript code in the user's Chrome browser tab. Returns the result of the last expression.",
@@ -153,6 +163,14 @@ class ChromeBridgeSkill(GalacticSkill):
                 "description": "Extract all text content from the current page in the user's Chrome browser.",
                 "parameters": {"type": "object", "properties": {}},
                 "fn": self._tool_chrome_get_text
+            },
+            "chrome_extract_element": {
+                "description": "Surgically extract the attributes (e.g., href, src), HTML, and text from a single element using its ref or selector. Great for reading specific link URLs or image sources without a full snapshot.",
+                "parameters": {"type": "object", "properties": {
+                    "ref": {"type": "string", "description": "Element ref ID"},
+                    "selector": {"type": "string", "description": "CSS selector"},
+                }},
+                "fn": self._tool_chrome_extract_element
             },
             "chrome_tabs_list": {
                 "description": "List all open tabs in the user's Chrome browser.",
@@ -282,6 +300,17 @@ class ChromeBridgeSkill(GalacticSkill):
                 },
                 "required": ["seconds"],
                 "fn": self._tool_chrome_wait
+            },
+            "chrome_dialog_response": {
+                "description": "Accept or dismiss an active JavaScript dialog (alert, confirm, prompt) in the current tab. Specify promptText if it's a prompt dialog.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "accept": {"type": "boolean", "description": "True to accept/OK, false to dismiss/Cancel. Default true."},
+                        "promptText": {"type": "string", "description": "Text to enter if it is a prompt dialog."}
+                    }
+                },
+                "fn": self._tool_chrome_dialog_response
             },
             "chrome_gif_start": {
                 "description": "Start recording the browser as an animated GIF. Captures screenshots at the specified frame rate. Call chrome_gif_stop when done, then chrome_gif_export to save.",
@@ -603,6 +632,21 @@ class ChromeBridgeSkill(GalacticSkill):
             return f"[CHROME] Form value set"
         return f"[ERROR] Chrome form_input: {result.get('error') or result.get('message') or 'unknown error'}"
 
+    async def _tool_chrome_fill_form(self, args):
+        if not self.ws_connection: return "[ERROR] Chrome extension not connected."
+
+        err = await self._check_self_interaction()
+        if err: return err
+
+        fields = args.get('fields', {})
+        if not fields:
+            return "[ERROR] Chrome fill_form: no fields provided"
+            
+        result = await self.send_command("fill_form", {"fields": fields})
+        if result.get('status') == 'success':
+            return f"[CHROME] Form bulk filled:\n{result.get('message')}"
+        return f"[ERROR] Chrome fill_form: {result.get('error') or result.get('message') or 'unknown error'}"
+
     async def _tool_chrome_execute_js(self, args):
         if not self.ws_connection: return "[ERROR] Chrome extension not connected."
 
@@ -621,6 +665,19 @@ class ChromeBridgeSkill(GalacticSkill):
             text = result.get('text', '')
             return f"[CHROME] Page text ({len(text)} chars):\n{text[:5000]}"
         return f"[ERROR] Chrome get_text: {result.get('error') or result.get('message') or 'unknown error'}"
+        
+    async def _tool_chrome_extract_element(self, args):
+        if not self.ws_connection: return "[ERROR] Chrome extension not connected."
+        
+        # Don't check for self-interaction here, it's just a read operation
+        
+        result = await self.send_command("extract_element", {
+            "ref": args.get('ref'), "selector": args.get('selector')
+        })
+        if result.get('status') == 'success':
+            el = result.get('element', {})
+            return f"[CHROME] Element Extraction:\n{json.dumps(el, indent=2)}"
+        return f"[ERROR] Chrome extract_element: {result.get('error') or result.get('message') or 'unknown error'}"
 
     async def _tool_chrome_tabs_list(self, args):
         if not self.ws_connection: return "[ERROR] Chrome extension not connected."
@@ -666,6 +723,20 @@ class ChromeBridgeSkill(GalacticSkill):
         if result.get('status') == 'success':
             return f"[CHROME] Key pressed: {args.get('key')}"
         return f"[ERROR] Chrome key_press: {result.get('error') or result.get('message') or 'unknown error'}"
+        
+    async def _tool_chrome_dialog_response(self, args):
+        if not self.ws_connection: return "[ERROR] Chrome extension not connected."
+        
+        err = await self._check_self_interaction()
+        if err: return err
+        
+        result = await self.send_command("dialog_response", args)
+        if result.get("status") == "success":
+            note = result.get("note", "")
+            if note:
+                return f"[CHROME] {note}"
+            return f"[CHROME] Dialog {result.get('action', 'handled')}."
+        return f"[ERROR] Chrome dialog_response: {result.get('error') or result.get('message') or 'unknown'}"
 
     async def _tool_chrome_read_console(self, args):
         if not self.ws_connection: return "[ERROR] Chrome extension not connected."
