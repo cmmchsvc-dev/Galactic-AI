@@ -15,6 +15,7 @@ All notable changes to Galactic AI are documented here.
     *   Fixed "over-aggressive" compaction where the AI would forget its immediate previous actions.
     *   Implemented **Provider-Aware Context Windows** (e.g., 1M tokens for Gemini vs 32k for local Ollama).
     *   Excluded the System Prompt (and its 20k+ chars of tool schemas) from the compaction budget to preserve conversation space.
+    *   Fixed `galactic_memory.db` and `chroma_data` path calculation (no longer writes to your home folder).
 *   🐛 **Bug Fix**: Resolved an initialization race condition in the `ConversationAutoRecallSkill`.
 
 ## v1.4.8 — Unified Security Protocol (2026-03-04)
