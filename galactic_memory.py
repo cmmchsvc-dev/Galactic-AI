@@ -18,21 +18,51 @@ CHROMA_PATH = BASE_DIR / "chroma_data"
 EMBEDDING_MODEL = "all-MiniLM-L6-v2" # Fast, local, lightweight (approx 80MB)
 
 class GalacticMemory:
-    def __init__(self):
+    def __init__(self, core=None):
+        self.core = core
         # 1. Init SQLite (Episodic - Exact Records)
-        self.conn = sqlite3.connect(str(DB_PATH))
+        # Use config paths if available
+        if core and hasattr(core, 'config'):
+            logs_dir = core.config.get('paths', {}).get('logs', './logs')
+            self.db_path = Path(logs_dir).resolve() / "galactic_memory.db"
+            self.chroma_path = Path(logs_dir).resolve() / "chroma_data"
+        else:
+            self.db_path = DB_PATH
+            self.chroma_path = CHROMA_PATH
+
+        self.conn = sqlite3.connect(str(self.db_path))
         self._init_sql()
         
         # 2. Init ChromaDB (Semantic - Meaning & Context)
-        # Runs in persistent mode on disk, so data survives restarts
-        self.client = chromadb.PersistentClient(path=str(CHROMA_PATH))
+        self.client = chromadb.PersistentClient(path=str(self.chroma_path))
         self.collection = self.client.get_or_create_collection(
             name="galactic_context",
             metadata={"hnsw:space": "cosine"}
         )
         
-        # 3. Init Embedding Model (Lazy load to save startup time)
+        # 3. Init Embedding Model (Lazy load)
         self._model = None
+
+    async def imprint(self, content, metadata=None):
+        """Compatibility wrapper for 'imprint' (calls save_memory)."""
+        category = (metadata or {}).get("category", "general")
+        return self.save_memory(content, category=category, metadata=metadata)
+
+    async def imprint_file(self, file_path):
+        """Imprint an entire file into memory."""
+        p = Path(file_path)
+        if not p.exists():
+            return
+        try:
+            content = p.read_text(encoding='utf-8', errors='ignore')
+            await self.imprint(content, {"source": p.name, "path": str(p), "category": "file_imprint"})
+        except Exception as e:
+            if self.core:
+                await self.core.log(f"Imprint failed for {file_path}: {e}")
+
+    async def recall(self, query, top_k=5):
+        """Compatibility wrapper for 'recall' (calls query_memory)."""
+        return self.query_memory(query, n_results=top_k)
 
     @property
     def model(self):
