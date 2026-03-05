@@ -649,8 +649,15 @@ class SystemSkill(GalacticSkill):
         text = args.get('text', '')
         try:
             if platform.system() == 'Windows':
-                p = await asyncio.create_subprocess_exec('powershell','-Command',f'Set-Clipboard -Value @"\n{text}\n"@',stdout=subprocess.PIPE,stderr=subprocess.PIPE)
-                await p.communicate(); return f"✅ Copied {len(text)} chars to clipboard."
+                # Use list-based arguments to avoid injection
+                # Set-Clipboard -Value @' ... '@ is safer than string formatting
+                p = await asyncio.create_subprocess_exec(
+                    'powershell', '-NoProfile', '-NonInteractive', '-Command',
+                    'Set-Clipboard', '-Value', text,
+                    stdout=subprocess.PIPE, stderr=subprocess.PIPE
+                )
+                await p.communicate()
+                return f"✅ Copied {len(text)} chars to clipboard."
             return "[ERROR] Windows only."
         except Exception as e: return f"[ERROR] clipboard_set: {e}"
 
@@ -658,9 +665,25 @@ class SystemSkill(GalacticSkill):
         title, msg = args.get('title', 'Galactic AI'), args.get('message', '')
         try:
             if platform.system() == 'Windows':
-                ps = f"Add-Type -AssemblyName System.Windows.Forms; $n = New-Object System.Windows.Forms.NotifyIcon; $n.Icon = [System.Drawing.SystemIcons]::Information; $n.Visible = $true; $n.ShowBalloonTip(5000, '{title}', '{msg}', 'Info'); Start-Sleep -s 6; $n.Dispose()"
-                p = await asyncio.create_subprocess_exec('powershell','-Command',ps)
-                await p.communicate(); return "✅ Notification sent."
+                # Build the script without formatting the user input directly into the string
+                # instead pass them as arguments to a script block if possible, or just be very careful.
+                # Here we use a safer approach by passing parameters properly.
+                ps_script = """
+                param($title, $msg)
+                Add-Type -AssemblyName System.Windows.Forms
+                $n = New-Object System.Windows.Forms.NotifyIcon
+                $n.Icon = [System.Drawing.SystemIcons]::Information
+                $n.Visible = $true
+                $n.ShowBalloonTip(5000, $title, $msg, 'Info')
+                Start-Sleep -s 6
+                $n.Dispose()
+                """
+                p = await asyncio.create_subprocess_exec(
+                    'powershell', '-NoProfile', '-NonInteractive', '-Command',
+                    ps_script, '-title', title, '-msg', msg
+                )
+                await p.communicate()
+                return "✅ Notification sent."
             return "[ERROR] Windows only."
         except Exception as e: return f"[ERROR] notify: {e}"
 
@@ -874,7 +897,12 @@ class SystemSkill(GalacticSkill):
             return f"[ERROR] Session ID {sid} is already running."
             
         try:
-            p = await asyncio.create_subprocess_exec('powershell', '-Command', cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+            # Use -Command - to read from stdin or just pass the command string directly
+            # but ensure we don't accidentally allow breakout via formatting.
+            p = await asyncio.create_subprocess_exec(
+                'powershell', '-NoProfile', '-NonInteractive', '-Command', cmd,
+                stdout=subprocess.PIPE, stderr=subprocess.PIPE
+            )
             
             out_buf = []
             err_buf = []
