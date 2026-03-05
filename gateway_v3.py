@@ -454,6 +454,18 @@ class GalacticGateway:
                 },
                 "fn": self.tool_web_search
             },
+            "web_fetch": {
+                "description": "Fetch and extract readable content from a URL. Returns markdown-formatted text by default.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "url": {"type": "string", "description": "The URL to fetch."},
+                        "mode": {"type": "string", "description": "Extraction mode: 'markdown' (default) or 'text'."}
+                    },
+                    "required": ["url"]
+                },
+                "fn": self.tool_web_fetch
+            },
             "edit_file": {
                 "description": "Edit a file by replacing exact text (safer than write_file).",
                 "parameters": {
@@ -3576,6 +3588,7 @@ class GalacticGateway:
         """
         Claude-style auto-compaction. Summarizes the oldest block of messages, 
         stores the summary in ChromaDB, and replaces the block in the active list.
+        Improved to handle recursive folding and aggressive character reduction.
         """
         if len(messages) <= 4:
             return messages
@@ -3584,20 +3597,40 @@ class GalacticGateway:
         sys_msg = messages[0] if messages[0].get('role') == 'system' else None
         start_idx = 1 if sys_msg else 0
 
-        # Preserve the most recent 4 messages 
-        keep_tail = max(2, min(4, len(messages) - start_idx - 1))
+        # Aggressive Bite: Summarize up to 50% of the history if it's large,
+        # but always preserve at least 4 recent interactions for standard context.
+        keep_tail = max(4, min(10, len(messages) // 4)) 
         
+        # Identify the block to condense
         condense_block = messages[start_idx : -keep_tail]
         kept_tail = messages[-keep_tail:]
 
         if not condense_block:
             return messages
 
-        # Build raw text string of the old conversation
+        # Recursive Folding: Combine text and existing summaries
+        # Image Pruning: Strip heavy vision payloads during summarization
         old_text = ""
         for m in condense_block:
             role_str = m.get('role', 'unknown').upper()
-            content_str = str(m.get('content', ''))
+            content = m.get('content', '')
+            
+            # Handle multi-modal content
+            if isinstance(content, list):
+                # Strip images to avoid blowing out summarizer context
+                content_str = ""
+                for part in content:
+                    if part.get('type') == 'text':
+                        content_str += part.get('text', '')
+                    elif part.get('type') == 'image_url':
+                        content_str += " [Image data removed for summarization] "
+            else:
+                content_str = str(content)
+                
+            # Detect existing summaries to signal the LLM to 'fold' them
+            if "[SYSTEM NOTE: The following is a condensed summary" in content_str:
+                role_str = "PRIOR SUMMARY"
+                
             old_text += f"[{role_str}]: {content_str}\n\n"
 
         # Initialize galactic_memory if needed
@@ -3607,22 +3640,23 @@ class GalacticGateway:
             except Exception as e:
                 await self.core.log(f"[Memory] Failed to load GalacticMemory: {e}", priority=1)
 
-        if len(old_text) > 80000:
-            old_text = old_text[-80000:]
+        # Truncate raw text if it's absurdly large (safety limit)
+        if len(old_text) > 120000:
+            old_text = old_text[-120000:]
 
         try:
-            fast_model = self.core.config.get('models', {}).get('planner_fallback_model', 'gemini-2.5-flash')
+            fast_model = self.core.config.get('models', {}).get('planner_fallback_model', 'gemini-2.0-flash-preview')
             prompt = (
                 "You are an AI core memory process. Summarize the following conversation block densely and accurately. "
-                "Retain factual details, technical context, errors, and conclusions. Do not roleplay. "
-                "Keep it to one or two paragraphs maximum. \n\nCONVERSATION:\n" + old_text
+                "Retain factual details, technical context, tool results, errors, and conclusions. Do not roleplay. "
+                "Combine any 'PRIOR SUMMARY' blocks into the new narrative seamlessly. "
+                "Keep it to two or three paragraphs maximum. \n\nCONVERSATION:\n" + old_text
             )
             
             # Temporary LLM override for summarization
             orig_p = self.llm.provider
             orig_m = self.llm.model
             
-            # Basic map for fast_model (assuming google/ openrouter/)
             if "/" in fast_model:
                 self.llm.provider, self.llm.model = fast_model.split("/", 1)
             else:
@@ -3635,8 +3669,8 @@ class GalacticGateway:
 
             summary = str(summary).strip()
             if not summary or "[ERROR]" in summary:
-                # If summarization failed, just do standard truncation
-                removed = messages.pop(start_idx)
+                # If summarization failed, pop the oldest message to ensure progress
+                messages.pop(start_idx)
                 return messages
 
             # Inject into Vector DB
@@ -3649,23 +3683,22 @@ class GalacticGateway:
                 except Exception as e:
                     await self.core.log(f"[Memory] Failed to save compaction to Vector DB: {e}", priority=1)
 
-            # Replace block with summary
-            if sys_msg:
-                new_messages = [sys_msg]
-            else:
-                new_messages = []
-                
+            # Reconstruct history
+            new_messages = [sys_msg] if sys_msg else []
             new_messages.append({
                 "role": "system",
                 "content": f"[SYSTEM NOTE: The following is a condensed summary of earlier context. Full details were saved to Galactic Memory.]\n\n{summary}"
             })
             new_messages.extend(kept_tail)
             
-            await self.core.log(f"🧹 Context Auto-Compacted: Saved {len(old_text)} chars into Vector DB.", priority=2)
+            # Log the efficiency
+            reduction = ((len(old_text) - len(summary)) / max(1, len(old_text))) * 100
+            await self.core.log(f"🧹 Context Auto-Compacted: {len(old_text)} -> {len(summary)} chars ({reduction:.1f}% reduction).", priority=2)
             
             return new_messages
         except Exception as e:
             await self.core.log(f"[Memory] Compaction failed: {e}", priority=1)
+            # Failsafe: Truncate the oldest message if we can't summarize
             messages.pop(start_idx)
             return messages
 
@@ -3709,10 +3742,29 @@ class GalacticGateway:
                     m["content"] = (m.get("content") or "") + "\n[Previous Image Pruning: Base64 removed to save memory]"
         
         # 4. Trim from the oldest non-system messages using auto-compaction
-        total_chars = sum(len(str(m.get('content', ''))) for m in messages)
-        while total_chars > char_limit and len(messages) > 4:
+        # IMPORTANT: Exclude the system prompt from the char count.
+        # The system prompt (with tool schemas) is a fixed overhead; counting
+        # it against the budget causes aggressive compaction on every turn.
+        total_chars = sum(len(str(m.get('content', ''))) for m in messages if m.get('role') != 'system')
+        attempts = 0
+        while total_chars > char_limit and len(messages) > 4 and attempts < 3:
+            before_chars = total_chars
             messages = await self._compact_history(messages, char_limit)
-            total_chars = sum(len(str(m.get('content', ''))) for m in messages)
+            total_chars = sum(len(str(m.get('content', ''))) for m in messages if m.get('role') != 'system')
+            attempts += 1
+            
+            # Reduction check: if we aren't making meaningful progress (>5%), break to failsafe
+            if (before_chars - total_chars) / max(1, before_chars) < 0.05:
+                # await self.core.log(f"[Memory] Compaction stalling (reduction < 5%). Falling back to hard truncation.", priority=2)
+                break
+        
+        # 5. HARD TRUNCATION FAILSAFE
+        # If we are STILL over limit or attempts exhausted, pop from front
+        while total_chars > char_limit and len(messages) > 4:
+            # Skip system prompt at index 0
+            idx = 1 if (messages[0].get('role') == 'system') else 0
+            removed = messages.pop(idx)
+            total_chars = sum(len(str(m.get('content', ''))) for m in messages if m.get('role') != 'system')
             
         return messages
 
@@ -4093,7 +4145,7 @@ class GalacticGateway:
         return val if val > 0 else default
 
     def _get_context_window_for_model(self, default=None):
-        """Return context_window: per-model override first, then global config, then default."""
+        """Return context_window: per-model override first, then global config, then provider-aware default."""
         per_model = self._get_model_override('context_window')
         if per_model:
             return per_model
@@ -4102,7 +4154,22 @@ class GalacticGateway:
             val = int(val)
         except (TypeError, ValueError):
             val = 0
-        return val if val > 0 else default
+        if val > 0:
+            return val
+        # Provider-aware defaults: cloud APIs have much larger windows than local models
+        provider = getattr(self.llm, 'provider', '') if hasattr(self, 'llm') else ''
+        provider_defaults = {
+            'google': 1000000,      # Gemini models: 1M+ tokens
+            'anthropic': 200000,    # Claude models: 200k tokens
+            'openrouter': 128000,   # Varies, safe default
+            'openai': 128000,       # GPT-4o: 128k tokens
+            'deepseek': 64000,      # DeepSeek: 64k tokens
+            'xai': 128000,          # Grok: 128k tokens
+            'groq': 32768,          # Groq: varies by model
+            'nvidia': 32768,        # NVIDIA NIM: varies
+            'ollama': 32768,        # Local: use per-model override instead
+        }
+        return provider_defaults.get(provider, default or 32768)
 
     async def _call_openai_compatible(self, prompt, context):
         """OpenAI-compatible API call (NVIDIA, XAI, Ollama). All URLs are config-driven."""

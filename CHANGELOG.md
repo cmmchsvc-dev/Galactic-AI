@@ -6,10 +6,15 @@ All notable changes to Galactic AI are documented here.
 
 ## v1.5.1 — The Memory Compaction Update (2026-03-05)
 
-*   🧠 **Auto-Compaction**: The gateway now automatically summarizes long conversation history using **Gemini 2.5 Flash** when context limits are reached.
+*   🧠 **Auto-Compaction**: The gateway now automatically summarizes long conversation history using **Gemini 2.0 Flash** (or fallback) when context limits are reached.
+*   🧠 **Recursive Folding**: Old summaries are now folded into new ones, preventing "context debt" and keeping history truly compact.
 *   🧠 **Semantic Recall**: Archived summaries are stored in **ChromaDB** and can be retrieved semantically by the AI when relevant to the current conversation.
 *   💬 **Context Commands**: Added `/context` (view usage), `/compact` (manual summary), and `/clear` (wipe session) to the chat interface.
-*   🚀 **Performance**: Unified background planning and summarization tasks to use the highly efficient **Gemini 2.5 Flash** model.
+*   🚀 **Reliability Fixes**: 
+    *   Fixed an infinite loop hang in `_trim_messages` by implementing a 3-iteration limit and "Hard Truncation" failsafe.
+    *   Fixed "over-aggressive" compaction where the AI would forget its immediate previous actions.
+    *   Implemented **Provider-Aware Context Windows** (e.g., 1M tokens for Gemini vs 32k for local Ollama).
+    *   Excluded the System Prompt (and its 20k+ chars of tool schemas) from the compaction budget to preserve conversation space.
 *   🐛 **Bug Fix**: Resolved an initialization race condition in the `ConversationAutoRecallSkill`.
 
 ## v1.4.8 — Unified Security Protocol (2026-03-04)

@@ -170,6 +170,9 @@ def scrub_config():
         return
 
     print("Scrubbing API keys from config.yaml...")
+    if os.path.abspath(config_path) == os.path.abspath(os.path.join(ROOT_DIR, "config.yaml")):
+        print("  Error: Scrub path identified as ROOT config! Aborting scrub for safety.")
+        return
     try:
         with open(config_path, 'r', encoding='utf-8') as f:
             config = yaml.safe_load(f)
