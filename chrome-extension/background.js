@@ -183,12 +183,15 @@ async function handleCommand(id, command, args) {
     case 'click': return await cmdClick(args);
     case 'type':
     case 'type_text': return await cmdType(args);
+    case 'fill_form': return await cmdFillForm(args);
     case 'scroll':
     case 'scroll_page': return await cmdScroll(args);
     case 'form_input': return await cmdFormInput(args);
+    case 'dialog_response': return await cmdDialogResponse(args);
     case 'execute_js': return await cmdExecuteJS(args);
     case 'get_page_text':
     case 'get_text': return await cmdGetPageText(args);
+    case 'extract_element': return await cmdExtractElement(args);
     case 'get_dom': return await cmdGetDom(args);
     case 'show_status': return await cmdShowStatus(args);
     case 'hide_status': return await cmdHideStatus(args);
@@ -315,6 +318,12 @@ async function cmdScroll(args) {
   return await sendToContent(tabId, 'scroll', args);
 }
 
+async function cmdFillForm(args) {
+  const tabId = await getTargetTabId(args);
+  if (!tabId) return { error: 'No active tab' };
+  return await sendToContent(tabId, 'fill_form', args);
+}
+
 async function cmdFormInput(args) {
   const tabId = await getTargetTabId(args);
   if (!tabId) return { error: 'No active tab' };
@@ -354,6 +363,12 @@ async function cmdGetDom(args) {
   const tabId = await getTargetTabId(args);
   if (!tabId) return { error: 'No active tab' };
   return await sendToContent(tabId, 'get_dom', args);
+}
+
+async function cmdExtractElement(args) {
+  const tabId = await getTargetTabId(args);
+  if (!tabId) return { error: 'No active tab' };
+  return await sendToContent(tabId, 'extract_element', args);
 }
 
 async function cmdShowStatus(args) {
@@ -620,6 +635,51 @@ async function cmdResizeWindow(args) {
     return { status: 'success', width, height };
   } catch (err) {
     return { error: `Emulation.setDeviceMetricsOverride failed: ${err.message || String(err)}` };
+  }
+}
+
+/* ─── Debugger-based: Dialog Management ────────────────────────────────── */
+
+async function ensureDebuggerPage(tabId) {
+  if (!debuggerAttached.has(tabId)) {
+    debuggerAttached.set(tabId, new Set());
+  }
+  const attachments = debuggerAttached.get(tabId);
+  if (attachments.has('page')) return;
+
+  if (attachments.size === 0) {
+    await chrome.debugger.attach({ tabId }, '1.3');
+  }
+  await chrome.debugger.sendCommand({ tabId }, 'Page.enable');
+  attachments.add('page');
+}
+
+async function cmdDialogResponse(args) {
+  const tabId = await getTargetTabId(args);
+  if (!tabId) return { error: 'No active tab' };
+
+  try {
+    await ensureDebuggerPage(tabId);
+  } catch (err) {
+    return { error: `Debugger attach failed: ${err.message || String(err)}` };
+  }
+
+  const accept = args?.accept !== false; // default true
+  const promptText = args?.promptText;
+
+  try {
+    const params = { accept };
+    if (promptText !== undefined) {
+      params.promptText = promptText;
+    }
+
+    await chrome.debugger.sendCommand({ tabId }, 'Page.handleJavaScriptDialog', params);
+    return { status: 'success', action: accept ? 'accepted' : 'dismissed' };
+  } catch (err) {
+    if (err.message.includes('No dialog is showing')) {
+      return { status: 'success', note: 'No dialog was showing to dismiss' };
+    }
+    return { error: `Failed to handle dialog: ${err.message || String(err)}` };
   }
 }
 
