@@ -4,6 +4,14 @@ All notable changes to Galactic AI are documented here.
 
 ---
 
+## v1.5.1 — The Memory Compaction Update (2026-03-05)
+
+*   🧠 **Auto-Compaction**: The gateway now automatically summarizes long conversation history using **Gemini 2.5 Flash** when context limits are reached.
+*   🧠 **Semantic Recall**: Archived summaries are stored in **ChromaDB** and can be retrieved semantically by the AI when relevant to the current conversation.
+*   💬 **Context Commands**: Added `/context` (view usage), `/compact` (manual summary), and `/clear` (wipe session) to the chat interface.
+*   🚀 **Performance**: Unified background planning and summarization tasks to use the highly efficient **Gemini 2.5 Flash** model.
+*   🐛 **Bug Fix**: Resolved an initialization race condition in the `ConversationAutoRecallSkill`.
+
 ## v1.4.8 — Unified Security Protocol (2026-03-04)
 
 *   🛡️ **Unified Security**: Hardened Discord and WhatsApp bridges with strict "Default Deny" authorization.
