@@ -776,7 +776,7 @@
 
   <!-- HERO -->
   <div class="hero">
-    <div class="hero-badge">v1.5.1 — Security Hardening · Telegram Lockdown · Bot Protection</div>
+    <div class="hero-badge">v1.5.1 — Memory Compaction · Recursive Folding · Provider-Aware Context</div>
     <h1>Your AI that actually<br><span class="grad">does everything.</span></h1>
     <p>A local-first AI automation platform with 188+ built-in tools, a dual-brain Strategic Planner, true persistent
       memory (ChromaDB), interruptible Live Voice mode, and advanced vision-based computer use. Runs on your machine. No
@@ -866,21 +866,13 @@
 
     <!-- What's New in v1.5.1 -->
     <div class="whats-new">
-      <div class="whats-new-label">✦ NEW IN v1.5.1 — THE SECURITY HARDENING UPDATE</div>
+      <div class="whats-new-label">✦ NEW IN v1.5.1 — THE MEMORY COMPACTION UPDATE</div>
       <ul>
-        <li><strong>Telegram Access Control:</strong> Implemented strict "Default Deny" logic. Unauthorized users are
-          blocked from all commands and interactions by default.</li>
-        <li><strong>Callback Query Security:</strong> Fixed a vulnerability where buttons could bypass ID checks — the
-          bot now verifies every single interaction.</li>
-        <li><strong>Unified Auth Bridge:</strong> Added a central authorization layer for all messaging bridges to
-          ensure consistent security.</li>
-        <li><strong>New /id Command:</strong> Added a public <code>/id</code> command to help users safely retrieve
-          their
-          Telegram Chat ID.</li>
-        <li><strong>Config Hardening:</strong> Massive warnings and documentation updates in
-          <code>config.example.yaml</code>
-          to prevent insecure deployments.
-        </li>
+        <li><strong>Auto-Compaction:</strong> The gateway now automatically summarizes long conversation history using Gemini 2.0 Flash when context limits are reached.</li>
+        <li><strong>Recursive Folding:</strong> Old summaries are folded into new ones, preventing "context debt" and keeping history truly compact.</li>
+        <li><strong>Provider-Aware Context:</strong> Implemented massive 1M+ token windows for cloud models while preserving 32k limits for local Ollama.</li>
+        <li><strong>Reliability Failsafe:</strong> Fixed infinite loop hangs with a 3-iteration limit and hard truncation fallback for over-stuffed prompts.</li>
+        <li><strong>System Prompt Exclusion:</strong> Tool definitions and rules no longer eat into your conversation budget.</li>
       </ul>
     </div>
 
