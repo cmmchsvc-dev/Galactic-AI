@@ -5209,6 +5209,12 @@ try {
         except Exception as e:
             return web.json_response({'error': str(e)}, status=500)
 
+    def _hash_password(self, password, salt=None, iterations=600000):
+        """Secure PBKDF2 hashing with high iterations."""
+        if salt is None: salt = secrets.token_hex(16)
+        dk = hashlib.pbkdf2_hmac('sha256', password.encode(), salt.encode(), iterations)
+        return f"{dk.hex()}:{salt}:{iterations}"
+
     async def handle_login(self, request):
         try:
             data = await request.json()
@@ -5218,18 +5224,12 @@ try {
         if not password:
             return web.json_response({'success': False, 'error': 'No password'}, status=400)
 
-        # Hashing logic with PBKDF2
-        def _hash(pw, salt=None):
-            if salt is None: salt = secrets.token_hex(16)
-            dk = hashlib.pbkdf2_hmac('sha256', pw.encode(), salt.encode(), 100000)
-            return f"{dk.hex()}:{salt}"
-
         current_hash_entry = (self.password_hash or "").strip()
         
         # 1. Handle First-Run or Placeholder
-        if not current_hash_entry or current_hash_entry == "SHA256_HASH_OF_YOUR_PASSWORD":
+        if not current_hash_entry or current_hash_entry == "YOUR_PASSWORD_HASH" or current_hash_entry == "SHA256_HASH_OF_YOUR_PASSWORD":
             await self.core.log(f"[Auth] First-run bypass: setting master password", priority=2)
-            new_entry = _hash(password)
+            new_entry = self._hash_password(password)
             self.password_hash = new_entry
             cfg = self.core.config
             if 'web' not in cfg: cfg['web'] = {}
@@ -5240,25 +5240,28 @@ try {
 
         # 2. Verify Hashing
         if ':' in current_hash_entry:
-            # New format: hash:salt
+            parts = current_hash_entry.split(':')
             try:
-                stored_h, salt = current_hash_entry.split(':', 1)
-                dk = hashlib.pbkdf2_hmac('sha256', password.encode(), salt.encode(), 100000)
-                if secrets.compare_digest(dk.hex(), stored_h):
-                    return web.json_response(self._make_token_response(current_hash_entry))
+                if len(parts) == 3: # hash:salt:iterations
+                    stored_h, salt, iters = parts
+                    dk = hashlib.pbkdf2_hmac('sha256', password.encode(), salt.encode(), int(iters))
+                    if secrets.compare_digest(dk.hex(), stored_h):
+                        return web.json_response(self._make_token_response(current_hash_entry))
+                elif len(parts) == 2: # hash:salt (backward compatibility 100k)
+                    stored_h, salt = parts
+                    dk = hashlib.pbkdf2_hmac('sha256', password.encode(), salt.encode(), 100000)
+                    if secrets.compare_digest(dk.hex(), stored_h):
+                        # Upgrade to 600k iterations
+                        new_entry = self._hash_password(password)
+                        self.password_hash = new_entry
+                        cfg = self.core.config
+                        if 'web' in cfg: cfg['web']['password_hash'] = new_entry
+                        try: self._save_config(cfg)
+                        except: pass
+                        return web.json_response(self._make_token_response(new_entry))
             except: pass
-        else:
-            # Legacy format: plain sha256
-            legacy_h = hashlib.sha256(password.encode()).hexdigest()
-            if secrets.compare_digest(legacy_h, current_hash_entry):
-                # auto-upgrade to new format
-                new_entry = _hash(password)
-                self.password_hash = new_entry
-                cfg = self.core.config
-                if 'web' in cfg: cfg['web']['password_hash'] = new_entry
-                try: self._save_config(cfg)
-                except: pass
-                return web.json_response(self._make_token_response(new_entry))
+
+        return web.json_response({'success': False, 'error': 'Invalid passphrase'}, status=401)
 
         return web.json_response({'success': False, 'error': 'Invalid passphrase'}, status=401)
 
@@ -5282,12 +5285,7 @@ try {
         # Password
         pw = data.get('password', '')
         if pw:
-            def _hash(pw, salt=None):
-                if salt is None: salt = secrets.token_hex(16)
-                dk = hashlib.pbkdf2_hmac('sha256', pw.encode(), salt.encode(), 100000)
-                return f"{dk.hex()}:{salt}"
-            
-            h = _hash(pw)
+            h = self._hash_password(pw)
             if 'web' not in cfg:
                 cfg['web'] = {}
             cfg['web']['password_hash'] = h
