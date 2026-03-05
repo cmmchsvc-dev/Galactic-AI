@@ -24,6 +24,9 @@ When the AI learns something important, it writes it to **MEMORY.md** on disk. T
 
 Additionally, Galactic AI includes a `memory_manager` community skill powered by **ChromaDB**. This provides true, queryable long-term vector memory, allowing the AI to semantic-search its entire history to find the most relevant context before answering a question.
 
+### 4. Auto-Compacting Context (Infinite History) [NEW]
+To stay cost-efficient and avoid hitting context limits, Galactic AI automatically monitors your conversation size. When it gets too long, the system summarizes the oldest part using **Gemini 2.5 Flash**, saves that summary into the Vector DB, and clears the raw messages. This ensures "infinite" conversation history with constant-time costs and zero amnesia.
+
 ### Self-Healing Code Execution (Test-Driven Development)
 Galactic AI now writes robust code that *actually works*. With the `test_driven_coder` tool (part of the Gemini Coder skill), the AI can write a Python script, execute it in a sandboxed environment, automatically catch any errors (tracebacks), and then autonomously iterate with Gemini to fix the code until it runs successfully. This means the AI delivers working code solutions, not just drafts.
 
@@ -538,6 +541,7 @@ MIT License — see LICENSE file.
 
 | Version | Highlights |
 |---|---|
+| v1.5.1 | Memory | **Auto-Compaction & Semantic Recall** • Dynamic summarization of old history • ChromaDB integration for long-term memory logs • New `/context`, `/compact`, and `/clear` commands • Gemini 2.5 Flash default background model |
 | v1.4.8 | Security | **Unified Security Protocol** • Hardened Discord & WhatsApp bridges with "Default Deny" policy • Unified authorization helpers • New `/id` commands for setup. |
 | v1.4.7 | Security | 🛡️ **Security Hardening Update** • Strict "Default Deny" Telegram access control • Callback Query (button) bypass security fix • New `/id` command. |
 | **v1.4.6** | 🔧 **Imagen Fix Update** • Fixed Imagen 4 model IDs (`NOT_FOUND` errors resolved) • Fixed `chrome_navigate` crash (`list.get()` error) • Eliminated AI hallucination loop after image generation • Added embed URL + stop signal to image tool returns • VC++ Redistributable installer UAC fix. |

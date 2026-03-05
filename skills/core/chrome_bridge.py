@@ -112,13 +112,13 @@ class ChromeBridgeSkill(GalacticSkill):
                 "fn": self._tool_chrome_click
             },
             "chrome_type": {
-                "description": "Type text into an element in the user's Chrome browser and optionally press Enter to submit (default: submit=true). If ref and selector are omitted, auto-detects the best input: focused element → search box → first visible text input.",
+                "description": "Type text into an element in the user's Chrome browser and optionally press Enter to submit (default: submit=false). If ref and selector are omitted, auto-detects the best input: focused element → search box → first visible text input.",
                 "parameters": {"type": "object", "properties": {
                     "text": {"type": "string", "description": "Text to type"},
                     "ref": {"type": "string", "description": "Optional element ref ID from chrome_read_page"},
                     "selector": {"type": "string", "description": "Optional CSS selector"},
                     "clear": {"type": "boolean", "description": "Clear existing content before typing (default: true)"},
-                    "submit": {"type": "boolean", "description": "Press Enter after typing to submit (default: true)"},
+                    "submit": {"type": "boolean", "description": "Press Enter after typing to submit (default: false)"},
                 }, "required": ["text"]},
                 "fn": self._tool_chrome_type
             },
@@ -321,11 +321,40 @@ class ChromeBridgeSkill(GalacticSkill):
             },
         }
 
+    async def _check_self_interaction(self) -> str | None:
+        """
+        Check if the active tab is the Galactic AI Control Deck.
+        Returns an error message if it is, otherwise None.
+        """
+        try:
+            result = await self.send_command("get_active_tab_url", {})
+            url = result.get('url', '')
+            if not url: return None
+            
+            from urllib.parse import urlparse
+            p = urlparse(url)
+            
+            # Get configured web port
+            web_port = self.core.config.get('web', {}).get('port', 17789)
+            
+            blocked_hosts = ('127.0.0.1', 'localhost', '0.0.0.0')
+            if p.hostname in blocked_hosts and p.port == web_port:
+                return (f"[REJECTED] Self-Interaction Guard: You are attempting to interact with the Galactic AI Control Deck at {url}. "
+                        "You must NOT use browser tools on your own interface. Navigate to an external website first or "
+                        "use a different tab.")
+        except Exception as e:
+            logger.error(f"Self-interaction check failed: {e}")
+        return None
+
     # ── Tool handlers ────────────────────────────────────────────────────
 
     async def _tool_chrome_screenshot(self, args):
         if not self.ws_connection:
             return "[ERROR] Chrome extension not connected. Install the Galactic Browser extension and click Connect."
+        
+        # Self-interaction check (optional for screenshot, but good for privacy)
+        # We'll allow it but maybe add a warning? Actually, let's keep it simple.
+        
         result = await self.screenshot()
         if result.get('status') == 'success':
             img_data = result.get('image_b64', '')
@@ -391,14 +420,64 @@ class ChromeBridgeSkill(GalacticSkill):
 
     async def _tool_chrome_read_page(self, args):
         if not self.ws_connection: return "[ERROR] Chrome extension not connected."
+        
+        tab_id = args.get('tab_id')
+        # 1. Grab DOM tree
         result = await self.read_page(
-            tab_id=args.get('tab_id'),
+            tab_id=tab_id,
             filter_val=args.get('filter', 'all'),
         )
+        
         if result.get('status') == 'success':
             tree = result.get('tree', '')
             refs = result.get('ref_count', 0)
-            return f"[CHROME] Page snapshot ({refs} refs):\n{tree}"
+            
+            # Grounding: Ensure we have a URL and Title so the model doesn't hallucinate
+            url = result.get('url') or result.get('current_url') or 'unknown'
+            title = result.get('title') or 'unknown'
+            
+            if url == 'unknown' or title == 'unknown':
+                # Attempt fallback to internal cache
+                tid = tab_id or next(iter(self._tabs), None)
+                if tid in self._tabs:
+                    url = self._tabs[tid].get('url', url)
+                    title = self._tabs[tid].get('title', title)
+            
+            text_out = f"[CHROME] Page snapshot: {title} ({url})\nRefs: {refs}\n{tree}"
+            
+            # 2. Grab visual screenshot for vision model and user UI
+            try:
+                screen_result = await self.screenshot(tab_id=tab_id)
+                if screen_result.get('status') == 'success' and 'image_b64' in screen_result:
+                    img_data = screen_result['image_b64']
+                    
+                    images_dir = self.core.config.get('paths', {}).get('images', './images') if hasattr(self, 'core') and self.core else './images'
+                    img_subdir = Path(images_dir) / 'browser'
+                    img_subdir.mkdir(parents=True, exist_ok=True)
+                    ts = datetime.now().strftime('%Y%m%d_%H%M%S')
+                    path = str(img_subdir / f'chrome_auto_{ts}.jpg')
+                    
+                    clean_b64 = img_data.split(',', 1)[1] if ',' in img_data and img_data.startswith('data:') else img_data
+                    
+                    # Ensure base64 is decoded and written synchronously to avoid blocking the loop
+                    import base64
+                    def _write_img():
+                        with open(path, 'wb') as f:
+                            f.write(base64.b64decode(clean_b64))
+                    
+                    await asyncio.get_running_loop().run_in_executor(None, _write_img)
+                        
+                    return {
+                        "__image_b64__": img_data, 
+                        "path": path, 
+                        "media_type": "image/jpeg",
+                        "text": text_out
+                    }
+            except Exception as e:
+                pass # Fallback to text only if screenshot fails
+                
+            return text_out
+            
         return f"[ERROR] Chrome read_page: {result.get('error') or result.get('message') or 'unknown error'}"
 
     async def _tool_chrome_find(self, args):
@@ -419,6 +498,10 @@ class ChromeBridgeSkill(GalacticSkill):
 
     async def _tool_chrome_click(self, args):
         if not self.ws_connection: return "[ERROR] Chrome extension not connected."
+        
+        err = await self._check_self_interaction()
+        if err: return err
+
         result = await self.click(
             ref=args.get('ref'), selector=args.get('selector'),
             x=args.get('x'), y=args.get('y'),
@@ -431,6 +514,10 @@ class ChromeBridgeSkill(GalacticSkill):
 
     async def _tool_chrome_type(self, args):
         if not self.ws_connection: return "[ERROR] Chrome extension not connected."
+
+        err = await self._check_self_interaction()
+        if err: return err
+
         result = await self.type_text(
             text=args.get('text', ''),
             ref=args.get('ref'), selector=args.get('selector'),
@@ -438,7 +525,6 @@ class ChromeBridgeSkill(GalacticSkill):
         )
         if result.get('status') != 'success':
             return f"[ERROR] Chrome type: {result.get('error') or result.get('message') or 'unknown error'}"
-        
         typed_msg = f"[CHROME] Typed {len(args.get('text', ''))} chars"
         
         # Auto-submit: press Enter after typing (default: true)
@@ -458,6 +544,10 @@ class ChromeBridgeSkill(GalacticSkill):
 
     async def _tool_chrome_scroll(self, args):
         if not self.ws_connection: return "[ERROR] Chrome extension not connected."
+
+        err = await self._check_self_interaction()
+        if err: return err
+
         result = await self.scroll(
             direction=args.get('direction'), amount=args.get('amount'),
             ref=args.get('ref'), selector=args.get('selector'),
@@ -476,6 +566,10 @@ class ChromeBridgeSkill(GalacticSkill):
     async def _tool_chrome_scroll_continuous(self, args):
         """Simulate slow/continuous scrolling."""
         if not self.ws_connection: return "[ERROR] Chrome extension not connected."
+
+        err = await self._check_self_interaction()
+        if err: return err
+
         direction = args.get('direction', 'down')
         steps = int(args.get('steps', 5))
         amount = int(args.get('amount_per_step', 400))
@@ -497,6 +591,10 @@ class ChromeBridgeSkill(GalacticSkill):
 
     async def _tool_chrome_form_input(self, args):
         if not self.ws_connection: return "[ERROR] Chrome extension not connected."
+
+        err = await self._check_self_interaction()
+        if err: return err
+
         result = await self.form_input(
             ref=args.get('ref'), selector=args.get('selector'),
             value=args.get('value', '')
@@ -507,6 +605,10 @@ class ChromeBridgeSkill(GalacticSkill):
 
     async def _tool_chrome_execute_js(self, args):
         if not self.ws_connection: return "[ERROR] Chrome extension not connected."
+
+        err = await self._check_self_interaction()
+        if err: return err
+
         result = await self.execute_js(args.get('code', ''))
         if result.get('status') == 'success':
             return f"[CHROME] JS result: {result.get('result', 'undefined')}"
@@ -553,6 +655,10 @@ class ChromeBridgeSkill(GalacticSkill):
 
     async def _tool_chrome_key_press(self, args):
         if not self.ws_connection: return "[ERROR] Chrome extension not connected."
+
+        err = await self._check_self_interaction()
+        if err: return err
+
         result = await self.key_press(
             key=args.get('key', ''),
             repeat=args.get('repeat', 1)
@@ -614,6 +720,10 @@ class ChromeBridgeSkill(GalacticSkill):
 
     async def _tool_chrome_hover(self, args):
         if not self.ws_connection: return "[ERROR] Chrome extension not connected."
+
+        err = await self._check_self_interaction()
+        if err: return err
+
         result = await self.hover(
             ref=args.get('ref'), selector=args.get('selector'),
             x=args.get('x'), y=args.get('y')
@@ -658,6 +768,10 @@ class ChromeBridgeSkill(GalacticSkill):
 
     async def _tool_chrome_upload(self, args):
         if not self.ws_connection: return "[ERROR] Chrome extension not connected."
+
+        err = await self._check_self_interaction()
+        if err: return err
+
         file_path = args.get('file_path', '')
         if not file_path:
             return "[ERROR] chrome_upload: file_path is required"
@@ -939,7 +1053,10 @@ class ChromeBridgeSkill(GalacticSkill):
 
     async def navigate(self, url: str, tab_id=None):
         """Navigate a tab to the given URL."""
-        return await self.send_command("navigate", {"url": url, "tab_id": tab_id})
+        res = await self.send_command("navigate", {"url": url, "tab_id": tab_id})
+        # Mandatory settle wait. 1.5s is safer for complex sites like UPS/FedEx/Amazon
+        await asyncio.sleep(1.5)
+        return res
 
     async def read_page(self, tab_id=None, filter_val: str = 'all', depth: int = 15):
         """Get an accessibility-tree representation of the page.

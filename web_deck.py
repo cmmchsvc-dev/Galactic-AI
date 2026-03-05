@@ -40,7 +40,7 @@ class GalacticWebDeck:
             if allowed_origins:
                 middlewares.append(create_cors_middleware(allowed_origins))
 
-        self.app = web.Application(middlewares=middlewares)
+        self.app = web.Application(middlewares=middlewares, client_max_size=1024 * 1024 * 100)
         self.app.router.add_get('/', self.handle_index)
         self.app.router.add_post('/login', self.handle_login)
         self.app.router.add_post('/api/setup', self.handle_setup)
@@ -521,7 +521,7 @@ body.glow-max .status-dot{box-shadow:0 0 14px var(--green),0 0 28px rgba(0,255,1
   <div class="login-box">
     <div style="font-size:2em;margin-bottom:8px">⬡</div>
     <h2>GALACTIC AI</h2>
-    <p>AUTOMATION SUITE v1.4.8</p>
+    <p>AUTOMATION SUITE v1.5.1</p>
     <input id="pw-input" type="password" placeholder="Enter passphrase" autocomplete="off">
     <button id="login-btn" onclick="doLogin()">ACCESS</button>
     <div id="login-err" style="display:none;color:var(--red);font-size:0.8em;margin-top:8px">Invalid passphrase</div>
@@ -1032,13 +1032,15 @@ body.glow-max .status-dot{box-shadow:0 0 14px var(--green),0 0 28px rgba(0,255,1
         <div style="display:flex;align-items:center;justify-content:space-between;gap:12px;margin:10px 0 14px;padding:10px 12px;background:var(--bg3);border:1px solid var(--border);border-radius:10px">
           <div>
             <div style="font-size:0.86em;color:var(--text);font-weight:600">🚀 OpenRouter Nitro only</div>
-            <div style="font-size:0.72em;color:var(--dim)">When enabled, Models page shows only your Nitro aliases (hides all other model grids)</div>
+            <div style="font-size:0.72em;color:var(--dim)">When enabled, all OpenRouter models will use the high-speed Nitro endpoints</div>
           </div>
-          <label class="toggle-switch" title="Show only OpenRouter Nitro aliases">
-            <input type="checkbox" id="nitro-only-toggle">
-                <span id="versionBadge" class="badge bg-primary">v1.4.9</span>
-            <span class="toggle-slider"></span>
-          </label>
+          <div style="display:flex;align-items:center;gap:14px">
+            <span id="versionBadge" class="badge bg-primary" style="opacity:0.6;font-size:0.7em">v1.4.9</span>
+            <label class="toggle-switch" title="Show only OpenRouter Nitro aliases">
+              <input type="checkbox" id="nitro-only-toggle" onchange="saveNitroOnly(this.checked)">
+              <span class="toggle-slider"></span>
+            </label>
+          </div>
         </div>
 
         <div id="ollama-health-row">
@@ -2748,7 +2750,17 @@ function renderModelGrid() {
     items.forEach(m => {
       const modelId = m.model || m.id || m.target || '';
       const rawAlias = m.alias || m.name || modelId || '(alias)';
-      const targetLabel = m.target || modelId;
+      let targetLabel = m.target || modelId;
+      
+      const nitroOnly = document.getElementById('nitro-only-toggle')?.checked;
+      
+      // Filter Aliases: If Nitro Only is ON, only show Nitrogen aliases or OpenRouter targets
+      if (nitroOnly && !m.is_nitro && !targetLabel.includes('/')) return;
+
+      // Visual indicator for Nitro
+      if (nitroOnly && (m.is_nitro || targetLabel.includes('/'))) {
+        if (!targetLabel.includes(':nitro')) targetLabel += ':nitro';
+      }
       
       // Use the centralized aliasEmoji function for consistent icons
       const icon = aliasEmoji(rawAlias, targetLabel, m.is_nitro);
@@ -2786,6 +2798,7 @@ function renderModelGrid() {
   }
 
   // ── Normal provider presets ─────────────────────────────────────────────
+  const nitroOnly = document.getElementById('nitro-only-toggle')?.checked;
   for (const [provName, models] of Object.entries(ALL_MODELS)) {
     const sec = document.createElement('div');
     sec.className = 'provider-section';
@@ -2796,10 +2809,19 @@ function renderModelGrid() {
       grid.innerHTML = `<div style="color:var(--dim);font-size:0.8em;padding:4px">No models discovered</div>`;
     } else {
       models.forEach(m => {
+        const nitroOnly = document.getElementById('nitro-only-toggle')?.checked;
+        let displayName = m.name;
+        let modelId = m.id;
+
+        if (nitroOnly && provName.toLowerCase().includes('openrouter')) {
+          if (!displayName.includes(':nitro')) displayName += ' 🚀';
+          if (!modelId.includes(':nitro')) modelId += ':nitro';
+        }
+
         const btn = document.createElement('button');
-        btn.className = 'model-btn' + (m.id === currentModelId ? ' active' : '');
-        btn.textContent = m.name;
-        btn.onclick = () => switchModel(m.provider, m.id, btn);
+        btn.className = 'model-btn' + (modelId === currentModelId ? ' active' : '');
+        btn.textContent = displayName;
+        btn.onclick = () => switchModel(m.provider, modelId, btn);
         grid.appendChild(btn);
       });
     }
@@ -2883,6 +2905,20 @@ async function applyModelConfig() {
       addLog('[Web] Token config error: ' + (d.error || 'unknown'));
     }
   } catch(e) { addLog('[Web] Token config error: ' + e.message); }
+}
+
+async function saveNitroOnly(enabled) {
+  try {
+    const r = await authFetch('/api/model_config', {
+      method: 'POST', headers: {'Content-Type':'application/json'},
+      body: JSON.stringify({nitro_only: !!enabled})
+    });
+    const d = await r.json();
+    if (d.ok) {
+      addLog('[Web] OpenRouter Nitro mode: ' + (enabled ? 'ENABLED' : 'DISABLED'));
+      renderModelGrid();
+    }
+  } catch(e) { addLog('[Web] Nitro toggle error: ' + e.message); }
 }
 
 // ── Per-Model Overrides ────────────────────────────────────────────────────────
@@ -3046,8 +3082,10 @@ async function refreshStatus() {
     if (mt && !mt.dataset.loaded) {
       mt.value = d.global_max_tokens != null && d.global_max_tokens != 0 ? d.global_max_tokens : '';
       document.getElementById('cfg-context-window').value = d.global_context_window != null && d.global_context_window != 0 ? d.global_context_window : '';
+      if (document.getElementById('nitro-only-toggle')) document.getElementById('nitro-only-toggle').checked = !!d.nitro_only;
       mt.dataset.loaded = "true";
     }
+    if (document.getElementById('set-nitro-only')) document.getElementById('set-nitro-only').checked = !!d.nitro_only;
     el('st-primary').textContent = d.primary_model || '--';
     el('st-fallback').textContent = d.fallback_model || '--';
 
@@ -3396,6 +3434,7 @@ async function loadSettingsValues() {
     if (el('set-auto-fallback')) el('set-auto-fallback').checked = d.auto_fallback !== false;
     if (el('set-smart-routing')) el('set-smart-routing').checked = !!d.smart_routing;
     if (el('set-streaming')) el('set-streaming').checked = d.streaming !== false;
+    if (el('set-nitro-only')) el('set-nitro-only').checked = !!d.nitro_only;
 
     // Voice
     if (d.voice && el('set-voice')) el('set-voice').value = d.voice;
@@ -3432,6 +3471,7 @@ async function saveModelSettings() {
         auto_fallback: document.getElementById('set-auto-fallback').checked,
         smart_routing: document.getElementById('set-smart-routing').checked,
         streaming: document.getElementById('set-streaming').checked,
+        nitro_only: document.getElementById('set-nitro-only')?.checked || false,
       })
     });
     const d = await r.json();
@@ -4494,6 +4534,59 @@ try {
             if not full_msg and not attached_images:
                 return web.json_response({'error': 'No message'}, status=400)
 
+            # ── Command Interception ──
+            cmd = user_msg.strip().lower()
+            if cmd == "/clear":
+                self.core.gateway.history = []
+                # Remove the chat_history.jsonl file so it doesn't reload on refresh
+                h_file = getattr(self.core.gateway, 'history_file', None)
+                if h_file and os.path.exists(h_file):
+                    try: os.remove(h_file)
+                    except: pass
+                await self.core.log("🧹 Session history cleared.", priority=2)
+                return web.json_response({'response': "✨ **Context Cleared.** Current conversation history and local cache have been reset."})
+
+            if cmd == "/compact":
+                if not self.core.gateway.history:
+                    return web.json_response({'response': "⚠️ History is already empty."})
+                
+                await self.core.log("🧹 Manual context compaction started...", priority=2)
+                # Wrap with a dummy system prompt for gateway's logic
+                msgs = [{"role": "system", "content": "N/A"}] + self.core.gateway.history
+                compacted = await self.core.gateway._compact_history(msgs, 0)
+                # Pop the dummy system message back off
+                if compacted and len(compacted) > 0 and compacted[0].get('role') == 'system' and compacted[0].get('content') == "N/A":
+                    compacted.pop(0)
+                self.core.gateway.history = compacted
+                return web.json_response({'response': "🧹 **Manual Compaction Successful.** Context summarized and archived in Vector DB."})
+
+            if cmd == "/context":
+                gw = self.core.gateway
+                ctx_max = 0
+                if hasattr(gw, '_get_context_window_for_model'):
+                    ctx_max = gw._get_context_window_for_model(0)
+                if not ctx_max and hasattr(self.core, 'ollama_manager') and gw.llm.provider == 'ollama':
+                    ctx_max = self.core.ollama_manager.get_context_window(gw.llm.model) or 0
+                
+                # Estimate current usage based on char count if tokens aren't fresh
+                char_count = sum(len(str(m.get('content', ''))) for m in self.core.gateway.history)
+                est_tokens = char_count // 4
+                
+                last_tokens = getattr(gw, '_last_usage', {}).get('prompt_tokens', 0) if getattr(gw, '_last_usage', None) else 0
+                usage = max(last_tokens, est_tokens)
+                
+                pct = (usage / ctx_max * 100) if ctx_max > 0 else 0
+                rem = max(0, ctx_max - usage)
+                
+                msg = (
+                    f"📊 **Context Status** ({gw.llm.provider}/{gw.llm.model})\n\n"
+                    f"- **Used**: `{usage:,}` tokens (~{pct:.1f}%)\n"
+                    f"- **Free**: `{rem:,}` tokens\n"
+                    f"- **Total**: `{ctx_max:,}` tokens\n\n"
+                    f"*Note: Auto-compaction triggers when usage exceeds ~90% of a model's safety limit.*"
+                )
+                return web.json_response({'response': msg})
+
             # Log cleanly
             source = data.get('source', 'web') if 'multipart/form-data' not in content_type else 'web'
             source_label = "Browser" if source == 'extension' else "Web"
@@ -4682,6 +4775,13 @@ try {
             'max_turns': models_cfg.get('max_turns', 50),
             'speak_timeout': models_cfg.get('speak_timeout', 600),
             'thinking_level': getattr(self.core.gateway, 'thinking_level', models_cfg.get('thinking_level', 'low')),
+            
+            # Memory Stats (QoL/Premium Visibility)
+            'memory': {
+                'vector_count': self.core.gateway.galactic_memory.conn.execute("SELECT COUNT(*) FROM episodic_memories").fetchone()[0] if getattr(self.core.gateway, 'galactic_memory', None) else 0,
+                'auto_recall_enabled': any(getattr(s, 'skill_name', '') == 'conversation_auto_recall' for s in self.core.skills),
+            },
+            'nitro_only': models_cfg.get('nitro_only', False),
 
             # Fallback chain + health
             'fallback_chain': fallback_status.get('chain', []),
@@ -4938,6 +5038,9 @@ try {
             if 'streaming' in data:
                 cfg['models']['streaming'] = bool(data['streaming'])
                 toggle_changed = True
+            if 'nitro_only' in data:
+                cfg['models']['nitro_only'] = bool(data['nitro_only'])
+                toggle_changed = True
             if toggle_changed:
                 self._save_config(cfg)
 
@@ -5105,8 +5208,11 @@ try {
             return web.json_response({'success': False, 'error': 'No password'}, status=400)
         h = hashlib.sha256(password.encode()).hexdigest()
 
-        # If no password_hash is set yet, treat as first-run (accept any password and save it)
-        if not self.password_hash:
+        # If no password_hash is set yet (or it's the default placeholder), 
+        # treat as first-run (accept any password and save it)
+        current_hash = (self.password_hash or "").strip()
+        if not current_hash or current_hash == "SHA256_HASH_OF_YOUR_PASSWORD":
+            await self.core.log(f"[Auth] First-run bypass: setting master password", priority=2)
             self.password_hash = h
             cfg = self.core.config
             if 'web' not in cfg:
@@ -5362,6 +5468,10 @@ try {
                 cfg['models']['context_window'] = int(context_window) if context_window else 0
             except (ValueError, TypeError):
                 pass
+        if 'nitro_only' in data:
+            cfg['models']['nitro_only'] = bool(data['nitro_only'])
+        if 'nitro_only' in data:
+            cfg['models']['nitro_only'] = bool(data['nitro_only'])
         # Persist to config.yaml (safe read-modify-write)
         try:
             self._save_config(cfg)
@@ -5371,44 +5481,71 @@ try {
 
     def _save_config(self, cfg):
         """Safely merge in-memory config into config.yaml (read-modify-write).
-
-        Reads the existing file first so keys written by other code paths
-        (especially model_manager._save_config) are never lost.
+        
+        Uses deep_merge_safe to prevent memory placeholders from erasing disk values.
         """
         import yaml
         cfg_path = getattr(self.core, 'config_path', None)
         if not cfg_path:
             cfg_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'config.yaml')
+            
         # 1. Read existing config from disk to preserve all keys
         try:
             with open(cfg_path, 'r', encoding='utf-8') as f:
                 on_disk = yaml.safe_load(f) or {}
         except Exception:
             on_disk = {}
-        # 2. Deep-merge: update top-level sections from in-memory cfg
-        #    IMPORTANT: 'model_overrides' must be REPLACED entirely (not merged)
-        #    so that deletions actually take effect on disk.
-        _REPLACE_KEYS = {'model_overrides', 'aliases'}  # Keys that should overwrite, not merge
+
+        # 2. Define placeholder patterns to avoid overwriting real data with defaults
+        PLACEHOLDERS = {
+            "YOUR_GOOGLE_API_KEY", "YOUR_OPENROUTER_API_KEY", "YOUR_ANTHROPIC_API_KEY",
+            "YOUR_OPENAI_API_KEY", "YOUR_XAI_API_KEY", "YOUR_GROQ_API_KEY",
+            "YOUR_DEEPSEEK_API_KEY", "YOUR_NVIDIA_API_KEY", "YOUR_TELEGRAM_BOT_TOKEN",
+            "YOUR_TELEGRAM_CHAT_ID", "YOUR_DISCORD_BOT_TOKEN", "YOUR_DISCORD_USER_ID",
+            "YOUR_WHATSAPP_ACCESS_TOKEN", "YOUR_PHONE_NUMBER_ID", "YOUR_PHONE_NUMBER",
+            "YOUR_WEBHOOK_VERIFY_TOKEN", "YOUR_GMAIL_APP_PASSWORD", "your-email@example.com",
+            "SHA256_HASH_OF_YOUR_PASSWORD", "GENERATE_A_RANDOM_SECRET_FOR_SECURITY"
+        }
+
+        def deep_merge_safe(source, destination):
+            """Merge source into destination, skipping placeholder values."""
+            for key, value in source.items():
+                if isinstance(value, dict) and key in destination and isinstance(destination[key], dict):
+                    deep_merge_safe(value, destination[key])
+                else:
+                    # Skip if the source value is a placeholder and the destination has SOMETHING else
+                    is_placeholder = isinstance(value, str) and (
+                        value in PLACEHOLDERS or value.startswith("YOUR_") or "API_KEY" in value.upper()
+                    )
+                    has_real_value = key in destination and destination[key] and destination[key] not in PLACEHOLDERS
+                    
+                    if is_placeholder and has_real_value:
+                        continue # Keep the real value on disk
+                    destination[key] = value
+            return destination
+
+        # 3. Perform the safe merge
+        _REPLACE_KEYS = {'model_overrides', 'aliases'} 
         for key, value in cfg.items():
             if key in _REPLACE_KEYS:
-                on_disk[key] = value  # Full replacement — deletions are preserved
-            elif isinstance(value, dict) and isinstance(on_disk.get(key), dict):
-                on_disk[key].update(value)
+                on_disk[key] = value # Explicitly requested full replacement
+            elif isinstance(value, dict) and key in on_disk and isinstance(on_disk[key], dict):
+                deep_merge_safe(value, on_disk[key])
             else:
                 on_disk[key] = value
-        # 3. Defensive: always write current model keys from ModelManager
-        #    This makes it IMPOSSIBLE for any save to erase model settings.
+
+        # 4. Mandatory sync for models (ModelManager is source of truth)
         mm = getattr(self.core, 'model_manager', None)
         if mm:
             on_disk.setdefault('models', {})
-            on_disk['models']['primary_provider'] = mm.primary_provider
-            on_disk['models']['primary_model'] = mm.primary_model
-            on_disk['models']['fallback_provider'] = mm.fallback_provider
-            on_disk['models']['fallback_model'] = mm.fallback_model
-            on_disk.setdefault('gateway', {})
-            on_disk['gateway']['provider'] = mm.primary_provider
-            on_disk['gateway']['model'] = mm.primary_model
-        # 4. Write back
+            on_disk['models'].update({
+                'primary_provider': mm.primary_provider,
+                'primary_model': mm.primary_model,
+                'fallback_provider': mm.fallback_provider,
+                'fallback_model': mm.fallback_model
+            })
+
+        # 5. Write back safely
         with open(cfg_path, 'w', encoding='utf-8') as f:
             yaml.dump(on_disk, f, default_flow_style=False, allow_unicode=True, sort_keys=False)
 
@@ -5475,15 +5612,29 @@ try {
 
         token = request.query.get('token')
         # Accept either legacy password hash or JWT token
-        token_valid = (token == self.password_hash)
-        if not token_valid and self.jwt_secret:
-            from remote_access import verify_jwt
-            token_valid = verify_jwt(token, self.jwt_secret)
+        # First-run logic: if current hash is unset or the placeholder, accept the incoming token and save it
+        current_hash = (self.password_hash or "").strip()
+        if (not current_hash or current_hash == "SHA256_HASH_OF_YOUR_PASSWORD") and token:
+            await self.core.log(f"[Chrome Bridge] First-run bypass: setting master password from extension", priority=2)
+            self.password_hash = token
+            cfg = self.core.config
+            if 'web' not in cfg: cfg['web'] = {}
+            cfg['web']['password_hash'] = token
+            try: self._save_config(cfg)
+            except: pass
+            token_valid = True
+        else:
+            token_valid = (token == self.password_hash)
+            if not token_valid and self.jwt_secret:
+                from remote_access import verify_jwt
+                token_valid = verify_jwt(token, self.jwt_secret)
+        
         if not token_valid:
+            await self.core.log(f"[Chrome Bridge] Auth failed for token: {token[:8]}...", priority=1)
             await ws.close(code=4001)
             return ws
 
-        # Find the ChromeBridge plugin (or migrated ChromeBridgeSkill)
+        # ... (rest of the setup logic remains identical) ...
         bridge = next(
             (p for p in self.core.plugins
              if 'ChromeBridge' in p.__class__.__name__
@@ -5500,7 +5651,7 @@ try {
         await self.core.log("[Chrome Bridge] Extension connected", priority=2)
 
         # Send hello acknowledgement
-        await ws.send_str(json.dumps({'type': 'hello', 'status': 'connected', 'version': '1.4.7'}))
+        await ws.send_str(json.dumps({'type': 'hello', 'status': 'connected', 'version': '1.4.9'}))
 
         try:
             async for msg in ws:
