@@ -365,9 +365,37 @@ class GalacticGateway:
         # Persistent chat log (JSONL) — survives page refreshes
         self.history_file = os.path.join(logs_dir, 'chat_history.jsonl')
         os.makedirs(os.path.dirname(self.history_file), exist_ok=True)
+        
+        # Load history on startup
+        self._load_history()
 
         # ChromaDB Vector Memory for auto-compaction
         self.galactic_memory = None
+
+    def _load_history(self):
+        """Load recent chat history from the JSONL log file into self.history."""
+        if not os.path.exists(self.history_file):
+            return
+        
+        try:
+            temp_history = []
+            with open(self.history_file, 'r', encoding='utf-8') as f:
+                for line in f:
+                    line = line.strip()
+                    if not line: continue
+                    try:
+                        entry = json.loads(line)
+                        if 'role' in entry and 'content' in entry:
+                            # Avoid adding duplicates if the app was restarted multiple times fast
+                            # Actually, we just want the last N messages for context.
+                            temp_history.append({"role": entry['role'], "content": entry['content']})
+                    except: continue
+            
+            # Keep last 20 messages for context
+            self.history = temp_history[-20:]
+            logger.info(f"💾 Restored {len(self.history)} messages from persistent log.")
+        except Exception as e:
+            logger.error(f"Failed to load history: {e}")
 
     async def _log_chat(self, role, content, source="web"):
         """Append a chat entry to the persistent JSONL log and update the 30-min hot buffer."""
@@ -2658,15 +2686,22 @@ class GalacticGateway:
         Expects caller to handle locking and state snapshots.
 
         images: optional list of {name, mime, b64} dicts for vision-capable models.
-          When provided, the user message is built as a multimodal content array
-          (text + base64 image parts) compatible with OpenAI/Anthropic/Google vision APIs.
-
-        Ollama/local models get:
-          - Full parameter schemas in system prompt
-          - Few-shot tool-call examples
-          - Robust multi-pattern JSON extraction (handles think-tags, fences, prose wrapping)
-          - Full messages array passed directly (not collapsed to a string)
         """
+        # 1. Semantic Memory Retrieval
+        semantic_context = ""
+        if self.galactic_memory:
+            try:
+                # Retrieve relevant bits from long-term memory based on user input
+                memories = self.galactic_memory.recall(user_input, limit=5)
+                if memories:
+                    semantic_context = "\n[LONG-TERM MEMORY CONTEXT]\n" + "\n".join([f"- {m}" for m in memories])
+                    logger.info(f"🧠 Retrieved {len(memories)} semantic memories.")
+            except Exception as e:
+                logger.error(f"Semantic recall failed: {e}")
+
+        # Combine provided context with semantic context
+        full_context = f"{context}\n{semantic_context}".strip()
+
         # Track input tokens (rough estimate: 1 token ~= 4 chars)
         self._estimated_input_tokens = len(user_input) // 4
         self.total_tokens_in += self._estimated_input_tokens
@@ -2751,13 +2786,13 @@ class GalacticGateway:
             if plan:
                 self.active_plan = plan
                 # Add the plan to the context for the next turn
-                context = f"You are currently executing a plan. Here is the plan:\n" \
+                full_context = f"You are currently executing a plan. Here is the plan:\n" \
                           f"{self.format_plan(self.active_plan)}\n\n" \
-                          f"Focus on completing the current step before moving to the next.\n\n{context}"
+                          f"Focus on completing the current step before moving to the next.\n\n{full_context}"
                 await self.core.log(f"[Planner] Activated plan for: {user_input[:80]}...")
 
         # 1. Build system prompt
-        system_prompt = self._build_system_prompt(context)
+        system_prompt = self._build_system_prompt(full_context)
         messages = [{"role": "system", "content": system_prompt}] + self.history
 
         # 2. ReAct Loop (with wall-clock timeout)
