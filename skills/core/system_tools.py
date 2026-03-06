@@ -33,9 +33,10 @@ except ImportError:
 class SystemSkill(GalacticSkill):
     """Core OS and Utility tools: files, git, process, networking."""
 
-    skill_name  = "system_tools"
-    version     = "1.1.0"
-    author      = "Galactic AI"
+    skill_name   = "system_tools"
+    display_name = "System Tools"
+    version      = "1.5.1"
+    author       = "cmmchsvc"
     description = "Essential OS, File System, Git, and Network utility tools."
     category    = "system"
     icon        = "\u2699\ufe0f"
