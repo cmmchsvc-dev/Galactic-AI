@@ -523,7 +523,7 @@ body.glow-max .status-dot{box-shadow:0 0 14px var(--green),0 0 28px rgba(0,255,1
   <div class="login-box">
     <div style="font-size:2em;margin-bottom:8px">⬡</div>
     <h2>GALACTIC AI</h2>
-    <p>AUTOMATION SUITE v1.5.1</p>
+    <p>AUTOMATION SUITE v1.5.2</p>
     <input id="pw-input" type="password" placeholder="Enter passphrase" autocomplete="off">
     <button id="login-btn" onclick="doLogin()">ACCESS</button>
     <div id="login-err" style="display:none;color:var(--red);font-size:0.8em;margin-top:8px">Invalid passphrase</div>
@@ -845,7 +845,7 @@ body.glow-max .status-dot{box-shadow:0 0 14px var(--green),0 0 28px rgba(0,255,1
   <div id="topbar-left">
     <div class="logo">⬡ GALACTIC AI</div>
     <div style="font-size:0.7em;color:var(--cyan);letter-spacing:2px;opacity:0.7;font-weight:600">CONTROL DECK</div>
-    <div id="version-badge" style="font-size:0.65em;color:var(--dim);letter-spacing:1px;padding:2px 7px;border:1px solid var(--border);border-radius:10px;cursor:default" title="Galactic AI version">v1.5.1</div>
+    <div id="version-badge" style="font-size:0.65em;color:var(--dim);letter-spacing:1px;padding:2px 7px;border:1px solid var(--border);border-radius:10px;cursor:default" title="Galactic AI version">v1.5.2</div>
     <div id='ollama-pill' onclick='switchTab("models")'>
       <div class="status-dot" id="ollama-dot"></div>
       <span id="ollama-label">Ollama</span>
@@ -1037,7 +1037,7 @@ body.glow-max .status-dot{box-shadow:0 0 14px var(--green),0 0 28px rgba(0,255,1
             <div style="font-size:0.72em;color:var(--dim)">When enabled, all OpenRouter models will use the high-speed Nitro endpoints</div>
           </div>
           <div style="display:flex;align-items:center;gap:14px">
-            <span id="versionBadge" class="badge bg-primary" style="opacity:0.6;font-size:0.7em">v1.5.1</span>
+            <span id="versionBadge" class="badge bg-primary" style="opacity:0.6;font-size:0.7em">v1.5.2</span>
             <label class="toggle-switch" title="Show only OpenRouter Nitro aliases">
               <input type="checkbox" id="nitro-only-toggle" onchange="saveNitroOnly(this.checked)">
               <span class="toggle-slider"></span>
@@ -1150,7 +1150,7 @@ body.glow-max .status-dot{box-shadow:0 0 14px var(--green),0 0 28px rgba(0,255,1
         <div style="font-size:0.72rem;letter-spacing:2px;color:var(--dim);margin:14px 0 8px;text-transform:uppercase">System Overview</div>
         <div class="stat-grid">
           <div class="stat-card"><div class="val" id="st-uptime">--</div><div class="lbl">Uptime</div></div>
-          <div class="stat-card"><div class="val" id="st-version">v1.5.1</div><div class="lbl">Version</div></div>
+          <div class="stat-card"><div class="val" id="st-version">v1.5.2</div><div class="lbl">Version</div></div>
           <div class="stat-card"><div class="val" id="st-personality">--</div><div class="lbl">Personality</div></div>
           <div class="stat-card"><div class="val" id="st-tin">--</div><div class="lbl">Tokens In</div></div>
           <div class="stat-card"><div class="val" id="st-tout">--</div><div class="lbl">Tokens Out</div></div>
@@ -4843,7 +4843,7 @@ try {
             name = data.get('name', '')
             enabled = data.get('enabled', True)
             for p in self.core.plugins:
-                # Standardize plugin identification: prefer skill_name (v1.5.1)
+                # Standardize plugin identification: prefer skill_name (v1.5.2)
                 pname = getattr(p, 'skill_name', None) or getattr(p, 'name', p.__class__.__name__)
                 if pname == name:
                     setattr(p, 'enabled', bool(enabled))

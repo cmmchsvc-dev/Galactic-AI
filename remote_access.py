@@ -4,7 +4,7 @@ remote_access.py — Galactic AI Remote Access Security Module
 Provides TLS certificate generation, JWT authentication, rate limiting,
 and aiohttp middleware for secure remote access to the Control Deck.
 
-v1.5.1
+v1.5.2
 """
 
 import os
