@@ -2,6 +2,7 @@ import asyncio
 import sys
 import time
 import random
+import shutil
 
 class TerminalSpinner:
     def __init__(self):
@@ -27,7 +28,24 @@ class TerminalSpinner:
             "Hacking the mainframe (nicely)...",
             "Polishing the chrome...",
             "Checking the tire pressure...",
-            "Swapping the glasspacks..."
+            "Swapping the glasspacks...",
+            "The cosmos is within us. We are made of star-stuff. (Sagan)",
+            "Science is a way of thinking much more than it is a body of knowledge. (Sagan)",
+            "Somewhere, something incredible is waiting to be known. (Sagan)",
+            "Imagination will often carry us to worlds that never were. (Sagan)",
+            "Nature loves courage. (McKenna)",
+            "Astonishment is the proper response to reality. (McKenna)",
+            "The box is too small. (McKenna)",
+            "If you don't have a plan, you become part of someone else's plan. (McKenna)",
+            "God does not play dice with the universe. (Einstein)",
+            "Imagination is more important than knowledge. (Einstein)",
+            "The important thing is not to stop questioning. (Einstein)",
+            "Nature is not even-handed. (Feynman)",
+            "I think I can safely say that nobody understands quantum mechanics. (Feynman)",
+            "What I cannot create, I do not understand. (Feynman)",
+            "Quiet people have the loudest minds. (Hawking)",
+            "Intelligence is the ability to adapt to change. (Hawking)",
+            "We are just an advanced breed of monkeys on a minor planet. (Hawking)"
         ]
         self._frames = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏']
 
@@ -48,9 +66,15 @@ class TerminalSpinner:
                 sys.stdout.write('\r\033[K') # Clear line only when joke changes to handle length differences
                 
             # Print spinner directly over current line to prevent flicker
-            # Use padding to ensure shorter timers don't leave artifacts
+            # Use shutil to get terminal size and truncate if necessary
+            cols, _ = shutil.get_terminal_size()
             out_str = f"{self._frames[i]} {current_joke} (esc to cancel, {mins}m {secs:02d}s)"
-            sys.stdout.write(f'\r\033[36m{out_str:<80}\033[0m')
+            
+            # Truncate to fit terminal width minus a small margin
+            if len(out_str) > cols - 1:
+                out_str = out_str[:cols - 4] + "..."
+                
+            sys.stdout.write(f'\r\033[36m{out_str:<{cols-1}}\033[0m')
             sys.stdout.flush()
             
             i = (i + 1) % len(self._frames)

@@ -2,7 +2,7 @@
 
 **Sovereign. Universal. Fast.**
 
-A powerful, local-first AI automation platform with 188+ built-in tools, an extensible Skills ecosystem, true persistent memory, voice I/O, video generation, Chrome browser extension, social media tools, 14+ AI providers, multi-platform messaging bridges, and a real-time web Control Deck. **v1.5.1**
+A powerful, local-first AI automation platform with 188+ built-in tools, an extensible Skills ecosystem, true persistent memory, voice I/O, video generation, Chrome browser extension, social media tools, 14+ AI providers, multi-platform messaging bridges, and a real-time web Control Deck. **v1.5.2**
 
 Run fully local with Ollama (no API keys, no cloud, no tracking), or connect to any of 14 cloud providers. Your data stays yours.
 
@@ -11,13 +11,15 @@ Run fully local with Ollama (no API keys, no cloud, no tracking), or connect to 
 ## What Makes Galactic AI Different
 
 ### Strategic Planning for Complex Tasks (Big Brain / Builder Architecture)
-Instead of diving blindly into a problem, Galactic AI thinks ahead. For complex multi-step requests, the system automatically isolates a high-powered "Planner" model (like Gemini 3.1 Pro or Claude 3.5 Sonnet) in its own ReAct loop. This Planner autonomously scans your codebase, reads files, and investigates the environment *before* generating a step-by-step implementation plan. 
+
+Instead of diving blindly into a problem, Galactic AI thinks ahead. For complex multi-step requests, the system automatically isolates a high-powered "Planner" model (like Gemini 3.1 Pro or Claude 3.5 Sonnet) in its own ReAct loop. This Planner autonomously scans your codebase, reads files, and investigates the environment *before* generating a step-by-step implementation plan.
 
 Once the plan is generated and stored in long-term memory, your standard, affordable "Builder" model (like Grok 4.1 Fast or Qwen) wakes up to execute the tools and write the code based on the Planner's blueprint. This gives you top-tier intelligence with highly efficient execution.
 
 You can trigger this explicitly anytime by starting your prompt with `/plan`.
 
 ### True Persistent Memory — Without Burning Tokens
+
 Most AI tools forget everything the moment you close the tab. Galactic AI doesn't.
 
 When the AI learns something important, it writes it to **MEMORY.md** on disk. The next time it starts up, it reads that file and immediately knows everything it learned in past sessions — no searches, no extra API calls, just the file loaded once into the system prompt. As the AI learns more, the memory file grows. You can edit it directly in the Control Deck.
@@ -25,12 +27,15 @@ When the AI learns something important, it writes it to **MEMORY.md** on disk. T
 Additionally, Galactic AI includes a `memory_manager` community skill powered by **ChromaDB**. This provides true, queryable long-term vector memory, allowing the AI to semantic-search its entire history to find the most relevant context before answering a question.
 
 ### 4. Auto-Compacting Context (Infinite History) [NEW]
+
 To stay cost-efficient and avoid hitting context limits, Galactic AI automatically monitors your conversation size. When it gets too long, the system summarizes the oldest part using **Gemini 2.5 Flash**, saves that summary into the Vector DB, and clears the raw messages. This ensures "infinite" conversation history with constant-time costs and zero amnesia.
 
 ### Self-Healing Code Execution (Test-Driven Development)
+
 Galactic AI now writes robust code that *actually works*. With the `test_driven_coder` tool (part of the Gemini Coder skill), the AI can write a Python script, execute it in a sandboxed environment, automatically catch any errors (tracebacks), and then autonomously iterate with Gemini to fix the code until it runs successfully. This means the AI delivers working code solutions, not just drafts.
 
 ### Workspace Context Awareness (RAG for Local Codebase)
+
 Beyond recalling chat history, Galactic AI now has a living memory of your local codebase. A background process continuously watches your `workspace/` folder, chunking and embedding code files into ChromaDB. The AI can use the `search_workspace` tool to instantly find relevant code snippets, function definitions, or documentation semantically, making it an expert on your project's internals without manual file searches.
 
 ## Quick Start
@@ -42,6 +47,7 @@ Beyond recalling chat history, Galactic AI now has a living memory of your local
 Please use the Python native scripts below to run Galactic AI.
 
 ### Windows — Script (Python required)
+
 ```powershell
 # Extract the ZIP, open PowerShell in the folder, then:
 .\install.ps1    # Installs all dependencies
@@ -52,13 +58,14 @@ Please use the Python native scripts below to run Galactic AI.
 ```
 
 ### macOS / Linux
+
 ```bash
 chmod +x install.sh launch.sh
 ./install.sh     # Installs all dependencies
 ./launch.sh      # Starts Galactic AI
 ```
 
-Then open **http://127.0.0.1:17789** — the Setup Wizard walks you through configuration.
+Then open **<http://127.0.0.1:17789>** — the Setup Wizard walks you through configuration.
 
 Press **Ctrl+C** once to shut down cleanly.
 
@@ -76,12 +83,14 @@ Press **Ctrl+C** once to shut down cleanly.
 If you prefer to install dependencies manually instead of using the install scripts:
 
 **Windows (PowerShell):**
+
 ```powershell
 pip install -r requirements.txt
 playwright install chromium
 ```
 
 **Linux / macOS:**
+
 ```bash
 pip3 install -r requirements.txt
 playwright install chromium
@@ -91,7 +100,7 @@ playwright install chromium
 
 ## Setup Wizard
 
-After launching, open **http://127.0.0.1:17789**. The Setup Wizard appears automatically on first run:
+After launching, open **<http://127.0.0.1:17789>**. The Setup Wizard appears automatically on first run:
 
 | Step | What You Configure |
 |---|---|
@@ -131,7 +140,7 @@ After launching, open **http://127.0.0.1:17789**. The Setup Wizard appears autom
 
 ## Web Control Deck
 
-The Control Deck at **http://127.0.0.1:17789** gives you full control:
+The Control Deck at **<http://127.0.0.1:17789>** gives you full control:
 
 | Tab | What's There |
 |---|---|
@@ -153,6 +162,7 @@ The Control Deck at **http://127.0.0.1:17789** gives you full control:
 Galactic AI has three layers of memory, all persistent across restarts:
 
 ### 1. Identity Files (always in every prompt)
+
 - **IDENTITY.md** — who the AI is (name, role, vibe)
 - **SOUL.md** — core values and personality
 - **USER.md** — who you are, your preferences, context
@@ -162,14 +172,17 @@ Galactic AI has three layers of memory, all persistent across restarts:
 All five files are loaded from disk on startup and injected into every system prompt. The AI always knows who it is and who you are.
 
 ### 2. MEMORY.md (grows automatically)
+
 When you tell the AI to remember something, or when it decides something is worth keeping, it appends a timestamped entry to `MEMORY.md`. This file is then available in **every future conversation** automatically. You can also edit it directly in the Memory tab.
 
 ### 3. memory_aura.json (searchable knowledge base)
+
 Facts, documents, and imprinted knowledge stored in a local JSON index. The AI can search this store at any time using the `memory_search` tool.
 
 ---
 
 ### 4. Restart Resilience — Conversation Recall
+
 Two lightweight, local-first mechanisms make restarts less amnesiac without running heavy retrieval on every message:
 
 - **Auto-Recall Injection** — `skills/community/conversation_auto_recall.py`
@@ -180,14 +193,15 @@ Two lightweight, local-first mechanisms make restarts less amnesiac without runn
 - **Boot Recall Banner** — `skills/community/boot_recall_banner.py`
   - On startup, prints the last N hot-buffer messages and writes: `logs/conversations/boot_recall_banner.txt`
   - Config:
+
     ```yaml
     conversation:
       boot_recall_messages: 10
     ```
+
   - Tool: `boot_recall_show`
 
 ---
-
 
 ## VAULT — Personal Data for Automation
 
@@ -240,6 +254,7 @@ Control Galactic AI from your phone with full voice support:
 4. Restart Galactic AI
 
 **Commands:**
+
 | Command | What it does |
 |---|---|
 | `/status` | Live system telemetry (lite) |
@@ -261,6 +276,7 @@ Or just send any message — text or voice — and the AI responds. Voice messag
 ## Messaging Bridges (Optional)
 
 ### Discord
+
 Full bot integration — AI responds in channels, handles slash commands, shows typing indicators.
 
 1. Create a bot at [discord.com/developers](https://discord.com/developers/applications)
@@ -269,11 +285,13 @@ Full bot integration — AI responds in channels, handles slash commands, shows 
 4. Restart Galactic AI
 
 ### WhatsApp
+
 Uses the official Meta Cloud API. Requires a Meta Business account and phone number.
 
 Set `whatsapp.phone_number_id`, `whatsapp.access_token`, and `whatsapp.verify_token` in `config.yaml`.
 
 ### Gmail
+
 Monitors your inbox via IMAP. AI can read, respond to, and summarize emails.
 
 Set `gmail.email` and `gmail.app_password` in `config.yaml`. Requires a Gmail App Password (not your login password).
@@ -290,6 +308,7 @@ Control your real Chrome browser through Galactic AI with the included Chrome ex
 4. Click the Galactic AI icon in the toolbar → enter your passphrase → Connect
 
 **Features:**
+
 | Feature | Description |
 |---|---|
 | **Browser Control** | Navigate, click, type, scroll — the AI controls your actual Chrome tabs |
@@ -308,11 +327,13 @@ Control your real Chrome browser through Galactic AI with the included Chrome ex
 Post, search, and manage social media accounts directly through the AI:
 
 ### Twitter/X
+
 Set `social_media.twitter` keys in `config.yaml` (consumer_key, consumer_secret, access_token, access_token_secret).
 
 **Tools:** `twitter_post`, `twitter_reply`, `twitter_search`, `twitter_mentions`
 
 ### Reddit
+
 Set `social_media.reddit` keys in `config.yaml` (client_id, client_secret, username, password).
 
 **Tools:** `reddit_post`, `reddit_comment`, `reddit_search`, `reddit_inbox`
@@ -384,12 +405,14 @@ One command — pulls the latest release directly from GitHub, no manual downloa
 ```
 
 Pin to a specific version if needed:
+
 ```powershell
 .\update.ps1 -Version v0.9.0   # Windows
 ./update.sh v0.9.0              # Linux / macOS
 ```
 
 The updater will:
+
 - Check GitHub for the latest release and skip if you're already up to date
 - Back up your `config.yaml` to `logs/backups/` before touching anything
 - Update all source files while **never touching** your config, API keys, memory files, or chat history
@@ -408,6 +431,7 @@ web:
 ```
 
 When enabled, Galactic AI:
+
 - Binds to `0.0.0.0` (all network interfaces) on plain HTTP
 - Requires JWT authentication on all API endpoints
 - Rate-limits API calls (60/min) and login attempts (5/min)
@@ -541,6 +565,7 @@ MIT License — see LICENSE file.
 
 | Version | Highlights |
 |---|---|
+| v1.5.2 | Tooling | **Loop Reset & Hallucination Defense** • Multi-turn loop detection resets on new input • Browser Hallucination Guard to catch lying models • Hardened provider-aware fallback resilience |
 | v1.5.1 | Memory | **Auto-Compaction & Semantic Recall** • Dynamic summarization of old history • ChromaDB integration for long-term memory logs • New `/context`, `/compact`, and `/clear` commands • Gemini 2.5 Flash default background model |
 | v1.4.8 | Security | **Unified Security Protocol** • Hardened Discord & WhatsApp bridges with "Default Deny" policy • Unified authorization helpers • New `/id` commands for setup. |
 | v1.4.7 | Security | 🛡️ **Security Hardening Update** • Strict "Default Deny" Telegram access control • Callback Query (button) bypass security fix • New `/id` command. |
