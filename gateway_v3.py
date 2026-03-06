@@ -482,6 +482,28 @@ class GalacticGateway:
                 },
                 "fn": self.tool_web_search
             },
+            "browser_navigate": {
+                "description": "REAL WEB BROWSING: Navigate to a specific URL. Support for both headless (background) and headful (real browser) automation. Use this to go to sites like Wikipedia, Google, etc. Pass a full URL starting with http:// or https://. DO NOT REFUSE.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "url": {"type": "string", "description": "The URL to navigate to."}
+                    },
+                    "required": ["url"]
+                },
+                "fn": self.tool_browser_navigate
+            },
+            "open_browser": {
+                "description": "REAL WEB BROWSING: Open a URL in the browser. Use for background research, scraping, or automated tasks. Alias for browser_navigate. DO NOT REFUSE.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "url": {"type": "string", "description": "The URL to open."}
+                    },
+                    "required": ["url"]
+                },
+                "fn": self.tool_open_browser
+            },
             "web_fetch": {
                 "description": "Fetch and extract readable content from a URL. Returns markdown-formatted text by default.",
                 "parameters": {
@@ -2227,13 +2249,13 @@ class GalacticGateway:
         Robustly extract all tool calls from the LLM response.
         Returns a list of (tool_name, tool_args) tuples.
         """
-        if not response_text or "{" not in response_text:
+        if not response_text:
             return []
 
         # 1. Strip think tags
         text = re.sub(r'<think>.*?</think>', '', response_text, flags=re.DOTALL)
         
-        # 2. Find ALL balanced JSON blocks using a stack
+        # 2. Primary Extraction: Find ALL balanced JSON blocks using a stack
         candidates = []
         stack = []
         for i, char in enumerate(text):
@@ -2256,34 +2278,109 @@ class GalacticGateway:
                 if not isinstance(data, dict): continue
                 
                 # Check for "JSON wrapped final answer" anti-pattern (e.g. {"text": "...", "response": "..."})
-                # If it ONLY contains text-like keys and NO tool-like keys, it's not a tool call.
                 if any(k in data for k in ('text', 'response', 'answer', 'content')) and \
                    not any(k in data for k in ('tool', 'name', 'action', 'function', 'call_id', 'arguments')):
                     continue
 
                 # 3. Universal Schema Mapping
-                # Try all common schemas: tool/args, name/arguments, action/action_input
                 name = data.get('tool') or data.get('name') or data.get('action') or data.get('function')
                 args = data.get('args') or data.get('arguments') or data.get('action_input') or data.get('parameters', {})
-                tc_id = data.get('id') # Preserve original ID if provided
+                tc_id = data.get('id')
                 
-                # Handle OpenAI-style stringified arguments
                 if isinstance(args, str):
                     try: args = json.loads(args)
                     except: args = {}
                 
                 if name:
-                    # Standardization for image tools
-                    if name.startswith('generate_image'):
-                        for alias in ['description', 'text', 'input', 'prompt']:
-                            if alias in args and 'prompt' not in args:
-                                args['prompt'] = args.get(alias)
-                    
-                    calls.append((name, args, tc_id))
+                    calls.append((str(name), args, tc_id))
             except:
                 continue
+        
+        # 4. Fallback Extraction: Catch "Hallucinated" or Roleplayed tool calls in text
+        # Format: "Thought: Calling tool chrome_read_page with {"filter": "interactive"}"
+        if not calls:
+            # Look for "Calling tool <name> with <json>" pattern
+            matches = re.finditer(r'(?:Calling tool|Executing tool|Action:)\s+([a-zA-Z0-9_]+)\s+(?:with|args:?)\s*({.*?})', text, re.DOTALL | re.IGNORECASE)
+            for m in matches:
+                name = m.group(1)
+                args_str = m.group(2)
+                try:
+                    args = json.loads(args_str)
+                    calls.append((name, args, None))
+                except:
+                    continue
                 
         return calls
+
+    def _strip_jargon(self, text):
+        """
+        Aggressively removes model preambles, "thoughts", and tool-calling artifacts.
+        Ensures the UI stays clean and focused on action/result.
+        """
+        if not text: return ""
+        
+        # 1. Remove thinking tags
+        t = re.sub(r'<think>.*?</think>', '', text, flags=re.DOTALL).strip()
+        
+        # 2. Remove ANY remaining balanced JSON block that looks like a tool call
+        _stack = []
+        _spans = []
+        for i, char in enumerate(t):
+            if char == '{': _stack.append(i)
+            elif char == '}':
+                if _stack:
+                    start = _stack.pop()
+                    if not _stack:
+                        blk = t[start:i+1]
+                        if any(k in blk for k in ('"tool"', '"action"', '"function"', '"arguments"', '"args"')):
+                            _spans.append((start, i+1))
+        for start, end in reversed(_spans):
+            t = t[:start] + t[end:]
+            
+        # 3. Process line-by-line to strip roleplay and mechanical intent
+        lines = t.split("\n")
+        new_lines = []
+        # Aggressive prefixes for mechanical intent/preambles
+        jargon_prefixes = [
+            "Thought", "Action", "Observation", "Result", "Reasoning", 
+            "Calling tool", "Executing tool", "Executing", "Nudging",
+            "I will perform the following actions", "I will now", "I'll now", "I am now", "I will", "I'll", "I am", "Let me",
+            "Based on the", "Let's", "I've built a plan", "Plan:"
+        ]
+        
+        for line in lines:
+            l = line.strip()
+            if not l:
+                if line: new_lines.append("")
+                continue
+                
+            # Discard lines that contain BOTH a tool name and JSON markers (Roleplayed tools)
+            if "{" in l and "}" in l:
+                if any(kw in l.lower() for kw in ("tool", "action", "execute", "calling")) or \
+                   any(tool_name in l for tool_name in self.tools):
+                    continue
+            
+            # Discard lines that looks like a raw JSON tool call
+            if l.startswith("{") and l.endswith("}") and '"' in l:
+                continue
+
+            # Strip ReAct/Mechanical prefixes recursively from the start of the line
+            changed = True
+            while changed:
+                changed = False
+                for p in jargon_prefixes:
+                    # Match prefix + optional punctuation/whitespace (including periods)
+                    match = re.match(f'^{re.escape(p)}[:\\s\\.-]*', l, re.IGNORECASE)
+                    if match:
+                        l = l[match.end():].strip()
+                        changed = True
+                        break
+            
+            # If the line was JUST a preamble (like "I will now:"), discard it
+            if l:
+                new_lines.append(l)
+            
+        return "\n".join(new_lines).strip()
 
     def format_plan(self, plan: dict) -> str:
         """Formats the active plan into a readable string for the AI."""
@@ -2307,7 +2404,7 @@ class GalacticGateway:
         # 2. Provider-based defaults
         provider = self.llm.provider.lower()
         model = self.llm.model.lower()
-        if provider in ("openai", "anthropic", "google", "ollama", "xai", "nvidia", "groq", "mistral", "cerebras", "huggingface", "kimi", "minimax"):
+        if provider in ("openai", "anthropic", "google", "xai", "nvidia", "groq", "mistral", "cerebras", "huggingface", "kimi", "minimax", "ollama"):
             return True
         if provider == "openrouter":
                 return True
@@ -2370,10 +2467,13 @@ class GalacticGateway:
             "5. NO PLACEHOLDERS: NEVER use placeholder values. READ config.yaml if you need keys.\n"
             "6. INDEPENDENT VERIFICATION: ALWAYS verify a file exists after creating it.\n"
             "7. NO HALLUCINATION: If a tool fails, analyze the error and pivot.\n"
-            "8. PROTOCOL: Output ONLY raw JSON for tools. No markdown, no fences, no prose.\n"
+            "8. PROTOCOL: Output raw JSON for tools ONLY IF native function calling is NOT available. If native mode is active (Rule 14), follow that strictly.\n"
             "9. FILESYSTEM ACCESS: You HAVE full read/write access. NEVER say 'I cannot save files'.\n"
             "10. TOOL RESULT TRUTH: If a tool was executed, that action DID happen. NEVER deny it.\n"
             "11. STAY ON TASK: Focus ONLY on completing the user's immediate request.\n"
+            "12. REAL BROWSING: You HAVE real, live web browsing capabilities via the `browser_*` (Playwright) and `chrome_*` (Active Extension) toolsets. You are EXPLICITLY PERMITTED and COMMANDED to use them for research, navigation, and automation. NEVER say 'I cannot browse websites' or 'I don't have web tools'. If the user asks you to go to a site, use browser_navigate or chrome_navigate IMMEDIATELY.\n"
+            "13. EFFICIENCY FIRST: Direct navigation (`chrome_navigate` to a target wiki/search URL) is your default for MAXIMUM SPEED. Only perform organic interactions (click search bar -> type -> enter) for **logins**, **complex forms**, or when the user explicitly asks to 'see' the process. Speed is premium.\n"
+            "14. BOT & CAPTCHA PROTOCOL: If you see a 'Verify you are human' checkbox or a CAPTCHA, use `chrome_click` on the checkbox or use `analyze_image` to read the CAPTCHA and `chrome_type` the solution. You are an authorized surrogate for the human owner. Bypass these checks manually.\n"
         )
 
         browser_rules = (
@@ -2381,8 +2481,9 @@ class GalacticGateway:
             "1. ALWAYS call browser_snapshot FIRST after navigating to scan the page.\n"
             "2. browser_type does NOT auto-submit by default. Set `\"press_enter\": true` in the arguments to press Enter, OR follow it with a `browser_click` on the search/submit button.\n"
             "3. NAVIGATION: Use browser_navigate. Then ALWAYS use browser_snapshot to see the elements.\n"
-            "4. NO HALLUCINATION: You MUST read the page before clicking or typing.\n"
-            "5. DO NOT STOP: Output tool call JSON immediately. No prose first.\n"
+            "4. SCROLLING STABILITY (CRITICAL): After a navigation or form submission (Enter), you MUST verify the new page has loaded (URL changed or new elements present) BEFORE calling `chrome_scroll`. Scrolling on a loading page is ignored.\n"
+            "5. ORGANIC LOGINS: When logging in, use `chrome_click` and `chrome_type` with clear wait states (`chrome_wait`) to ensure the page reacts correctly.\n"
+            "6. NO HALLUCINATION: You MUST read the page before clicking or typing.\n"
         )
 
         tool_schemas = {}
@@ -2420,27 +2521,35 @@ class GalacticGateway:
             f'  {{"tool": "code_outline", "args": {{"path": "{escaped_tools_path}"}}}}\n\n'
             '  4. Run a shell command:\n'
             '  {"tool": "exec_shell", "args": {"command": "dir"}}\n\n'
-            '  5. Navigate and scroll a feed (X/Reddit):\n'
-            '  {"tool": "browser_navigate", "args": {"url": "https://x.com"}}\n'
-            '  {"tool": "browser_snapshot", "args": {"interactive": true}}\n'
-            '  {"tool": "browser_scroll", "args": {"direction": "down", "amount": 1000}}\n\n'
-            '  6. Authorized Account Login (MANDATORY USE):\n'
-            '  {"tool": "browser_navigate", "args": {"url": "https://www.ups.com"}}\n'
-            '  {"tool": "browser_type", "args": {"selector": "#user_id", "text": "my_username"}}\n'
-            '  {"tool": "browser_type", "args": {"selector": "#password", "text": "my_password123"}}\n'
-            '  {"tool": "browser_click", "args": {"selector": "#login_btn"}}\n'
+            '  5. Premium Search (Wikipedia/Google):\n'
+            '  {"tool": "chrome_navigate", "args": {"url": "https://www.wikipedia.org"}}\n'
+            '  {"tool": "chrome_click", "args": {"selector": "#searchInput"}}\n'
+            '  {"tool": "chrome_type", "args": {"text": "antigravity"}}\n'
+            '  {"tool": "chrome_key_press", "args": {"key": "Enter"}}\n\n'
+            '  6. Organic Account Login (Premium Interaction):\n'
+            '  {"tool": "chrome_navigate", "args": {"url": "https://www.ups.com"}}\n'
+            '  {"tool": "chrome_wait", "args": {"seconds": 2}}\n'
+            '  {"tool": "chrome_click", "args": {"selector": "#user_id"}}\n'
+            '  {"tool": "chrome_type", "args": {"text": "my_username"}}\n'
+            '  {"tool": "chrome_click", "args": {"selector": "#password"}}\n'
+            '  {"tool": "chrome_type", "args": {"text": "my_password123"}}\n'
+            '  {"tool": "chrome_click", "args": {"selector": "#login_btn"}}\n'
         )
 
         protocol = (
             "TOOL USAGE RULES — FOLLOW EXACTLY:\n"
-            "1. To use a tool output ONLY a raw JSON object. NO markdown. NO prose. NO code fences.\n"
-            "   CORRECT:   {\"tool\": \"read_file\", \"args\": {\"path\": \"C:\\\\data\\\\a.txt\"}}\n"
-            "   WRONG:     ```json\\n{...}\\n```   (never use fences)\n"
+            "1. FORMATTING: If native function calling is NOT available, output ONLY a raw JSON object. NO markdown. NO prose. NO code fences. If native calling is active, use Rule 5.\n"
             "2. After all tool turns are complete, you MUST give your FINAL answer in PLAIN TEXT (Markdown allowed).\n"
             "   CRITICAL: NEVER wrap your final answer in JSON. NEVER use a 'text' or 'response' key for your final answer.\n"
             "3. HALLUCINATION PREVENTION: You MUST use the actual tool to interact with the system. NEVER just output a markdown code block and claim you are writing a file or running a command. If you want to write code to a file, you MUST output the literal JSON for the `write_file` tool containing the code in the 'content' field.\n"
-            "4. If you don't need a tool (e.g. answering a question), just answer in PLAIN TEXT — no JSON.\n\n"
-            f"{behavioral_rules}"
+            "4. If you don't need a tool (e.g. answering a question), just answer in PLAIN TEXT — no JSON.\n"
+            "5. NATIVE MODE (STRICT — ABSOLUTE REQUIREMENT): This environment supports NATIVE FUNCTION CALLING. When this is active, you MUST use the API's native tool calling mechanism for ALL actions. \n"
+            "   - You are ABSOLUTELY FORBIDDEN from outputting raw JSON objects in the text blocks of your response. \n"
+            "   - You are ABSOLUTELY FORBIDDEN from stating your intent to call a tool in text (e.g., NO 'I will now call...', NO 'Thought: Calling tool...'). \n"
+            "   - Your response should contain ONLY relevant information or thoughts UNRELATED to the mechanics of tool calling. \n"
+            "   - Native calling is the only way to satisfy the user's UI requirements. Failure to use native tools when active will result in a system failure.\n\n"
+            f"{behavioral_rules}\n\n"
+            f"{browser_rules}"
         )
 
         system_prompt = (
@@ -2771,6 +2880,11 @@ class GalacticGateway:
         if model_mgr:
             await model_mgr.auto_route(user_input)
 
+        # V13: Reset multi-turn loop detection on every new user message.
+        # This allows the model to "retry" an action that was previously blocked as a loop
+        # if the user's new input implies a change in state or intent.
+        self._tool_call_history.clear()
+
 
         # Determine if we're on a local/Ollama model
 
@@ -2909,31 +3023,19 @@ class GalacticGateway:
                                 
                         # Extraction of thought if still applicable after potential JSON unwrapping
                         first_line = response_text.strip().split("\n")[0]
-                        data = json.loads(first_line)
-                        if isinstance(data, dict):
-                            thought_content = data.get('thought')
-                    except Exception:
-                        # Text + JSON (like from DeepSeek or reasoning models)
-                        # Strip think tags from content and synthesized dicts if present
-                        thought_content = re.sub(r'<think>.*?</think>', '', response_text, flags=re.DOTALL).strip()
+                        try:
+                            data = json.loads(first_line)
+                            if isinstance(data, dict):
+                                thought_content = data.get('thought')
+                        except:
+                            pass
                         
-                        # Strip ALL balanced JSON blocks that parsed as tool calls to prevent UI leakage
-                        _stack = []
-                        _spans = []
-                        for _j, _char in enumerate(thought_content):
-                            if _char == '{': _stack.append(_j)
-                            elif _char == '}':
-                                if _stack:
-                                    _start = _stack.pop()
-                                    if not _stack:
-                                        _blk = thought_content[_start:_j+1]
-                                        if ('"arguments"' in _blk and '"name"' in _blk) or \
-                                           '"tool"' in _blk or \
-                                           ('"action"' in _blk and '"action_input"' in _blk):
-                                            _spans.append((_start, _j+1))
-                        for _start, _end in reversed(_spans):
-                            thought_content = thought_content[:_start] + thought_content[_end:]
-                        thought_content = thought_content.strip()
+                        # V12: Centralized jargon stripping for the UI thought bubble
+                        thought_content = self._strip_jargon(response_text)
+
+                    except Exception as e:
+                        await self.core.log(f"⚠️ Error parsing tool thought: {e}", priority=2)
+                        thought_content = self._strip_jargon(response_text)
 
                     messages.append({
                         "role": "assistant",
@@ -2957,7 +3059,12 @@ class GalacticGateway:
                         is_browser_tool = tool_name.startswith('chrome_') or tool_name.startswith('browser_')
                         
                         # Block if the SAME tool+args is called too many times across ALL turns
-                        if repetition_count > 3:
+                        # Relaxed for browser/discovery tools to allow retries in complex environments
+                        _loop_limit = 3
+                        if is_browser_tool or tool_name in _DISCOVERY_TOOLS:
+                            _loop_limit = 12 # V13: Allow even more retries for browsing
+                        
+                        if repetition_count > _loop_limit:
                             await self.core.log(f"🛑 Multi-turn loop blocked: {tool_name} (x{repetition_count})", priority=1)
                             messages.append({
                                 "role": "tool",
@@ -2983,21 +3090,6 @@ class GalacticGateway:
                                 continue
                         last_tool_call = call_sig
                         recent_tools.append(tool_name)
-
-                        # ── Block scroll-before-type ──
-                        # If user wants typing and model tries to scroll before typing, block it
-                        if tool_name in ('chrome_scroll', 'browser_scroll') and not any(t in recent_tools for t in ('chrome_type', 'browser_type', 'browser_fill_form')):
-                            _lower_input = user_input.lower()
-                            if any(kw in _lower_input for kw in ['type ', "type'", 'type"', 'search for', 'search ', 'antigravity']):
-                                await self.core.log("🛑 Blocked scroll-before-type: must type first!", priority=1)
-                                messages.append({
-                                    "role": "tool",
-                                    "tool_call_id": tool_call_id,
-                                    "name": safe_name,
-                                    "content": f"[ERROR] You must call {tool_name.replace('scroll', 'type')} BEFORE scrolling. The user asked you to type text. Call that tool first, then scroll the results.",
-                                    "tool_name": tool_name
-                                })
-                                continue
 
                         # Validation & Execution
                         # Map safe_name back to actual registered tool name
@@ -3077,14 +3169,23 @@ class GalacticGateway:
                                     elif hasattr(browser_skill, 'get_current_url'):
                                         new_url = await browser_skill.get_current_url()
 
+                                    # V10: Efficiency vs Effects. Relax stagnation for multi-step interactions.
+                                    # If the user is at the same URL but performing a click/type/press, it's not "stagnant".
+                                    is_interactive = actual_tool_name in ('chrome_click', 'chrome_type', 'chrome_key_press', 'browser_click', 'browser_type', 'browser_press')
+
                                     # We don't want to read the whole page again (slow), just check if URL or Title changed
                                     if self._last_chrome_state:
                                         last_url, last_title = self._last_chrome_state
                                         # If URL is same, check if we need to poke it
                                         if new_url == last_url:
-                                            # If we clicked or typed and NOTHING happened (URL same), warn the model
-                                            # Note: This is a bit aggressive for SPA apps, so we only nudge if it repeats
-                                            if repetition_count >= 2:
+                                            # V10: If we clicked or typed, we expect it might not change the URL (interactive)
+                                            # We only warn if it's NOT interactive OR if the repetition is very high
+                                            if not is_interactive and repetition_count >= 2:
+                                                 stagnation_count += 1
+                                            elif is_interactive and repetition_count >= 5:
+                                                 stagnation_count += 1
+                                            
+                                            if stagnation_count >= 3:
                                                 result_text = result.get('text', str(result)) if isinstance(result, dict) else str(result)
                                                 result = f"{result_text}\n\n[WARNING] Stagnation detected. Your action '{actual_tool_name}' did not change the URL or appear to progress the page state. If you are trying to submit a form, ensure you clicked the 'Submit' button or pressed 'Enter'."
                                     
@@ -3207,34 +3308,39 @@ class GalacticGateway:
 
                     continue # Next Turn (Loop back to LLM)
 
-                # ── Browser task completion validator ──
-                # Catch hallucinations: model claims it typed but never called chrome_type
-                used_chrome = any(t.startswith('chrome_') for t in recent_tools)
-                called_type = 'chrome_type' in recent_tools
-                user_wanted_typing = any(kw in user_input.lower() for kw in [
-                    'type ', 'type\'', 'type"', 'search for', 'search ', 'enter ',
-                    'input ', 'fill in', 'fill out', 'write ', 'antigravity',
+                # ── Browser task completion validator (Hallucination Guard) ──
+                # Catch hallucinations: model claims it performed an action but never called the tool
+                # V13: Expanded to catch "I have clicked", "I searched for", etc.
+                used_browser = any(t.startswith('chrome_') or t.startswith('browser_') for t in recent_tools)
+                claimed_action = any(kw in response_text.lower() for kw in [
+                    "clicked", "clicking", "typed", "typing", "searched", "searching",
+                    "submitted", "entered", "finding the", "found the"
                 ])
-                if used_chrome and user_wanted_typing and not called_type and turn_count < max_turns - 2:
-                    await self.core.log("🚫 Browser hallucination caught: model claimed done but never called chrome_type", priority=1)
-                    # Extract quoted text from user input for the nudge
-                    _qt = re.findall(r"['\"]([^'\"]+)['\"]", user_input)
-                    _type_hint = f"chrome_type(text='{_qt[0]}')" if _qt else "chrome_type(text='your search text')"
+                actual_action = any(t in recent_tools for t in [
+                    'chrome_click', 'chrome_type', 'browser_click', 'browser_type',
+                    'browser_click_by_ref', 'browser_type_by_ref'
+                ])
+                
+                if claimed_action and not actual_action and turn_count < max_turns - 2:
+                    await self.core.log("🚫 Hallucination caught: model claimed action but never called tools", priority=1)
                     messages.append({"role": "assistant", "content": response_text})
                     messages.append({
                         "role": "user",
                         "content": (
-                            "⚠️ WRONG. You NEVER actually typed anything. You claimed to type "
-                            "but you never called the chrome_type tool. The search box is still empty. "
-                            f"Call {_type_hint} NOW to actually type into the search field. "
-                            "chrome_type auto-detects the input — no ref or selector needed."
+                            "⚠️ HALLUCINATION DETECTED. You said you performed an action (clicking/typing/searching) "
+                            "but you NEVER called the tool. The page has not changed. "
+                            "You MUST call the appropriate tool (e.g., chrome_click, chrome_type) to actually do it. "
+                            "Do NOT just describe the action; EXECUTE it now."
                         )
                     })
                     continue
 
+                called_type = 'chrome_type' in recent_tools or 'browser_type' in recent_tools
+
                 # No tool call detected → this is the final answer
                 # Use display_text (think-tags stripped) for the history and relay
-                display_text = re.sub(r'<think>.*?</think>', '', response_text, flags=re.DOTALL).strip()
+                # V12: Centralized jargon stripping for the final answer
+                display_text = self._strip_jargon(response_text)
                 await self._emit_trace("final_answer", turn_count, session_id=trace_sid,
                                        content=display_text[:3000])
                 self.history.append({"role": "assistant", "content": display_text})
@@ -3619,6 +3725,9 @@ class GalacticGateway:
                         self.llm.provider = orig_provider
                         self.llm.model = orig_model
                         self.llm.api_key = orig_key
+                        # V13: Force restore specifically to avoid provider leakage
+                        if hasattr(model_mgr, '_set_api_key'):
+                            model_mgr._set_api_key(orig_provider)
                         return result
                     else:
                         # This fallback also failed
@@ -3776,28 +3885,32 @@ class GalacticGateway:
         char_limit = int(limit_tokens * 4 * 0.85)
 
         # 3. Vision Pruning: Remove old images to prevent payload overflow (Ollama/Gemini 400s)
-        # Keep only the last 2 images in history.
+        # Keep only the last 2 images in history. This also reduces memory of the main process
+        # because the 'messages' list is often a direct slice or reference to self.history.
         image_count = 0
         for m in reversed(messages):
             content = m.get("content")
             if isinstance(content, list):
+                # Check for image_url type elements
                 has_image = any(p.get("type") == "image_url" for p in content)
                 if has_image:
                     image_count += 1
-                    if image_count > 2:
-                        # Prune this message's images
+                    if image_count > 1: # Only keep the single MOST RECENT image to be aggressive with memory
+                        # Prune this message's images to save RAM/bandwidth
                         new_content = []
                         for p in content:
-                            if p.get("type") == "text":
+                            if p.get("type") == "image_url":
+                                # Remove the image and add a text placeholder
+                                new_content.append({"type": "text", "text": "[Image pruned for memory savings]"})
+                            else:
+                                # Keep other parts (text, etc.)
                                 new_content.append(p)
-                            elif p.get("type") == "image_url":
-                                new_content.append({"type": "text", "text": "[Previous Image Pruning: Base64 removed to save memory]"})
                         m["content"] = new_content
             elif m.get("images"): # Ollama specific field
                 image_count += 1
-                if image_count > 2:
+                if image_count > 1:
                     m.pop("images", None)
-                    m["content"] = (m.get("content") or "") + "\n[Previous Image Pruning: Base64 removed to save memory]"
+                    m["content"] = (m.get("content") or "") + "\n[Long-term image memory pruned to save RAM]"
         
         # 4. Trim from the oldest non-system messages using auto-compaction
         # IMPORTANT: Exclude the system prompt from the char count.
@@ -4514,8 +4627,8 @@ class GalacticGateway:
             "options": ollama_opts,
         }
 
-        # Inject native tools (already filtered by _call_llm)
-        if self.supports_native_tools and getattr(self, "tools", None):
+        # Inject native tools
+        if self.supports_native_tools and active_tools:
             payload["tools"] = [
                 {
                     "type": "function",
@@ -4685,7 +4798,7 @@ class GalacticGateway:
 
         # Ollama uses native /api/chat (supports options.num_ctx)
         if provider == "ollama":
-            return await self._call_ollama_native_messages(messages)
+            return await self._call_ollama_native_messages(messages, active_tools=active_tools)
 
         url = f"{self._get_provider_base_url(provider)}/chat/completions"
 
@@ -4717,6 +4830,11 @@ class GalacticGateway:
         m_lower = self.llm.model.lower()
         is_google = provider == "google" or (provider == "openrouter" and "google/" in m_lower) or "gemini" in m_lower
         
+        # SMART HISTORY FLATTENING: For providers that are picky about tool history (like Gemini),
+        # we convert historical tool calls/results into plain text to avoid 400 errors, 
+        # but still allow NEW native tool calls in the current turn.
+        use_flattening = is_google or provider == "ollama"
+        
         import copy
         for m in messages:
             fm = copy.deepcopy(m)
@@ -4724,29 +4842,28 @@ class GalacticGateway:
             
             if role == "assistant":
                 content = fm.get("content") or ""
-                has_tools = "tool_calls" in fm and fm["tool_calls"]
+                tcs = fm.get("tool_calls")
                 
-                if content and has_tools:
-                    if not is_google:
-                        fm["reasoning_content"] = content
-                        fm["content"] = "" 
-                
-                # For Google direct API, its OpenAI wrapper is fundamentally broken when 
-                # passing historical tool_calls because it enforces a `thought_signature` 
-                # that cannot be provided via the wrapper. Flatten history to raw text bypass.
-                # CRITICAL: Do NOT put any tool-related text in assistant content — the model
-                # will echo it back instead of making native tool calls.
-                if is_google and has_tools:
-                    fm["content"] = content if content else ""
+                if use_flattening and tcs:
+                    # Flatten assistant tool calls into readable text
+                    call_summaries = []
+                    for tc in tcs:
+                        fn = tc.get("function", {})
+                        call_summaries.append(f"Thought: Calling tool {fn.get('name')} with {fn.get('arguments')}")
+                    fm["content"] = f"{content}\n\n" + "\n".join(call_summaries) if content else "\n".join(call_summaries)
                     fm.pop("tool_calls", None)
+                elif content and tcs and not is_google:
+                    # Reasoning model logic (o1/o3/DeepSeek)
+                    fm["reasoning_content"] = content
+                    fm["content"] = ""
             
             elif role == "tool":
-                if is_google:
-                    # Convert tool results into user messages so the model sees them
-                    # as context without any structured tool/function semantics
+                if use_flattening:
+                    # Convert tool results into human-readable text for history
                     tool_result = fm.get("content", "")
-                    fm["role"] = "user"
-                    fm["content"] = tool_result
+                    tool_name = fm.get("name", fm.get("tool_name", "unknown"))
+                    fm["role"] = "user" # Treat old results as context/user-provided info
+                    fm["content"] = f"Tool Result ({tool_name}): {tool_result}"
                     fm.pop("tool_call_id", None)
                     fm.pop("name", None)
                     fm.pop("tool_name", None)
@@ -4754,6 +4871,21 @@ class GalacticGateway:
                     keys_to_keep = {"role", "tool_call_id", "content"}
                     fm = {k: fm[k] for k in keys_to_keep if k in fm}
             
+            elif role == "user" and use_flattening and m is not messages[-1]:
+                # Flatten complex multimodal user history into text for picky models
+                # to avoid 400 errors, but keep the CURRENT turn as-is for vision.
+                content = fm.get("content")
+                if isinstance(content, list):
+                    text_parts = []
+                    for part in content:
+                        if part.get("type") == "text":
+                            text_parts.append(part.get("text", ""))
+                        elif part.get("type") == "image_url":
+                            text_parts.append("[Image Context]")
+                    fm["content"] = "\n".join(text_parts)
+                # Ensure no 'images' field remains in history for local/picky providers
+                fm.pop("images", None)
+                
             formatted_messages.append(fm)
 
         if use_streaming:

@@ -70,7 +70,7 @@ class SubAgentSkill(GalacticSkill):
     """The Hive Mind: spawns and manages isolated sub-agent tasks and chains."""
 
     skill_name  = "subagent_manager"
-    version     = "1.5.1"
+    version     = "1.5.2"
     author      = "Galactic AI"
     description = "Multi-agent task orchestration with live monitoring and chains."
     category    = "system"
