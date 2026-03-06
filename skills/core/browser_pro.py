@@ -62,7 +62,7 @@ def ensurePageState(page):
 class BrowserProSkill(GalacticSkill):
     skill_name   = "browser_pro"
     display_name = "Browser Pro"
-    version      = "1.5.1"
+    version      = "1.5.2"
     author       = "cmmchsvc"
     description = "Full Playwright browser automation (55 tools)."
     category    = "browser"
@@ -127,7 +127,8 @@ class BrowserProSkill(GalacticSkill):
                     "type": "object",
                     "properties": {
                         "format": {"type": "string", "description": "Snapshot format: 'ai' (numeric refs) or 'aria' (role refs)", "default": "ai"},
-                        "interactive": {"type": "boolean", "description": "Return only interactive elements (buttons, links, inputs)", "default": False}
+                        "interactive": {"type": "boolean", "description": "Return only interactive elements (buttons, links, inputs)", "default": False},
+                        "max_refs": {"type": "integer", "description": "Maximum number of elements to return (default: 50)", "default": 50}
                     },
                     "required": []
                 },
@@ -753,10 +754,11 @@ class BrowserProSkill(GalacticSkill):
         """Take OpenClaw-style snapshot for ref-based automation."""
         format_type = args.get('format', 'ai')
         interactive = args.get('interactive', False)
+        max_refs = args.get('max_refs', 50)
         try:
             if not self.started:
                 return "[ERROR] Browser not started. Use browser_search or navigate to open the browser first."
-            result = await self.snapshot(format=format_type, interactive=interactive)
+            result = await self.snapshot(format=format_type, interactive=interactive, max_refs=max_refs)
             if result['status'] == 'success':
                 return f"[BROWSER SNAPSHOT - {format_type.upper()} format]\n{result['snapshot']}"
             else:
@@ -1529,7 +1531,7 @@ class BrowserProSkill(GalacticSkill):
         except Exception as e:
             return {"status": "error", "message": str(e)}
 
-    async def snapshot(self, format="ai", interactive=False, compact=False, depth=6, max_chars=50000, page_id=None):
+    async def snapshot(self, format="ai", interactive=False, compact=False, depth=6, max_chars=15000, page_id=None, max_refs=50):
         """Take accessibility snapshot of page for automation refs."""
         try:
             page = self._get_page(page_id)
@@ -1572,20 +1574,22 @@ class BrowserProSkill(GalacticSkill):
 
                 if snapshot:
                     lines = flatten_tree(snapshot)
-                    snapshot_text = "\n".join(lines[:1000])
+                    snapshot_text = "\n".join(lines[:max_refs or 50])
                 else:
                     snapshot_text = "No accessibility data available"
 
             else:
                 snapshot_data = await page.evaluate("""() => {
-                    const elements = document.querySelectorAll('a, button, input, select, textarea, [role="button"], [role="link"], [role="textbox"], [role="menuitem"], [role="checkbox"], [role="radio"], [tabindex]');
+                    const elements = Array.from(document.querySelectorAll('a, button, input, select, textarea, [role="button"], [role="link"], [role="textbox"], [role="menuitem"], [role="checkbox"], [role="radio"], [tabindex]'));
                     let output = [];
                     let mappings = [];
                     let ref = 0;
+                    const maxRefs = parseInt(arguments[0]) || 50;
 
-                    elements.forEach(el => {
+                    for (const el of elements) {
                         if (el.offsetParent !== null) {  // Only visible elements
                             ref++;
+                            if (ref > maxRefs) break;
                             const tag = el.tagName.toLowerCase();
                             const id = el.id ? '#' + el.id : '';
                             const classes = el.className ? '.' + el.className.split(' ').filter(c => c).join('.') : '';
@@ -1604,10 +1608,10 @@ class BrowserProSkill(GalacticSkill):
                             const selector = tag + id + classes;
                             mappings.push({ref: ref, selector: selector});
                         }
-                    });
+                    }
 
-                    return {output: output.join('\\n'), mappings: mappings};
-                }""")
+                    return {output: output.join('\n'), mappings: mappings};
+                }""", max_refs)
 
                 snapshot_text = snapshot_data['output']
 

@@ -1,32 +1,39 @@
 # Galactic AI — Feature Reference
 
-Complete feature reference for Galactic AI Automation Suite **v1.5.1**.
+Complete feature reference for Galactic AI Automation Suite **v1.5.2**.
 
 ---
 
 ## Core Architecture
 
 ### AsyncIO Runtime
+
 The entire system runs on Python's `asyncio` event loop. Every subsystem — LLM gateway, web server, Telegram bridge, Discord bridge, WhatsApp bridge, Gmail bridge, plugin engine, Ollama manager, task scheduler — is fully non-blocking. Nothing stalls the core.
 
 ### Resumable Workflows (Self-Healing)
+
 If a long-running automation is interrupted by a crash, timeout, or manual stop, you don't have to start over.
+
 - **Auto-Checkpointing:** The agent saves its full state (`history`, `messages`, `active_plan`, `turn_count`) to `logs/runs/<uuid>/checkpoint.json` every 5 tool calls or immediately on failure.
 - **`resume_workflow` Tool:** Allows Byte to reload a previous state and continue precisely where he left off.
 - **Dashboard UI:** The Thinking tab includes a "Resumable Workflows" list. Select any previous run and click **▶ Resume** to bring it back to life instantly.
 
 ### Real-Time Status Orb
+
 Both the terminal and the Control Deck feature a live "Thinking Orb" (`⠋ Pondering the orb...`) that appears whenever Byte is processing.
+
 - **Live Timer:** Tracks exactly how long a task has been running.
 - **Dynamic Content:** Rotates through fun, trucker-vibe sayings every 15 seconds to keep the interface feeling "alive."
 - **Nuclear Cancel:** Pressing **Escape** in either the terminal or the Control Deck sends an immediate kill signal to all active agent threads, stopping work instantly.
 
 ### Strategic Planning Phase (Big Brain / Builder Architecture)
+
 Before diving into the execution loop for complex queries, the gateway initiates a pre-planning phase. It isolates a dedicated "Planner" model in its own ReAct loop. This Planner acts as a Lead Architect: it autonomously scans the necessary files and codebase to understand the context, then outputs a detailed, step-by-step implementation plan.
 
 This plan is stored in long-term memory and guides the primary "Builder" model through execution. This architecture allows you to use a more expensive, high-intelligence model for planning, and a faster, cheaper model for the actual typing and tool execution.
 
 **Configuration (`config.yaml`):**
+
 ```yaml
 models:
   primary_model: x-ai/grok-4.1-fast           # The "Builder"
@@ -36,12 +43,15 @@ models:
 **Explicit Trigger:** You can force the planning phase on any query by starting your message with `/plan`.
 
 ### ReAct Agentic Loop
+
 The AI operates in a **Think → Act → Observe → Answer** loop. It chains multiple tool calls in sequence, observes results, reasons about what to do next, and keeps going until the task is complete. Each tool call has a configurable timeout (default 60 seconds) — no single operation can block the loop indefinitely. The entire ReAct loop is capped by a speak() wall-clock timeout (default 600 seconds).
 
 ### Per-Tool Timeout
+
 Every tool execution is wrapped in a configurable `asyncio.wait_for` timeout (defaults: shell 120s, Python 60s, image generation 180s). If a tool hangs (e.g. a browser operation on a slow page), it is cancelled with a descriptive error message and the AI continues to the next step. Configure per-tool timeouts in `config.yaml` under `tool_timeouts`.
 
 ### Graceful Lifecycle Management
+
 - Single **Ctrl+C** triggers a clean shutdown of all subsystems
 - Signal handlers for SIGINT and SIGTERM on all platforms
 - All background tasks cancelled and awaited with a 5-second timeout
@@ -58,6 +68,7 @@ Every tool execution is wrapped in a configurable `asyncio.wait_for` timeout (de
 ## Skills Ecosystem
 
 ### GalacticSkill Base Class
+
 Every capability in Galactic AI is a `GalacticSkill` subclass. Skills declare structured metadata and register their tools dynamically via `get_tools()`. This replaces the hardcoded plugin list and moves tool definitions out of the gateway.
 
 **Metadata fields:** `skill_name`, `version`, `author`, `description`, `category`, `icon`, `is_core`
@@ -65,19 +76,24 @@ Every capability in Galactic AI is a `GalacticSkill` subclass. Skills declare st
 **Lifecycle hooks:** `on_load()`, `on_unload()`, `run()` (background loop)
 
 ### Workspace Oracle (Intelligence)
+
 The `plan_optimizer` skill (Workspace Oracle) allows Byte to "simulate" a task before executing it. It performs a semantic search of your codebase, retrieves relevant tool schemas, and generates a structured preview of the optimal steps and estimated costs. This prevents "blind execution" on massive codebase changes.
 
 ### Cognitive Superpowers
+
 Fully integrated Jesse Vincent's **Superpowers** cognitive workflows. Byte can now adopt specialized mental models for difficult tasks:
+
 - `test-driven-development`: Red-Green-Refactor logic for coding.
 - `brainstorming`: Creative exploration of user intent.
 - `systematic-debugging`: Focused root-cause analysis.
 - Use `list_superpowers` and `invoke_superpower` to activate them.
 
 ### Native Gemini CLI Bridge
+
 The `gemini_cli_bridge` skill allows Galactic AI to delegate extremely heavy-duty codebase refactoring to the official Google Gemini CLI. It spawns the CLI in the background with `--yolo` mode for deep, autonomous file interventions while keeping Byte as the primary orchestrator.
 
 ### Core Skills
+
 Six built-in skills ship with Galactic AI:
 
 | Skill | Tools | Description |
@@ -90,6 +106,7 @@ Six built-in skills ship with Galactic AI:
 | BrowserProSkill | 55 | Full Playwright browser automation |
 
 ### AI Self-Authoring
+
 Byte can create new skills at runtime using three meta-tools:
 
 - **`create_skill(name, code, description)`** — Validates Python via AST, writes to `skills/community/<name>.py`, dynamically imports and loads the skill, registers all its tools immediately. No restart required.
@@ -99,14 +116,17 @@ Byte can create new skills at runtime using three meta-tools:
 Community skills persist across restarts via `skills/registry.json`.
 
 ### Skills Tab
+
 The Control Deck's Skills tab displays all loaded skills as rich cards with: icon, display name, CORE/COMMUNITY badge, version, author, description, and a tool count preview. Toggle skills on/off without restarting.
 
 ## True Persistent Memory
 
 ### How It Works
+
 Galactic AI uses a three-layer memory architecture:
 
 **Layer 1: Identity Files (always injected into every prompt)**
+
 - `IDENTITY.md` — AI name, role, vibe
 - `SOUL.md` — core values and personality style
 - `USER.md` — information about the user
@@ -117,6 +137,7 @@ All five are read from disk on startup and included in every system prompt. Zero
 
 **Layer 2: MEMORY.md Auto-Writing (grows over time)**
 When the AI calls `memory_imprint`, it:
+
 1. Writes to `memory_aura.json` (searchable store)
 2. Appends a timestamped entry to `MEMORY.md` on disk
 3. Hot-reloads the personality so the very next message sees the new memory
@@ -130,11 +151,13 @@ A local JSON index for storing arbitrary facts, documents, and imprinted knowled
 Provided by the `memory_manager` community skill. This layer uses ChromaDB to store text and metadata as embeddings, allowing the AI to perform true semantic searches over its past experiences, research, and generated plans. This provides a massive, queryable long-term context that goes beyond simple keyword matching.
 
 ### Token Efficiency
+
 MEMORY.md is loaded once at startup. There is no per-message search, no embedding API call, no vector DB overhead. You only pay for what's actually in the file.
 
 ---
 
 ### Restart Resilience (Auto-Compaction & Recall)
+
 Two community skills and a core gateway monitor reduce "amnesia" while keeping costs low:
 
 - **Auto-Compacting Gateway** — `gateway_v3.py`
@@ -150,26 +173,30 @@ Two community skills and a core gateway monitor reduce "amnesia" while keeping c
 
 ---
 
-## Agentic Code Intelligence (v1.5.1)
+## Agentic Code Intelligence (v1.5.2)
 
 ### Deep Codebase Research
+
 Galactic AI now possesses "eyes" for complex codebases. Instead of reading files one-by-one, it can use surgical search tools:
+
 - **`grep_search`**: Recursively searches for symbol usage, logic patterns, or configuration keys across thousands of files instantly.
 - **`code_outline`**: Uses Python's Abstract Syntax Tree (AST) to generate a "map" of any file, showing exactly where classes and functions defined.
 
 ### Advanced Agentic Protocol (SOUL.md)
+
 The core reasoning loop has been upgraded from simple tool use to a structured **Research → Plan → Implement → Verify** cycle.
+
 1. **Empirical Research**: Use `grep_search` and `code_outline` to gather facts about the codebase.
 2. **Strategic Planning**: Draft an `implementation_plan.md` (or equivalent internal thought) before touching code.
 3. **Precision Implementation**: Use `read_file` with `start_line`/`end_line` and `edit_file` for non-destructive changes.
 4. **Verification**: Run tests or verify side-effects before declaring the task complete.
 
 ### Surgical File Interaction
+
 - **`read_file` (Line Ranges)**: Efficiently read only the relevant parts of large files, saving tokens and reducing noise.
 - **`edit_file` (Search & Replace)**: Precise, atomic edits that ensure code integrity without rewriting entire files.
 
 ---
-
 
 ## 14 AI Providers
 
@@ -193,43 +220,55 @@ Switch between providers at any time from the web UI or Telegram.
 | **Ollama (Local)** | None | Free forever |
 
 ### OpenRouter Curated Models (26)
+
 26 hand-picked models across 3 performance tiers available via OpenRouter: **Frontier** (7) — Gemini 3.1 Pro, Claude Opus 4.6, GPT-5.2, GPT-5.2 Codex, Grok 4.1 Fast, DeepSeek V3.2, Qwen 3.5 Plus. **Strong** (12) — Gemini 3 Pro/Flash, Claude Sonnet 4.6, Claude Opus 4.5, GPT-5.2 Pro, GPT-5.1, GPT-5.1 Codex, Qwen 3.5 397B, Qwen 3 Coder Next, Kimi K2.5, DeepSeek V3.2 Speciale, GLM-5. **Fast** (7) — Mistral Large, Devstral, MiniMax M2.5, Sonar Pro Search, Nemotron Nano 30B, Step 3.5 Flash, GPT-5.2 Chat.
 
 ### Multi-Key NVIDIA Routing
+
 NVIDIA hosts models from many vendors. Galactic AI routes to the correct API key based on the model selected. Configure separate keys for DeepSeek, Qwen, GLM, Kimi, StepFun, and FLUX models.
 
 ### Smart Model Routing
+
 Enable `smart_routing: true` in config to auto-select the best model for each task type (coding, reasoning, creative, vision, quick queries).
 
 ### Auto-Fallback & Resilient Fallback Chain
+
 If the primary provider fails, the system falls back to a secondary provider automatically.
+
 - **Planner Redundancy:** You can now configure a `planner_fallback_model`. If your "Big Brain" model hangs or returns empty content, the system instantly re-spawns the lead architect using the fallback model, ensuring your project planning never stalls.
 - **Model Hardening:** Robust O(N) JSON extraction and metadata capture (refusals/reasoning) ensure fallback triggers are accurate and reliable.
 
 ### Self-Healing Code Execution (Test-Driven Development)
+
 Galactic AI now writes robust code. The `test_driven_coder` tool (part of the `gemini_coder` skill) allows the AI to:
-1.  **Generate a Python script** for a given task.
-2.  **Execute the script** in a sandboxed subprocess.
-3.  **Catch any execution errors** (e.g., tracebacks, timeouts).
-4.  **Autonomously send the error back to Gemini** to request a fix.
-5.  **Rewrite the code** and re-execute, looping until the script runs successfully or `max_retries` is reached.
+
+1. **Generate a Python script** for a given task.
+2. **Execute the script** in a sandboxed subprocess.
+3. **Catch any execution errors** (e.g., tracebacks, timeouts).
+4. **Autonomously send the error back to Gemini** to request a fix.
+5. **Rewrite the code** and re-execute, looping until the script runs successfully or `max_retries` is reached.
 
 This ensures the AI delivers working code, significantly boosting reliability for programming tasks.
 
 ### Workspace Context Awareness (RAG for Local Codebase)
+
 Beyond semantic search of chat history, Galactic AI maintains a live, searchable index of your local codebase. The `workspace_indexer` community skill operates a background thread that:
-1.  Continuously monitors your `workspace/` folder and its subdirectories.
-2.  Hashes and chunks relevant code files (`.py`, `.js`, `.md`, `.txt`, `.json`, `.yaml`, `.ps1`, `.sh`).
-3.  Embeds these chunks into a dedicated ChromaDB collection.
-4.  The AI can then use the `search_workspace` tool to instantly find semantically relevant code snippets, functions, or documentation for any query, acting as an expert on your project's internals.
+
+1. Continuously monitors your `workspace/` folder and its subdirectories.
+2. Hashes and chunks relevant code files (`.py`, `.js`, `.md`, `.txt`, `.json`, `.yaml`, `.ps1`, `.sh`).
+3. Embeds these chunks into a dedicated ChromaDB collection.
+4. The AI can then use the `search_workspace` tool to instantly find semantically relevant code snippets, functions, or documentation for any query, acting as an expert on your project's internals.
 
 ### Streaming Responses
+
 Token-by-token streaming from all providers, broadcast to the web UI via WebSocket in real-time.
 
 ### Token Cost Tracking
+
 Real-time cost monitoring with persistent logging. Every API call records model, provider, input/output token counts, and calculated USD cost to `logs/cost_log.jsonl`. The CostTracker provides session, daily, weekly, and monthly aggregation with per-model breakdowns. 33 models have exact pricing; unknown models use a conservative fallback rate. Free providers (NVIDIA, Cerebras, Groq, HuggingFace, Ollama) are tracked for usage but excluded from spend totals. Costs auto-prune after 90 days.
 
 ### NVIDIA Provider Hardening
+
 - **Broken SSE workaround** — models with non-functional streaming endpoints (e.g., Qwen 3.5 397B) are automatically routed to non-streaming mode
 - **Cold-start retry** — large models that return HTTP 502/503/504 during cold-start are automatically retried up to 2 times with status logging
 - **Streaming fallback** — if NVIDIA streaming returns empty data, the system automatically retries with non-streaming
@@ -241,15 +280,19 @@ Real-time cost monitoring with persistent logging. Every API call records model,
 ## Ollama Local Model Support
 
 ### Auto-Discovery
+
 All models installed in Ollama are detected automatically. Pull a model with `ollama pull` and it appears in the UI within 60 seconds. No manual config.
 
 ### Health Monitoring
+
 Background health checks track when Ollama goes online or offline. The web UI shows real-time Ollama health status.
 
 ### Context Window Awareness
+
 The actual context window size is queried from Ollama for every model. Conversation history is trimmed accordingly.
 
 ### Tool Calling for Local Models
+
 Ollama models get enhanced system prompts with full parameter schemas for all 110+ tools, plus few-shot examples for reliable JSON tool call generation. Temperature tuned to 0.3 for consistent structured output.
 
 ---
@@ -259,12 +302,14 @@ Ollama models get enhanced system prompts with full parameter schemas for all 11
 `VAULT.md` is a private credentials file loaded into every system prompt. It enables the AI to log into services, fill forms, and automate tasks using your personal information.
 
 ### How It Works
+
 1. Copy `VAULT-example.md` to `VAULT.md`
 2. Add your credentials (email, API tokens, personal info, payment details)
 3. The `personality.py` loader reads VAULT.md and injects it with instructions to never share or expose the contents
 4. The AI can reference these values when performing automation tasks
 
 ### Security
+
 - Gitignored — never committed to the repository
 - Protected by the auto-updater — `update.ps1` / `update.sh` never overwrite VAULT.md
 - Editable in the Memory tab of the Control Deck
@@ -277,6 +322,7 @@ Ollama models get enhanced system prompts with full parameter schemas for all 11
 Galactic AI automatically checks GitHub for new releases on startup (after a 15-second boot delay) and then every 6 hours.
 
 ### How It Works
+
 1. Queries `https://api.github.com/repos/cmmchsvc-dev/Galactic-AI/releases/latest`
 2. Compares the latest release tag against the current `system.version` in config.yaml
 3. If a newer version exists, broadcasts an `update_available` event via the WebSocket relay
@@ -284,6 +330,7 @@ Galactic AI automatically checks GitHub for new releases on startup (after a 15-
 5. Instructions to run `./update.ps1` or `./update.sh` are included in the notification
 
 ### Configuration
+
 ```yaml
 system:
   update_check_interval: 21600  # 6 hours in seconds (0 = disabled)
@@ -294,6 +341,7 @@ system:
 ## 110+ Built-In Tools
 
 ### File System (7 tools)
+
 | Tool | Description |
 |---|---|
 | `read_file` | Read the contents of any file |
@@ -305,6 +353,7 @@ system:
 | `diff_files` | Unified diff between two files or a file and text |
 
 ### Shell & Process (6 tools)
+
 | Tool | Description |
 |---|---|
 | `exec_shell` | Execute any shell command |
@@ -315,29 +364,34 @@ system:
 | `list_tasks` | View all scheduled tasks |
 
 ### Archives (2 tools)
+
 | Tool | Description |
 |---|---|
 | `zip_create` | Create ZIP archives from files or directories |
 | `zip_extract` | Extract ZIP archives |
 
 ### Web & Search (2 tools)
+
 | Tool | Description |
 |---|---|
 | `web_search` | Search DuckDuckGo (no API key needed) |
 | `web_fetch` | Fetch and parse any URL |
 
 ### HTTP (1 tool)
+
 | Tool | Description |
 |---|---|
 | `http_request` | Raw HTTP GET/POST/PUT/DELETE/PATCH to any URL with custom headers |
 
 ### Vision (2 tools)
+
 | Tool | Description |
 |---|---|
 | `analyze_image` | Analyze images using Gemini Vision, Ollama multimodal, or other providers |
 | `image_info` | Get image dimensions and format without AI analysis |
 
 ### Image Generation (6 tools)
+
 | Tool | Description |
 |---|---|
 | `generate_image` | Generate an image with the currently selected image model |
@@ -348,34 +402,40 @@ system:
 | `generate_image_gemini_ultra` | Generate with Google Imagen 4 Ultra via Gemini API |
 
 ### Video Generation (2 tools)
+
 | Tool | Description |
 |---|---|
 | `generate_video` | Generate a video clip from a text prompt using Google Veo (4s/6s/8s, up to 4K) |
 | `generate_video_from_image` | Animate a still image into a video clip using Google Veo |
 
 ### Memory (4 tools)
+
 | Tool | Description |
 |---|---|
 | `memory_search` | Keyword search across persistent memory |
 | `memory_imprint` | Store new information — writes to memory_aura.json AND MEMORY.md |
 
 ### Audio (1 tool)
+
 | Tool | Description |
 |---|---|
 | `text_to_speech` | Convert text to speech via ElevenLabs, OpenAI TTS, edge-tts, or free gTTS |
 
 ### Clipboard (2 tools)
+
 | Tool | Description |
 |---|---|
 | `clipboard_get` | Read OS clipboard (Windows/macOS/Linux) |
 | `clipboard_set` | Write text to clipboard |
 
 ### Notifications (1 tool)
+
 | Tool | Description |
 |---|---|
 | `notify` | Desktop toast/balloon notifications (Windows/macOS/Linux) |
 
 ### Window Management (3 tools)
+
 | Tool | Description |
 |---|---|
 | `window_list` | List all open application windows |
@@ -383,6 +443,7 @@ system:
 | `window_resize` | Move and resize any application window |
 
 ### System (4 tools)
+
 | Tool | Description |
 |---|---|
 | `system_info` | CPU, RAM, disk, uptime, process count |
@@ -391,6 +452,7 @@ system:
 | `env_set` | Write environment variables |
 
 ### Utilities (3 tools)
+
 | Tool | Description |
 |---|---|
 | `qr_generate` | Generate QR code images |
@@ -398,6 +460,7 @@ system:
 | `text_transform` | 15 text operations: case convert, base64, URL encode/decode, regex, JSON format, CSV→JSON, word count, and more |
 
 ### Desktop Automation (via DesktopTool plugin)
+
 | Tool | Description |
 |---|---|
 | `desktop_screenshot` | Full-screen screenshot |
@@ -414,6 +477,7 @@ system:
 Powered by Playwright. Supports **Chromium**, **Firefox**, and **WebKit** engines.
 
 **Navigation & Pages**
+
 | Tool | Description |
 |---|---|
 | `open_browser` | Navigate to a URL |
@@ -424,6 +488,7 @@ Powered by Playwright. Supports **Chromium**, **Firefox**, and **WebKit** engine
 | `browser_pdf` | Save page as PDF |
 
 **Interaction — By Selector**
+
 | Tool | Description |
 |---|---|
 | `browser_click` | Click an element by CSS selector |
@@ -438,6 +503,7 @@ Powered by Playwright. Supports **Chromium**, **Firefox**, and **WebKit** engine
 | `browser_upload` | Upload a file to an input element |
 
 **Interaction — By Accessibility Ref**
+
 | Tool | Description |
 |---|---|
 | `browser_click_by_ref` | Click element by accessibility ref ID |
@@ -450,6 +516,7 @@ Powered by Playwright. Supports **Chromium**, **Firefox**, and **WebKit** engine
 | `browser_download_by_ref` | Download by ref ID |
 
 **Interaction — By Coordinates**
+
 | Tool | Description |
 |---|---|
 | `browser_click_coords` | Click at exact x,y coordinates |
@@ -458,6 +525,7 @@ Powered by Playwright. Supports **Chromium**, **Firefox**, and **WebKit** engine
 | `browser_resize` | Resize the browser window |
 
 **Data Extraction**
+
 | Tool | Description |
 |---|---|
 | `browser_extract` | Extract structured data from the page |
@@ -468,6 +536,7 @@ Powered by Playwright. Supports **Chromium**, **Firefox**, and **WebKit** engine
 | `browser_response_body` | Get the response body of a network request |
 
 **Storage**
+
 | Tool | Description |
 |---|---|
 | `browser_get_local_storage` | Read localStorage values |
@@ -478,6 +547,7 @@ Powered by Playwright. Supports **Chromium**, **Firefox**, and **WebKit** engine
 | `browser_clear_session_storage` | Clear all sessionStorage |
 
 **Advanced Browser Control**
+
 | Tool | Description |
 |---|---|
 | `browser_wait` | Wait for elements, navigation, or timeouts |
@@ -491,24 +561,28 @@ Powered by Playwright. Supports **Chromium**, **Firefox**, and **WebKit** engine
 | `browser_set_proxy` | Route traffic through a proxy |
 
 **Frames**
+
 | Tool | Description |
 |---|---|
 | `browser_get_frames` | List all iframes on the page |
 | `browser_frame_action` | Execute actions inside a specific iframe |
 
 **Session Management**
+
 | Tool | Description |
 |---|---|
 | `browser_save_session` | Save cookies and storage state to a file |
 | `browser_load_session` | Restore a saved session |
 
 **Tracing & Debugging**
+
 | Tool | Description |
 |---|---|
 | `browser_trace_start` | Start recording a Playwright trace |
 | `browser_trace_stop` | Stop recording and save trace file |
 
 **Network Interception**
+
 | Tool | Description |
 |---|---|
 | `browser_intercept` | Intercept and modify network requests |
@@ -550,6 +624,7 @@ Control the user's real Chrome browser through the Galactic Browser extension. R
 Post, search, and manage Twitter/X and Reddit directly through the AI.
 
 **Twitter/X (via Tweepy)**
+
 | Tool | Description |
 |---|---|
 | `twitter_post` | Post a tweet to your timeline |
@@ -558,6 +633,7 @@ Post, search, and manage Twitter/X and Reddit directly through the AI.
 | `twitter_mentions` | Get recent mentions and notifications |
 
 **Reddit (via PRAW)**
+
 | Tool | Description |
 |---|---|
 | `reddit_post` | Submit a post to a subreddit (text or link) |
@@ -591,18 +667,23 @@ Galactic AI supports six image generation backends. The active image model is se
 Generate AI video clips directly from the chat interface using Google Veo.
 
 ### Text-to-Video
+
 Describe a scene and Veo generates a short video clip. Configurable duration (4s, 6s, 8s), resolution (720p, 1080p, 4K), aspect ratio (16:9, 9:16), and negative prompts.
 
 ### Image-to-Video
+
 Animate any still image (from Imagen, FLUX, SD3.5, or any file) into motion video. The AI generates the image first, then animates it — a complete creative pipeline.
 
 ### Inline Playback
+
 Videos appear inline in the Control Deck chat as HTML5 `<video>` elements with controls, autoplay, muted loop, and a download link for saving the MP4 locally.
 
 ### Multi-Provider Architecture
+
 Google Veo is the day-one provider. The `video:` config section supports Runway Gen-4, Kling, and Luma Dream Machine as future backends.
 
 ### Models
+
 | Model | API ID | Features |
 |---|---|---|
 | Veo 3.1 (default) | `veo-3.1-generate-preview` | Latest, highest quality |
@@ -610,6 +691,7 @@ Google Veo is the day-one provider. The `video:` config section supports Runway 
 | Veo 2 | `veo-2-generate-preview` | Stable, fast |
 
 ### Configuration
+
 ```yaml
 video:
   provider: google
@@ -628,12 +710,16 @@ tool_timeouts:
 ## Voice I/O (Telegram)
 
 ### Speech-to-Text (Whisper)
+
 Incoming Telegram voice messages are transcribed automatically using:
+
 1. **OpenAI Whisper API** (if configured) — `whisper-1` model, ~$0.006/min
 2. **Groq Whisper** (free fallback) — `whisper-large-v3`, fast and free
 
 ### Text-to-Speech
+
 The AI can generate spoken audio using:
+
 1. **ElevenLabs** — premium voices: Nova, Byte (requires API key)
 2. **OpenAI TTS** — high quality (requires API key)
 3. **edge-tts** — FREE Microsoft neural voices: Guy (default), Aria, Jenny, Davis
@@ -642,13 +728,16 @@ The AI can generate spoken audio using:
 Switch voices from the **Quick Tools** sidebar dropdown or the **⚙️ Settings** tab. Changes take effect immediately and persist to config.yaml.
 
 ### Voice In → Voice Out
+
 When a user sends a voice message via Telegram, the AI automatically:
+
 1. Transcribes the audio with Whisper
 2. Generates a text response
 3. Converts the response to speech
 4. Sends the audio back as a voice message
 
 ### Telegram Message Reliability
+
 - **Markdown fallback**: If Telegram rejects a message due to invalid Markdown formatting, the bridge automatically retries as plain text
 - **Message splitting**: Responses longer than 4096 characters are split at paragraph/line/word boundaries
 - **CancelledError handling**: All 4 handler methods (`process_and_respond`, `_handle_document`, `_handle_photo`, `_handle_audio`) properly handle task cancellation without crashing
@@ -660,15 +749,19 @@ When a user sends a voice message via Telegram, the AI automatically:
 ## Chrome Extension — Galactic Browser
 
 ### Architecture
+
 The Galactic Browser extension connects to Galactic AI via a persistent WebSocket on `/ws/chrome_bridge`. The background service worker manages the connection lifecycle (auto-reconnect on disconnect, heartbeat every 30s). The content script runs in the page context and provides accessibility tree snapshots, element interaction, form filling, and JavaScript execution.
 
 ### Side Panel Chat
+
 A Chrome side panel provides a chat interface that connects to both the `/api/chat` HTTP endpoint and the `/stream` WebSocket for streaming responses. If WebSocket streaming fails, the side panel falls back to reading the HTTP response body.
 
 ### Authentication
+
 The popup authenticates using a SHA-256 hash of the user's passphrase, matching the web Control Deck's auth system. Localhost connections bypass token validation for seamless local usage.
 
 ### Tool Capabilities
+
 - **Page reading**: Full accessibility tree with roles, names, values, and ref IDs for programmatic interaction
 - **Element finding**: Natural language element search (e.g., "login button", "search bar")
 - **Form interaction**: Fill inputs, select dropdowns, check checkboxes by ref ID
@@ -681,6 +774,7 @@ The popup authenticates using a SHA-256 hash of the user's passphrase, matching 
 ## Web Control Deck
 
 ### Tabs
+
 - **Chat** — Full conversational interface with tool output; inline image and video players; 🎤 voice input mic button (click to record, transcribed via Whisper, inserted into chat); timestamps on every message; conventional bottom-up scroll (newest at bottom); chat history persists across page refreshes (`logs/chat_history.jsonl`)
 - **Thinking** — Real-time agent trace viewer; watch the ReAct loop think and act step by step; persists across page refreshes via `/api/traces` backend buffer (last 500 entries)
 - **Status** — Live telemetry: provider, model, token usage, uptime, fallback chain status, plugin states, version badge; 30+ data fields across 6 sections; **Cost Dashboard** with 6 summary cards (Session Cost, Today, This Week, This Month, Last Request, Avg/Message), multi-currency selector (9 currencies), free model detection, persistent cost logging
@@ -693,21 +787,27 @@ The popup authenticates using a SHA-256 hash of the user's passphrase, matching 
 - **Logs** — Real-time system log stream with tool call highlighting (cyan), tool result lines (indented/italic), chronological order (newest at bottom), 500-line restore
 
 ### Real-Time Updates
+
 Persistent WebSocket connection for live status, chat, Ollama health, logs, and streaming responses. No manual refresh needed.
 
 ### Chat Persistence
+
 Chat messages are logged to `logs/chat_history.jsonl` and reloaded on page load. Refreshing the browser does not wipe your conversation. Each message shows an HH:MM:SS timestamp.
 
 ### Thinking Tab Persistence
+
 Agent trace entries are buffered in memory on the backend (last 500 entries, `/api/traces` endpoint). On page load, `loadTraceHistory()` fetches and replays them so the Thinking tab is never empty after a refresh.
 
 ### Tab Memory
+
 The active tab is saved to `localStorage` on every switch. After a page refresh, the same tab is automatically restored.
 
 ### Login Security
+
 Protected by a passphrase set during setup. Stored as a SHA-256 hash — the plaintext is never saved.
 
 ### Log Enhancements
+
 - Tool call lines highlighted in **cyan**
 - Tool result lines shown indented and italic
 - Up to 500 lines restored from server log history on page load
@@ -717,9 +817,11 @@ Protected by a passphrase set during setup. Stored as a SHA-256 hash — the pla
 ## Messaging Bridges
 
 ### Telegram
+
 Full-featured bot with voice I/O, image delivery, inline keyboards, and admin-only access control.
 
 **Commands:**
+
 | Command | Description |
 |---|---|
 | `/status` | System telemetry (lite) |
@@ -735,16 +837,19 @@ Full-featured bot with voice I/O, image delivery, inline keyboards, and admin-on
 The `/model` menu includes all 14 providers (each with their model list) plus an **Image Models** section for switching image generation backends.
 
 ### Discord
+
 Full bot integration — responds in allowed channels, shows typing indicators, handles commands.
 
 Config keys: `discord.bot_token`, `discord.allowed_channels`, `discord.admin_user_id`, `discord.timeout_seconds`
 
 ### WhatsApp
+
 Webhook-based integration via the Meta Cloud API. Receives and responds to WhatsApp messages.
 
 Config keys: `whatsapp.phone_number_id`, `whatsapp.access_token`, `whatsapp.verify_token`, `whatsapp.webhook_secret`
 
 ### Gmail
+
 IMAP-based inbox monitoring. AI reads new emails, can auto-respond, and sends Telegram notifications on new mail.
 
 Config keys: `gmail.email`, `gmail.app_password`, `gmail.check_interval`, `gmail.notify_telegram`
@@ -765,6 +870,7 @@ Powered by APScheduler. Tasks survive restarts if configured in `config.yaml`.
 ## Personality System
 
 ### 4 Modes
+
 | Mode | Description |
 |---|---|
 | `byte` | Techno-hippie AI familiar (default) — tries .md files first, falls back to Byte defaults |
@@ -773,6 +879,7 @@ Powered by APScheduler. Tasks survive restarts if configured in `config.yaml`.
 | `files` | Reads entirely from workspace .md files (set automatically after OpenClaw migration) |
 
 ### What Gets Injected Into Every Prompt
+
 1. IDENTITY.md (name, role, vibe)
 2. SOUL.md (personality and values)
 3. USER.md (user context)
@@ -780,6 +887,7 @@ Powered by APScheduler. Tasks survive restarts if configured in `config.yaml`.
 5. VAULT.md (private credentials and personal data — marked as "never share or expose")
 
 ### Hot Reload
+
 `personality.reload_memory()` re-reads MEMORY.md from disk mid-session. Called automatically after every `memory_imprint`. The very next message sees the updated memory.
 
 ---
@@ -787,6 +895,7 @@ Powered by APScheduler. Tasks survive restarts if configured in `config.yaml`.
 ## Plugin System
 
 ### Built-In Plugins
+
 | Plugin | Description |
 |---|---|
 | **BrowserExecutorPro** | Playwright-powered browser automation — 56 actions, Chromium/Firefox/WebKit |
@@ -796,6 +905,7 @@ Powered by APScheduler. Tasks survive restarts if configured in `config.yaml`.
 | **Ping** | Connectivity monitoring |
 
 ### Custom Plugins
+
 Drop a Python file in the `plugins/` folder. Any class with a `run()` coroutine method is automatically picked up on startup.
 
 ---
@@ -803,6 +913,7 @@ Drop a Python file in the `plugins/` folder. Any class with a `run()` coroutine 
 ## Update System
 
 `update.ps1` (Windows) and `update.sh` (Linux/macOS) safely update code while preserving:
+
 - `config.yaml` — backed up to `logs/backups/` before any changes
 - `logs/` — chat history, memory cache, TTS files
 - `workspace/` — workspace files
@@ -819,7 +930,9 @@ Galactic AI also checks GitHub for new releases automatically (every 6 hours by 
 Enable secure remote connections to Galactic AI from any device on your LAN or the internet.
 
 ### Setup
+
 Set `web.remote_access: true` in `config.yaml`. On next startup, Galactic AI:
+
 - Binds to `0.0.0.0` (all network interfaces) on plain HTTP
 - Requires JWT authentication on all `/api/*` endpoints
 - Automatically adds a Windows Firewall inbound rule for port 17789 (private networks only)
@@ -840,6 +953,7 @@ Set `web.remote_access: true` in `config.yaml`. On next startup, Galactic AI:
 | Firewall | Auto-rule (Windows) | `New-NetFirewallRule` adds TCP 17789 allow rule on startup |
 
 ### Voice API
+
 - `POST /api/tts` — text-to-speech via ElevenLabs/edge-tts/gTTS pipeline, returns MP3 audio
 - `POST /api/stt` — speech-to-text via OpenAI Whisper (Groq Whisper fallback), accepts multipart audio upload
 

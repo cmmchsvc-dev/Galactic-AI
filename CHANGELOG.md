@@ -4,39 +4,47 @@ All notable changes to Galactic AI are documented here.
 
 ---
 
+## v1.5.2 — Loop Reset & Hallucination Defense Update (2026-03-06)
+
+- **Loop Reset on User Input**: Internal tool repetition history now clears every time the user sends a message, preventing "stuck" loops after manual state changes.
+- **Browser Hallucination Guard**: Added active detection for models claiming to perform browser actions (clicking/typing) without calling tools, with automatic corrective nudges.
+- **Fallback Resilience**: Hardened the model/provider transition logic to prevent authentication errors (401) and provider-ID mismatches during auto-fallback.
+- **Aggressive Browser Discovery**: Increased browser loop limits for complex navigation tasks.
+
 ## v1.5.1 — The Memory Compaction Update (2026-03-05)
 
-*   🧠 **Auto-Compaction**: The gateway now automatically summarizes long conversation history using **Gemini 2.0 Flash** (or fallback) when context limits are reached.
-*   🧠 **Recursive Folding**: Old summaries are now folded into new ones, preventing "context debt" and keeping history truly compact.
-*   🧠 **Semantic Recall**: Archived summaries are stored in **ChromaDB** and can be retrieved semantically by the AI when relevant to the current conversation.
-*   💬 **Context Commands**: Added `/context` (view usage), `/compact` (manual summary), and `/clear` (wipe session) to the chat interface.
-*   🚀 **Reliability Fixes**: 
-    *   Fixed an infinite loop hang in `_trim_messages` by implementing a 3-iteration limit and "Hard Truncation" failsafe.
-    *   Fixed "over-aggressive" compaction where the AI would forget its immediate previous actions.
-    *   Implemented **Provider-Aware Context Windows** (e.g., 1M tokens for Gemini vs 32k for local Ollama).
-    *   Excluded the System Prompt (and its 20k+ chars of tool schemas) from the compaction budget to preserve conversation space.
-    *   Fixed `galactic_memory.db` and `chroma_data` path calculation (no longer writes to your home folder).
-*   🐛 **Bug Fix**: Resolved an initialization race condition in the `ConversationAutoRecallSkill`.
+- 🧠 **Auto-Compaction**: The gateway now automatically summarizes long conversation history using **Gemini 2.0 Flash** (or fallback) when context limits are reached.
+- 🧠 **Recursive Folding**: Old summaries are now folded into new ones, preventing "context debt" and keeping history truly compact.
+- 🧠 **Semantic Recall**: Archived summaries are stored in **ChromaDB** and can be retrieved semantically by the AI when relevant to the current conversation.
+- 💬 **Context Commands**: Added `/context` (view usage), `/compact` (manual summary), and `/clear` (wipe session) to the chat interface.
+- 🚀 **Reliability Fixes**:
+  - Fixed an infinite loop hang in `_trim_messages` by implementing a 3-iteration limit and "Hard Truncation" failsafe.
+  - Fixed "over-aggressive" compaction where the AI would forget its immediate previous actions.
+  - Implemented **Provider-Aware Context Windows** (e.g., 1M tokens for Gemini vs 32k for local Ollama).
+  - Excluded the System Prompt (and its 20k+ chars of tool schemas) from the compaction budget to preserve conversation space.
+  - Fixed `galactic_memory.db` and `chroma_data` path calculation (no longer writes to your home folder).
+- 🐛 **Bug Fix**: Resolved an initialization race condition in the `ConversationAutoRecallSkill`.
 
 ## v1.4.8 — Unified Security Protocol (2026-03-04)
 
-*   🛡️ **Unified Security**: Hardened Discord and WhatsApp bridges with strict "Default Deny" authorization.
-*   🛡️ **Discord Authorization**: Implemented `admin_user_id` check and fallback channel whitelist.
-*   🛡️ **WhatsApp Authorization**: Implemented `admin_phone_number` check with lockdown by default.
-*   🆔 **ID Discovery**: Added public `/id` commands to both bridges for easier configuration.
-*   ⚠️ **Config Hardening**: Added critical security warnings to `config.example.yaml`.
+- 🛡️ **Unified Security**: Hardened Discord and WhatsApp bridges with strict "Default Deny" authorization.
+- 🛡️ **Discord Authorization**: Implemented `admin_user_id` check and fallback channel whitelist.
+- 🛡️ **WhatsApp Authorization**: Implemented `admin_phone_number` check with lockdown by default.
+- 🆔 **ID Discovery**: Added public `/id` commands to both bridges for easier configuration.
+- ⚠️ **Config Hardening**: Added critical security warnings to `config.example.yaml`.
 
 ## v1.4.7 — The Security Hardening Update (2026-03-04)
 
-*   🛡️ **Telegram Access Control**: Implemented strict "Default Deny" logic. Unauthorized users are blocked by default.
-*   🛡️ **Callback Security**: Fixed a vulnerability where buttons and menu interactions could bypass ID checks.
-*   🛡️ **Bot Lockdown**: The bot now automatically locks itself if no `admin_chat_id` is configured.
-*   🆔 **ID Discovery**: Added a public `/id` command to help users find their Chat ID safely.
-*   ⚠️ **Security Warning**: Updated `config.example.yaml` with critical setup instructions to prevent remote hijacking.
+- 🛡️ **Telegram Access Control**: Implemented strict "Default Deny" logic. Unauthorized users are blocked by default.
+- 🛡️ **Callback Security**: Fixed a vulnerability where buttons and menu interactions could bypass ID checks.
+- 🛡️ **Bot Lockdown**: The bot now automatically locks itself if no `admin_chat_id` is configured.
+- 🆔 **ID Discovery**: Added a public `/id` command to help users find their Chat ID safely.
+- ⚠️ **Security Warning**: Updated `config.example.yaml` with critical setup instructions to prevent remote hijacking.
 
 ## v1.4.6 — The Imagen Fix Update (2026-03-04)
 
 ### Fixed
+
 - **Imagen 4 Model IDs**: Updated `generate_image_imagen` model mapping to use correct `imagen-4.0-generate-001`, `imagen-4.0-ultra-generate-001`, and `imagen-4.0-fast-generate-001` identifiers. Previous Imagen 3 model IDs were returning `NOT_FOUND` errors from the Google GenAI SDK. Legacy Imagen 3 names now fall back to their Imagen 4 equivalents.
 - **Chrome Navigate Crash**: Fixed `'list' object has no attribute 'get'` error in the redundant navigation check within `chrome_navigate`. The code was calling `.get()` on `self.core.skills` (a list), now correctly iterates the list with `next()`.
 - **Imagen AI Hallucination Loop**: After successfully generating an image, the AI would call `generate_image_imagen` again with a rephrased prompt, then spiral into random browser tool calls. Three fixes applied:
@@ -50,9 +58,11 @@ All notable changes to Galactic AI are documented here.
 ## v1.4.5 — The Refinement Update (2026-03-03)
 
 ### Added
+
 - **Unified 3D Boot Splash**: Restored the high-aesthetic "GALACTIC AI - AUTOMATION SUITE" banner with corrected 65-character alignment and dynamic cyan-to-purple gradient.
 
 ### Fixed
+
 - **JSON-Wrapped Response Prevention**: Hardened the internal system prompt to strictly forbid the AI from wrapping final user-facing answers in unnecessary JSON blocks, ensuring clean, human-readable responses.
 - **Planner Trigger Refinement**: Optimized the internal "Planner" activation heuristics. Specifically, removed vague meta-conversational keywords that were causing the high-intelligence Planner to trigger on simple status checks.
 - **Smart Routing Provider Restrictions**: Fixed a bug where smart routing would suggest specialized models from providers that the user hadn't configured or enabled. It now strictly respects the user's active provider pool.
@@ -63,20 +73,23 @@ All notable changes to Galactic AI are documented here.
 ## v1.4.0 — The Hive Mind Update (2026-03-03)
 
 ### Added
+
 - **Hive Mind Subagents**: Developed deeply integrated hierarchical agent structures. Subagents are now visualized cleanly in the Control Deck UI (`Thinking` tab), providing seamless parallel processing without interrupting the mainframe ReAct loop.
 - **Dynamic Screenshot Buffer Rendering**: Fixed `screenshot` functionalities skipping valid OS image viewer pathways. The buffer is now returned safely to the local LLM and accurately parsed without relying on disk IO bottlenecks or missing object references.
 - **UI Web Deck Overhaul**: Overhauled the frontend with high-aesthetic modern gradients, dynamic glassmorphism aesthetics, modern animations/micro-interactions, and premium styling for standard buttons.
 
 ### Fixed
+
 - **Playwright DOM Search Submission**: Explicitly hardened browser tool `enter: true` parameters seamlessly clicking and submitting JS-rendered search bars, massively boosting the reliability of the `chrome_type` browser extensions on complex sites.
 - **Legacy EXE Deprecation**: Completely eliminated all traces of `build_exe.ps1` and `GalacticAI.spec` to stream-line execution time natively via Python without unneeded packaging, bloat, or anti-virus restrictions.
-- **Version String Sanitization**: Resolved numerous hardcoded versions tracking the deprecated `v1.3.0` strings across `web_deck.py` and `remote_access.py`. 
+- **Version String Sanitization**: Resolved numerous hardcoded versions tracking the deprecated `v1.3.0` strings across `web_deck.py` and `remote_access.py`.
 
 ---
 
 ## v1.3.0 — The Intelligence Update (2026-03-02)
 
 ### Added
+
 - **`grep_search` Tool**: Powerful recursive file content searching with regex support. Allows the AI to navigate even the largest codebases by searching for function calls, variable usages, or logic patterns.
 - **`code_outline` Tool**: Native Python AST parsing to show the structure of files (classes, functions, methods) with line numbers, enabling precise navigation.
 - **Advanced Agentic Protocol**: Replaced the basic tool instructions with a comprehensive Research → Plan → Implement → Verify methodology in `SOUL.md`.
@@ -86,6 +99,7 @@ All notable changes to Galactic AI are documented here.
 - **Smart Config Discovery**: The desktop launcher automatically searches for `config.yaml` in the exe's directory and parent directory, so the exe works from `dist/` without needing to move files.
 
 ### Fixed
+
 - **Smart Model Routing Crash**: Restored the missing `classify_task` method in the `ModelManager` which was causing crashes when `smart_routing` was enabled. Added robust input cleaning to prevent attached files and code blocks from distorting the heuristic task classification.
 - **Chrome Extension UI Loop**: Fixed a "Mission Impossible" race condition where the extension popup would auto-clear the passphrase input every 2 seconds after a failed connection attempt.
 - **Chrome Extension Load Error**: Resolved an extension bundle initialization failure by generating and linking high-quality manifest `icons`.
@@ -105,6 +119,7 @@ All notable changes to Galactic AI are documented here.
 ## v1.2.1 — The Control Update (2026-02-27)
 
 ### Added
+
 - **Centralized Model Manager**: Replaced massive hardcoded model lists across `web_deck.py` and `telegram_bridge.py` with a single source of truth: `config/models.yaml`.
 - **Dynamic UI Loading**: The Control Deck and Telegram Bridge now dynamically fetch and render models from `models.yaml`, allowing users to easily add new models, edit names, or set `enabled: false` to hide them without modifying code.
 - **OpenClaw Provider Parity**: Scanned the OpenClaw codebase and added support for 14 new AI providers to `models.yaml` (including MiniMax, Xiaomi, Moonshot, Qwen Portal, Qianfan, Together AI, HuggingFace, vLLM, Doubao, BytePlus, Cloudflare AI Gateway, Amazon Bedrock, Kilocode, and GitHub Copilot).
@@ -112,6 +127,7 @@ All notable changes to Galactic AI are documented here.
 - **OpenRouter Tiers Restored**: Restored the "kickass assortment" of 26 OpenRouter models and re-implemented their categorizations (`openrouter-frontier`, `openrouter-strong`, `openrouter-fast`) safely into the dynamic architecture.
 
 ### Fixed
+
 - **Ollama Dynamic Injection**: Fixed a UI issue where automatically detected Ollama models were failing to render because the generic "Ollama" provider block wasn't present in the static YAML file.
 - **Provider Settings Crash**: Fixed a critical frontend exception in the Control Deck Settings tab caused by missing `provider` attributes on dynamically loaded model objects.
 
@@ -120,6 +136,7 @@ All notable changes to Galactic AI are documented here.
 ## v1.2.0 — The Hivemind Update (2026-02-26)
 
 ### Added
+
 - **Resumable Workflows**: The agent now automatically saves its active state (`history`, `messages`, `active_plan`, `turn_count`) to `logs/runs/<uuid>/checkpoint.json` every 5 tool calls or immediately on failure.
 - **`resume_workflow` tool**: New native tool that allows the AI (or user) to re-load an interrupted workflow state from a specific checkpoint UUID and continue execution seamlessly.
 - **Mission Control Dashboard**: Added a new Resumable Workflows UI directly into the Web Deck's **Thinking** tab. You can view all saved checkpoints, see their timestamps and plan previews, and instantly resume them with a click.
@@ -129,11 +146,13 @@ All notable changes to Galactic AI are documented here.
 - **Planner Fallback Model**: Added multi-tier redundancy to the internal Architect agent. You can now configure `planner_fallback_provider` and `planner_fallback_model` in `config.yaml` or via the Web Deck UI. If the primary planner model hangs or hallucinates, it instantly re-spawns using the fallback model.
 
 ### Fixed
+
 - **Anti-Hallucination Guardrails**: Updated the core system prompt to strictly forbid the AI from hallucinating success when spawning background subagents. It is now hardcoded to verify execution via `process_status` or by reading output files.
 - **Planner Parsing Engine**: Replaced the fragile O(N^2) JSON extraction algorithm in `gateway_v2.py` with an O(N) stack-based parser. This prevents the event loop from hanging and crashing when an LLM outputs malformed nested curly braces.
 - **Empty Response Hole**: Fixed a critical bug where OpenRouter cloud models returning data inside `refusal` or `reasoning_content` tags (instead of standard `content`) were being misidentified as empty strings, causing an infinite fallback loop.
 
 ### Changed
+
 - **Unified Boot Splash**: Combined the classic "GALACTIC" block text and the "AUTOMATION" logo into a single unified 3D ANSI banner. The dynamic cyan-to-purple gradient now sweeps across the entire boot screen instead of just the bottom half.
 - **Universal Tool Schemas**: Cloud models (GPT/Claude) now receive the exact same strict JSON tool-call examples and full parameter schemas as local Ollama models, greatly improving their ability to autonomously edit files.
 
@@ -142,6 +161,7 @@ All notable changes to Galactic AI are documented here.
 ## v1.1.9 — Core Dependency Fix (2026-02-25)
 
 ### Fixed
+
 - **Missing Dependencies:** Fixed `ModuleNotFoundError: No module named 'scheduler'` and other missing core file errors in the release packages. Added `scheduler.py`, `splash.py`, `autopatch.py`, and `fix_ollama.py` to the automated release pipeline.
 - **Version Sync:** Refined version syncing across all documentation and core files.
 
@@ -150,6 +170,7 @@ All notable changes to Galactic AI are documented here.
 ## v1.1.8 — Self-Healing Code & Workspace RAG (2026-02-25)
 
 ### Added
+
 - **Self-Healing Code Execution (TDD):** Added `test_driven_coder` tool to the Gemini Coder skill. The AI can now write a Python script, automatically run it in a sandboxed subprocess, catch any traceback errors, and autonomously loop with Gemini to fix the code until it executes successfully.
 - **Workspace Context Awareness (RAG):** Added `workspace_indexer` community skill. A background thread now continuously hashes, chunks, and embeds your `workspace/` files into ChromaDB. The AI can now use the `search_workspace` tool to semantically search your local codebase instantly.
 
@@ -158,6 +179,7 @@ All notable changes to Galactic AI are documented here.
 ## v1.1.7 — Computer Use & Live Voice (2026-02-25)
 
 ### Added
+
 - **Computer Use (Vision GUI Automation):** Added `computer_use` skill. The AI can now take a screenshot, use a vision model (like Gemini 2.5 Pro) to find the exact X,Y coordinates of an element based on a natural language description, and interact with it (click, double-click, right-click, hover). This enables automation of entirely unknown, non-web applications without brittle template matching.
 - **Live Voice Mode:** Added a "Live Call" button (`📞`) next to the chat input in the Control Deck. When active, AI responses are automatically played aloud via TTS. If you click the microphone to speak while the AI is talking, it instantly pauses the audio, listens to your interruption, and responds to your new input.
 - **Dual-Brain UI Config:** Added the ability to select and configure the "Planner" (Big Brain) model directly from the web Control Deck (Settings tab) and the Telegram Bot (`/models` menu).
@@ -167,6 +189,7 @@ All notable changes to Galactic AI are documented here.
 ## v1.1.6 — Strategic Planning & Deep Memory (2026-02-25)
 
 ### Added
+
 - **Strategic Planner (Big Brain / Builder):** Completely rewrote the pre-planning phase in `gateway_v2.py`. Instead of a single API call, the Planner is now an isolated ReAct agent. If configured in `config.yaml` (`planner_model`, `planner_provider`), this "Big Brain" model will autonomously scan your codebase, read files, and investigate *before* writing the step-by-step plan for your primary "Builder" model to execute. Trigger explicitly with `/plan`.
 - **Long-Term Vector Memory:** Added `memory_manager` community skill. Integrates ChromaDB for semantic search and permanent storage of facts, preferences, and plans. Tools: `store_memory`, `recall_memories`.
 - **Gemini Coder Skill:** Added `gemini_coder` community skill. Uses the new `google-genai` SDK to provide a dedicated "Senior Dev" coding expert tool (`gemini_code`) for generating and debugging code.
@@ -175,6 +198,7 @@ All notable changes to Galactic AI are documented here.
 - **Automated Release Pipeline:** Added `scripts/release.py` and `build_release.ps1/sh` to automate the creation of sanitized, versioned release packages for Windows, macOS, and Linux, including SHA256 sums and release notes.
 
 ### Fixed
+
 - **Browser Stable Identifiers:** Replaced sequential `ref_` IDs in the Chrome extension (`content.js`) with stable, hash-based signatures. Element IDs no longer change when the DOM updates, drastically improving click reliability on dynamic pages.
 - **SPA Typing Support:** Fixed `contentEditable` typing in the Chrome extension. Now explicitly dispatches `beforeinput`, `insertText`, and `keyup` events to trigger React/Vue state updates on complex SPAs (e.g., activating the "Post" button on X.com).
 - **Gateway LLM Guardrails:** Enhanced the `is_ollama` system prompt with strict retry and failure guardrails, matching the cloud models.
@@ -186,15 +210,18 @@ All notable changes to Galactic AI are documented here.
 ## v1.1.4 — Telegram UX + Telemetry Modes (2026-02-24)
 
 ### Added
+
 - Memory/restarts: **Conversation Auto-Recall** injection (community skill) for remember/earlier/last time questions. Tool: `conversation_auto_recall_status`.
 - Memory/restarts: **Boot Recall Banner** (community skill) prints last N hot-buffer messages and writes `logs/conversations/boot_recall_banner.txt`. Tool: `boot_recall_show`.
 
 ### Changed
+
 - Telegram `/status` now supports **lite vs full** output:
   - `/status` → lite telemetry
   - `/status full` (also `--full` / `-f`) → full telemetry
 
 ### Updated
+
 - Telegram command menu description updated to reflect lite/full.
 - `/help` updated to show both status modes.
 
@@ -203,10 +230,12 @@ All notable changes to Galactic AI are documented here.
 ## v1.1.3 — Chrome Extension Parity (2026-02-23)
 
 ### Bug Fixes
+
 - **contenteditable typing**: `performType()` in content.js now uses `document.execCommand('insertText')` for proper SPA support (X.com, Notion, Reddit compose work correctly)
 - **screenshot visibility**: `chrome_screenshot` now saves JPEG to disk and returns an actual image to the LLM (not a text description)
 
 ### New Tools (11 added, 16 → 27 total)
+
 - `chrome_zoom` — region screenshot for close inspection of UI elements
 - `chrome_drag` — click-drag interactions (sliders, reordering)
 - `chrome_right_click` — JS context menu trigger
@@ -223,6 +252,7 @@ All notable changes to Galactic AI are documented here.
 ## [v1.1.2] — 2026-02-23
 
 ### Added
+
 - **⚡ Skills Ecosystem** — Complete architectural evolution of the plugin system. New `GalacticSkill` base class with structured metadata (`skill_name`, `version`, `author`, `description`, `category`, `icon`, `is_core`) and `get_tools()` dynamic tool registration. All capabilities now live in self-contained skill classes instead of the gateway monolith
 - **⚡ 6 Core Skills Migrated** — ShellSkill (1 tool), DesktopSkill (8 tools), ChromeBridgeSkill (16 tools), SocialMediaSkill (6 tools), SubAgentSkill (2 tools), BrowserProSkill (55 tools). 88 tool definitions extracted from `gateway_v2.py` into `skills/core/`
 - **⚡ AI Self-Authoring** — Byte can write, validate, and load new community skills at runtime. Three new meta-tools: `create_skill` (AST-validated, instantly live), `list_skills` (rich metadata), `remove_skill` (safe unload + file delete). Skills saved to `skills/community/` and tracked in `registry.json`
@@ -234,12 +264,14 @@ All notable changes to Galactic AI are documented here.
 ## [v1.1.1] — 2026-02-23
 
 ### Added
+
 - **🌐 Galactic Browser (Chrome Extension)** — Full Chrome extension with popup authentication, side panel chat with streaming responses, and real-time browser interaction via WebSocket bridge. 10 new browser tools: `chrome_navigate`, `chrome_read_page`, `chrome_screenshot`, `chrome_click`, `chrome_find`, `chrome_execute_js`, `chrome_tabs_list`, `chrome_form_input`, `chrome_get_page_text`, `chrome_scroll_to`. Content script provides accessibility tree snapshots, element finding, form interaction, and JavaScript execution in the user's real Chrome browser
 - **📱 Social Media Plugin** — Twitter/X integration via Tweepy (post tweets, reply, search mentions, get timeline) and Reddit integration via PRAW (submit posts, comment, search subreddits, read inbox). 8 new tools: `twitter_post`, `twitter_reply`, `twitter_search`, `twitter_mentions`, `reddit_post`, `reddit_comment`, `reddit_search`, `reddit_inbox`
 - **💰 Actual Cost Tracking** — CostTracker now supports `actual_cost` from OpenRouter's generation API, overriding local estimates for precise spend tracking
 - **📖 TOOLS.md Integration** — Personality system now reads TOOLS.md for tool usage guidance, injected into every system prompt
 
 ### Fixed
+
 - **🔧 System-wide [No response] Fix** — Root cause: cloud models (Gemini via OpenRouter) return tool calls via native `tool_calls` streaming field, but the streaming code only read `delta.content` → empty response. Added native `tool_calls` capture in all 3 LLM call paths (streaming, non-streaming messages, non-streaming legacy). Streaming fix accumulates incremental arguments across multiple chunks
 - **📨 Telegram Reliability Overhaul** — Fixed `send_message` silently swallowing ALL errors (`except: pass`); added Markdown parse failure detection with automatic plain text fallback; added message splitting for Telegram's 4096-character limit; fixed `UnboundLocalError` crash on `CancelledError` (response variable not initialized); added `[No response]` guard in all 4 handler methods (`process_and_respond`, `_handle_document`, `_handle_photo`, `_handle_audio`); added `CancelledError` handling across all handlers
 - **🔑 WebSocket Auth Bypass for Localhost** — `handle_stream()` in web_deck.py now bypasses token validation for localhost connections (`127.0.0.1`, `::1`), matching the auth middleware's localhost bypass. Fixes Chrome extension side panel red status dot
@@ -250,12 +282,14 @@ All notable changes to Galactic AI are documented here.
 ## [v1.1.0] — 2026-02-22
 
 ### Added
+
 - **🌐 OpenRouter Model Expansion (6 → 26)** — 26 curated models across 3 tiers: Frontier (Gemini 3.1 Pro, Claude Opus 4.6, GPT-5.2, Grok 4.1 Fast, DeepSeek V3.2, Qwen 3.5 Plus, GPT-5.2 Codex), Strong (12 models including Claude Sonnet 4.6, GPT-5.1, Kimi K2.5, GLM-5), Fast (7 models including Mistral Large, Devstral, MiniMax M2.5, Sonar Pro Search, Nemotron Nano 30B). All models added to Control Deck Models page and Telegram model menus
 - **💰 Token Cost Dashboard** — Real-time cost tracking in the Status tab with 6 summary cards (Session, Today, This Week, This Month, Last Request, Avg/Message), multi-currency support (USD, EUR, GBP, CAD, AUD, JPY, INR, BRL, KRW), persistent JSONL logging (`logs/cost_log.jsonl`), real token extraction from all providers (Google, Anthropic, OpenAI-compatible, Ollama), MODEL_PRICING for 33 models, free provider detection (NVIDIA, Cerebras, Groq, HuggingFace, Ollama show FREE), 90-day auto-prune
 - **📊 CostTracker Backend** — New `CostTracker` class in `gateway_v2.py` with append-only JSONL storage, session/daily/weekly/monthly aggregation, per-model breakdowns, `/api/cost-stats` endpoint
 - **💱 Multi-Currency Support** — 9 currencies with static exchange rates, currency selector saved to localStorage, all costs stored in USD with client-side conversion
 
 ### Fixed
+
 - **📈 Chart.js Removal** — Removed Chart.js CDN dependency that caused Chrome STATUS_BREAKPOINT crashes and infinite resize loops in the Status tab. Cost dashboard now uses lightweight summary cards only
 
 ---
@@ -263,6 +297,7 @@ All notable changes to Galactic AI are documented here.
 ## [v1.0.9] — 2026-02-22
 
 ### Added
+
 - **🎬 Video Generation (Google Veo)** — Text-to-video and image-to-video via Google Veo API. Two new tools: `generate_video` (text prompt → MP4) and `generate_video_from_image` (still image → animated MP4). Supports 4s/6s/8s duration, 720p/1080p/4K resolution, 16:9 and 9:16 aspect ratios, negative prompts. Async polling with status updates during generation
 - **🎥 Inline Video Player** — Generated videos appear inline in the Control Deck chat as HTML5 `<video>` elements with controls, autoplay, muted loop, and a download link. New `/api/video/{filename}` serving endpoint
 - **📦 New NVIDIA Models** — Added Nemotron Super 49B (`nvidia/llama-3.3-nemotron-super-49b-v1.5`), Nemotron Nano 9B v2 (`nvidia/nvidia-nemotron-nano-9b-v2`), and Phi-3 Medium (`microsoft/phi-3-medium-4k-instruct`) to the Models page with model cards
@@ -270,6 +305,7 @@ All notable changes to Galactic AI are documented here.
 - **🎬 Multi-Provider Video Config** — New `video:` config section with Google Veo day-one support and scaffolding for Runway Gen-4, Kling, and Luma Dream Machine
 
 ### Fixed
+
 - **💬 Chat/Logs/Thinking Scroll** — All three tabs now use conventional bottom-up chat ordering (newest content at bottom, like Facebook Messenger). Root cause: stream-bubble was the first child and `insertBefore(sb.nextSibling)` placed new messages at the top. Fixed by moving stream-bubble to be the last child and inserting before it. Also fixed log trim (now removes oldest, not newest) and filterLogs (removed reverse)
 - **🔧 NVIDIA Streaming Hang** — Some NVIDIA models (Qwen 3.5 397B) accept streaming requests but never send SSE data. Added `_NVIDIA_NO_STREAM` set to force non-streaming, plus automatic streaming-to-non-streaming fallback for all NVIDIA models
 - **⏳ NVIDIA Cold-Start Retry** — Large NVIDIA models return HTTP 504 after ~5 minutes when cold-loading onto GPUs. Added auto-retry (up to 2 attempts) on 502/503/504 with 10s delay and "⏳ NVIDIA model loading" status messages
@@ -283,6 +319,7 @@ All notable changes to Galactic AI are documented here.
 ## [v1.0.8] — 2026-02-22
 
 ### Fixed
+
 - **🔧 Model Persistence — Definitive Fix** — Complete architectural overhaul of config save system. Root cause: `_save_config()` was a destructive full-file overwrite. Fix: safe read-modify-write pattern, defensive model-key writeback on every save, unified config paths via `self.core.config_path`, consolidated triple-save for toggle settings, startup diagnostics with `[config]`/`[DEFAULT]` source tags
 - **🎨 Imagen 4 Safety Filter** — Fixed `400 INVALID_ARGUMENT` by changing `safety_filter_level` from `BLOCK_ONLY_HIGH` to `BLOCK_LOW_AND_ABOVE`
 - **🖼️ Inline Image Display** — Added diagnostic logging to image delivery pipeline, fixed `_rawText` accumulation bug between messages
@@ -293,10 +330,12 @@ All notable changes to Galactic AI are documented here.
 ## [v1.0.7] — 2026-02-21
 
 ### Added
+
 - **🔽 Shutdown/Restart Buttons** — Control Deck now has shutdown and restart buttons for easy server management
 - **🎨 Imagen 4 SDK Migration** — Migrated from legacy Gemini image API to the new `google-genai` SDK for Imagen 4 generation
 
 ### Fixed
+
 - **📜 Scroll Ordering** — Initial scroll ordering implementation (newest-first, later corrected in v1.0.9 to conventional bottom-up)
 - **🎨 SD3.5 NVIDIA Fix** — Stable Diffusion 3.5 image generation restored on NVIDIA NIM
 - **🤖 SubAgent Overhaul** — Reworked SubAgentManager for reliability and proper task tracking
@@ -306,6 +345,7 @@ All notable changes to Galactic AI are documented here.
 ## [v1.0.6] — 2026-02-21
 
 ### Fixed
+
 - **🧠 VAULT / Personality not loading** — `config.yaml` → `paths.workspace` was still pointing to the old OpenClaw workspace directory after install migration. The personality system (`personality.py`) reads VAULT.md, IDENTITY.md, USER.md, SOUL.md, and MEMORY.md from the workspace path. With the stale path, the AI had no access to the user's vault (credentials, personal data) and responded with "I don't have access to your personal credentials." Fixed by updating the workspace path to the current install directory
 - **🎯 Smart routing misclassification of file uploads** — When a user sends a document via Telegram (e.g., CHANGELOG.md, README.md), the entire file content was fed into `classify_task()` for smart routing. Any .md file describing code changes would contain keywords like "script", "function", "implement", triggering a "coding" classification and routing to the Qwen Coder 480B model — even when the user wanted help with marketing or social media. `classify_task()` now strips attached file content and code blocks before classification, so routing is based on the user's actual message/caption, not file contents
 - **⏱ Telegram timeout killing active tasks early** — Telegram bridge had its own `timeout_seconds: 180` that wrapped `speak()` in a separate `asyncio.wait_for()`. The global `speak_timeout` is 600s, but Telegram's 180s limit killed the task before the gateway finished. `_get_speak_timeout()` now uses `max(global_timeout, telegram_timeout)` so the Telegram bridge never cuts off a task that the gateway is still allowed to work on
@@ -315,6 +355,7 @@ All notable changes to Galactic AI are documented here.
 ## [v1.0.5] — 2026-02-21
 
 ### Added
+
 - **🔌 Agent Loop Circuit Breaker** — After 3 consecutive tool failures (errors or timeouts), the AI is forced to stop calling tools and explain the situation to the user instead of spiraling through all 50 turns
 - **⚠️ Progressive Backpressure** — At 50% and 80% of the tool-turn budget, the AI receives nudge messages telling it to wrap up and deliver results, preventing runaway automation sessions
 - **🔄 Tool Repetition Guard** — If the same tool is called 4+ times in a 6-call window without progress, the AI is instructed to change strategy or explain the problem
@@ -322,6 +363,7 @@ All notable changes to Galactic AI are documented here.
 - **🎯 Smart Routing Restoration** — When smart routing temporarily switches to a specialized model (e.g., Qwen Coder for coding tasks), the original model is now automatically restored after the request completes
 
 ### Fixed
+
 - **Agent timeout spiral** — Complex tasks (like script creation) could burn through all 50 tool turns without converging, hitting the 600s wall-clock timeout. The new anti-spin guardrails (circuit breaker, backpressure, repetition guard) prevent this pattern
 - **Smart routing model leak** — `auto_route()` switched the model but never restored it, so the specialized model stuck around for subsequent unrelated requests
 
@@ -330,6 +372,7 @@ All notable changes to Galactic AI are documented here.
 ## [v1.0.4] — 2026-02-21
 
 ### Fixed
+
 - **🔧 Model persistence across restarts** — Selected primary model now survives restarts. Two bugs were causing the model to revert to Gemini 2.5 Flash on every startup:
   1. `/api/switch_model` (used by the Models tab quick-switch) updated the live session only — it never wrote the selection to `config.yaml`. It now calls `ModelManager._save_config()` so the choice is immediately persisted.
   2. `GalacticGateway.__init__` read `config.gateway.model` which was only written by the Settings tab path, not the Models tab path. It now reads `config.models.primary_model` first (the canonical value written by `ModelManager`), falling back to `config.gateway.model`, so startup always loads the correct last-used model regardless of which UI element made the switch.
@@ -339,11 +382,13 @@ All notable changes to Galactic AI are documented here.
 ## [v1.0.3] — 2026-02-21
 
 ### Added
+
 - **🎤 Voice Input Button** — Microphone button in the Control Deck chat bar. Click to record, sends audio to Whisper (OpenAI/Groq) for transcription, inserts text into the chat input automatically
 - **🔥 Auto Windows Firewall Rule** — On startup with `remote_access: true`, Galactic AI automatically adds a Windows Firewall inbound rule allowing TCP traffic on the Control Deck port (private networks only)
 - **"CONTROL DECK" label** in the top bar next to the model status badge
 
 ### Fixed
+
 - **Remote access HTTP mode** — Server now binds to `0.0.0.0` on plain HTTP instead of HTTPS with self-signed TLS. Self-signed certs caused `ERR_EMPTY_RESPONSE`. JWT authentication still protects all remote API endpoints
 - **Updater em dash encoding** — Fixed `update.ps1` parse error caused by em dash character corruption in some environments
 
@@ -352,10 +397,12 @@ All notable changes to Galactic AI are documented here.
 ## [v1.0.2] — 2026-02-21
 
 ### Added
+
 - **Localhost bypass for remote auth** — Local connections from `127.0.0.1`/`::1` bypass JWT auth so the PC is never locked out of the Control Deck when `remote_access: true`
 - **"CONTROL DECK" label** in top bar (first introduced here, improved in v1.0.3)
 
 ### Fixed
+
 - **QR code compatibility** — QR pairing code now uses standard black-on-white colors with higher error correction (`ERROR_CORRECT_H`)
 - **Test Voice button now plays audio** — Previously only generated the MP3 server-side without streaming it back. Now uses `/api/tts` to stream audio bytes to the browser and plays them directly
 - **Desktop shortcut icon** — `galactic_ai_flux_v4.ico` added to the repository (was missing, referenced by `create_shortcut.ps1`)
@@ -365,10 +412,12 @@ All notable changes to Galactic AI are documented here.
 ## [v1.0.1] — 2026-02-21
 
 ### Added
+
 - **Config auto-migration** — On startup, `load_config()` detects missing config sections from newer versions and adds them with safe defaults. Affected sections: `gmail`, `discord`, `whatsapp`, `webhooks`, `web`, `elevenlabs`, `models`, `tool_timeouts`, `aliases`. Existing values are never overwritten
 - **Updater `-Force` flag** — `.\update.ps1 -Force` and `./update.sh --force` re-download even when the installed version matches the latest release
 
 ### Fixed
+
 - Missing release ZIP assets — Added `windows.zip`, `macos.zip`, `linux.tar.gz`, `universal.zip`, and `SHA256SUMS.txt`
 
 ---
@@ -376,6 +425,7 @@ All notable changes to Galactic AI are documented here.
 ## [v1.0.0] — 2026-02-21
 
 ### Added
+
 - **🌐 Remote Access Mode** — Access Galactic AI from anywhere
   - Enable with `remote_access: true` in config.yaml
   - Auto-generated self-signed TLS certificates (HTTPS)
@@ -398,11 +448,13 @@ All notable changes to Galactic AI are documented here.
 - **`remote_access.py`** — New security module centralizing JWT, rate limiting, CORS, and auth middleware
 
 ### Fixed
+
 - **Settings model save bug** — Changing primary/fallback models in the Settings tab now takes effect immediately
   - `switch_to_primary()` no longer short-circuits when already in primary mode
   - `_save_config()` now syncs gateway provider/model in config.yaml for persistence across restarts
 
 ### Changed
+
 - Version bumped from v0.9.3 to v1.0.0 across all files
 - `web_deck.py` login endpoint returns JWT tokens when remote access is enabled
 - `web_deck.py` JavaScript uses `authFetch()` wrapper for JWT auth headers on all API calls
@@ -415,6 +467,7 @@ All notable changes to Galactic AI are documented here.
 ## [v0.9.3] — 2026-02-21
 
 ### Added
+
 - **⚙️ Settings Tab** — New Control Deck tab with three sections:
   - *Model Configuration* — Primary and fallback provider+model dropdowns (populated from all 100+ models), auto-fallback toggle, smart routing toggle, streaming toggle
   - *Voice* — TTS voice dropdown with all 7 voices + Test Voice button
@@ -434,6 +487,7 @@ All notable changes to Galactic AI are documented here.
 - **`system.update_check_interval: 21600`** added to `config.yaml`
 
 ### Changed
+
 - Settings tab allows switching primary/fallback models without leaving the browser — no more editing `config.yaml` manually
 - `personality.py` `get_system_prompt()` now loads VAULT.md as the 5th injected file
 - `galactic_core_v2.py` `imprint_workspace()` now includes VAULT.md in the workspace files list
@@ -448,6 +502,7 @@ All notable changes to Galactic AI are documented here.
 ## [v0.9.2] — 2026-02-20
 
 ### Added
+
 - **Resilient model fallback chain** — Error-type-specific cooldowns (RATE_LIMIT: 60s, SERVER_ERROR: 30s, TIMEOUT: 10s, AUTH_ERROR: 86400s, QUOTA_EXHAUSTED: 3600s)
 - **Automatic provider recovery** — Background loop retests failed providers after cooldown expires
 - **16 new built-in tools** (108 total):
@@ -467,6 +522,7 @@ All notable changes to Galactic AI are documented here.
 - **Toast notification system** — CSS-animated popups for model fallback events
 
 ### Changed
+
 - `config.yaml` expanded with `tool_timeouts`, `speak_timeout`, `fallback_cooldowns` sections
 - Status tab HTML redesigned with 6 organized sections
 
@@ -475,11 +531,13 @@ All notable changes to Galactic AI are documented here.
 ## [v0.9.1] — 2026-02-14
 
 ### Added
+
 - **Organized image folders** — Generated images saved to date-stamped subdirectories
 - **Structured logging system** — Daily JSON component logs alongside plain-text system_log.txt
 - **Log rotation** — Files trimmed at 2MB / 5000 lines
 
 ### Changed
+
 - Log system backwards-compatible — existing callers unchanged
 
 ---
@@ -487,6 +545,7 @@ All notable changes to Galactic AI are documented here.
 ## [v0.9.0] — 2026-02-10
 
 ### Added
+
 - **Discord bridge** — Full bot integration with slash commands, typing indicators, allowed-channel access control
 - **WhatsApp bridge** — Meta Cloud API webhook integration
 - **Gmail bridge** — IMAP inbox monitoring with Telegram notifications
@@ -499,6 +558,7 @@ All notable changes to Galactic AI are documented here.
 - **Image attachment in chat** — Attach images to chat messages for vision analysis
 
 ### Fixed
+
 - Graceful shutdown — single Ctrl+C now cleanly closes all subsystems
 - Per-tool timeout — 60s `asyncio.wait_for` on every tool call prevents "typing forever"
 
@@ -507,6 +567,7 @@ All notable changes to Galactic AI are documented here.
 ## [v0.8.1] — 2026-01-28
 
 ### Fixed
+
 - Typing indicator heartbeat — no longer sends duplicate "typing" events
 - Fast Ctrl+C shutdown — no longer hangs waiting for Telegram long-poll to expire
 - Duplicate message guard — prevents double-processing of messages on slow connections
@@ -516,6 +577,7 @@ All notable changes to Galactic AI are documented here.
 ## [v0.8.0] — 2026-01-20
 
 ### Added
+
 - 17 new tools — clipboard, notifications, window management, HTTP requests, QR codes, system info, text transforms, SD3.5 image gen, FLUX auto-generate
 - FLUX.1 Schnell and FLUX.1 Dev image generation via NVIDIA NIM
 - Stable Diffusion 3.5 Large image generation
@@ -526,6 +588,7 @@ All notable changes to Galactic AI are documented here.
 ## [v0.7.9] — 2026-01-12
 
 ### Added
+
 - Image delivery to Telegram and Control Deck — generated images sent as photos, not file paths
 - Dual FLUX API keys — separate keys for FLUX.1 Schnell and FLUX.1 Dev
 
@@ -534,6 +597,7 @@ All notable changes to Galactic AI are documented here.
 ## [v0.7.8] — 2026-01-08
 
 ### Added
+
 - 9 new NVIDIA models (Kimi K2.5, GLM5, MiniMax M2, Nemotron variants)
 - Thinking model support (models that return `<thinking>` blocks)
 - File attachment fix in chat
@@ -543,6 +607,7 @@ All notable changes to Galactic AI are documented here.
 ## [v0.7.7] — 2025-12-28
 
 ### Added
+
 - Accessibility-driven browser interactions — click/type by accessibility ref ID
 - Network request interception and response body capture
 
@@ -551,6 +616,7 @@ All notable changes to Galactic AI are documented here.
 ## [v0.7.6] — 2025-12-20
 
 ### Added
+
 - Desktop automation plugin (pyautogui) — click, type, scroll, drag, template matching
 - Clipboard tools
 
@@ -559,6 +625,7 @@ All notable changes to Galactic AI are documented here.
 ## [v0.7.5] — 2025-12-14
 
 ### Added
+
 - Sub-agent orchestration — spawn parallel AI agents for multi-step workflows
 - `SubAgentManager` plugin
 
@@ -567,6 +634,7 @@ All notable changes to Galactic AI are documented here.
 ## [v0.7.4] — 2025-12-08
 
 ### Added
+
 - Browser session save/restore — persist cookies and storage state across runs
 - Geolocation spoofing, proxy support, media emulation
 
@@ -575,6 +643,7 @@ All notable changes to Galactic AI are documented here.
 ## [v0.7.3] — 2025-12-02
 
 ### Added
+
 - Browser tracing (Playwright trace recording)
 - Iframe support — execute actions inside nested frames
 - Browser storage tools (localStorage, sessionStorage)
@@ -584,6 +653,7 @@ All notable changes to Galactic AI are documented here.
 ## [v0.7.2] — 2025-11-25
 
 ### Added
+
 - NVIDIA single-key setup — one key works for all NVIDIA-hosted models
 - Quick-pick model chips in Control Deck
 - Custom model text field for Ollama custom models
@@ -594,6 +664,7 @@ All notable changes to Galactic AI are documented here.
 ## [v0.7.1] — 2025-11-18
 
 ### Added
+
 - **Persistent memory** — MEMORY.md + memory_aura.json
 - **Voice I/O** — Whisper transcription + TTS response via Telegram
 - **Chat persistence** — `logs/chat_history.jsonl`, restored on page load
@@ -605,11 +676,13 @@ All notable changes to Galactic AI are documented here.
 ## [v0.7.0] — 2025-11-10
 
 ### Added
+
 - 14 AI providers (added Cerebras, OpenRouter, HuggingFace, Together AI, Perplexity)
 - TTS configuration in Setup Wizard
 - OpenClaw migration step — import existing memory/identity files
 
 ### Fixed
+
 - Gemini duplicate response bug
 
 ---
@@ -617,6 +690,7 @@ All notable changes to Galactic AI are documented here.
 ## [v0.6.0-Alpha] — 2025-10-28
 
 ### Initial public release
+
 - 72 built-in tools
 - 5 AI providers (Google, Anthropic, OpenAI, Groq, Ollama)
 - Telegram bot
