@@ -1,4 +1,5 @@
 import asyncio
+import asyncio.subprocess
 import json
 import hashlib
 import time
@@ -844,7 +845,7 @@ body.glow-max .status-dot{box-shadow:0 0 14px var(--green),0 0 28px rgba(0,255,1
   <div id="topbar-left">
     <div class="logo">⬡ GALACTIC AI</div>
     <div style="font-size:0.7em;color:var(--cyan);letter-spacing:2px;opacity:0.7;font-weight:600">CONTROL DECK</div>
-    <div id="version-badge" style="font-size:0.65em;color:var(--dim);letter-spacing:1px;padding:2px 7px;border:1px solid var(--border);border-radius:10px;cursor:default" title="Galactic AI version">v1.4.8</div>
+    <div id="version-badge" style="font-size:0.65em;color:var(--dim);letter-spacing:1px;padding:2px 7px;border:1px solid var(--border);border-radius:10px;cursor:default" title="Galactic AI version">v1.5.1</div>
     <div id='ollama-pill' onclick='switchTab("models")'>
       <div class="status-dot" id="ollama-dot"></div>
       <span id="ollama-label">Ollama</span>
@@ -1036,7 +1037,7 @@ body.glow-max .status-dot{box-shadow:0 0 14px var(--green),0 0 28px rgba(0,255,1
             <div style="font-size:0.72em;color:var(--dim)">When enabled, all OpenRouter models will use the high-speed Nitro endpoints</div>
           </div>
           <div style="display:flex;align-items:center;gap:14px">
-            <span id="versionBadge" class="badge bg-primary" style="opacity:0.6;font-size:0.7em">v1.4.9</span>
+            <span id="versionBadge" class="badge bg-primary" style="opacity:0.6;font-size:0.7em">v1.5.1</span>
             <label class="toggle-switch" title="Show only OpenRouter Nitro aliases">
               <input type="checkbox" id="nitro-only-toggle" onchange="saveNitroOnly(this.checked)">
               <span class="toggle-slider"></span>
@@ -1149,7 +1150,7 @@ body.glow-max .status-dot{box-shadow:0 0 14px var(--green),0 0 28px rgba(0,255,1
         <div style="font-size:0.72rem;letter-spacing:2px;color:var(--dim);margin:14px 0 8px;text-transform:uppercase">System Overview</div>
         <div class="stat-grid">
           <div class="stat-card"><div class="val" id="st-uptime">--</div><div class="lbl">Uptime</div></div>
-          <div class="stat-card"><div class="val" id="st-version">v1.4.9</div><div class="lbl">Version</div></div>
+          <div class="stat-card"><div class="val" id="st-version">v1.5.1</div><div class="lbl">Version</div></div>
           <div class="stat-card"><div class="val" id="st-personality">--</div><div class="lbl">Personality</div></div>
           <div class="stat-card"><div class="val" id="st-tin">--</div><div class="lbl">Tokens In</div></div>
           <div class="stat-card"><div class="val" id="st-tout">--</div><div class="lbl">Tokens Out</div></div>
@@ -2593,7 +2594,7 @@ async function loadPlugins() {
       : '';
     card.innerHTML = `
       <div class="plugin-icon">${s.icon || '⚙️'}</div>
-      <div class="version-tag">Galactic AI v1.4.9</div>
+      <div class="version-tag">${s.display_name} v${s.version}</div>
       <div class="plugin-info">
         <div class="plugin-name">${s.display_name}${coreTag} <span style="color:#555;font-size:0.8em">v${s.version}</span></div>
         <div class="plugin-desc">${s.description}</div>
@@ -4842,9 +4843,10 @@ try {
             name = data.get('name', '')
             enabled = data.get('enabled', True)
             for p in self.core.plugins:
-                pname = getattr(p, 'name', None) or getattr(p, 'skill_name', p.__class__.__name__)
+                # Standardize plugin identification: prefer skill_name (v1.5.1)
+                pname = getattr(p, 'skill_name', None) or getattr(p, 'name', p.__class__.__name__)
                 if pname == name:
-                    p.enabled = bool(enabled)
+                    setattr(p, 'enabled', bool(enabled))
                     await self.core.log(f"Plugin {name}: {'ENABLED' if enabled else 'DISABLED'}", priority=2)
                     return web.json_response({'ok': True, 'name': name, 'enabled': enabled})
             return web.json_response({'error': f'Plugin not found: {name}'}, status=404)
@@ -4881,9 +4883,13 @@ try {
         plugins = []
         for p in self.core.plugins:
             tool_names = list(p.get_tools().keys()) if hasattr(p, 'get_tools') else []
+            s_name = getattr(p, 'skill_name', None) or getattr(p, 'name', p.__class__.__name__)
+            # Use explicit display_name if provided, otherwise fall back to title-cased skill_name
+            d_name = getattr(p, 'display_name', None) or s_name.replace('_', ' ').title()
+            
             plugins.append({
-                'name':         getattr(p, 'skill_name', None) or getattr(p, 'name', p.__class__.__name__),
-                'display_name': (getattr(p, 'skill_name', None) or getattr(p, 'name', p.__class__.__name__)).replace('_', ' ').title(),
+                'name':         s_name,
+                'display_name': d_name,
                 'enabled':      getattr(p, 'enabled', True),
                 'class':        p.__class__.__name__,
                 'version':      getattr(p, 'version', '—'),

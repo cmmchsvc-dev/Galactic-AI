@@ -338,6 +338,8 @@ providers:
       enabled: true
     - id: "openai/gpt-oss-120b"
       name: "GPT-OSS 120B 🤗"
+    - id: "openai/gpt-oss-20b"
+      name: "GPT-OSS 20B ⚡"
       enabled: true
   vllm:
     - id: "vllm-default"

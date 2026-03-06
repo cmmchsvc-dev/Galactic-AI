@@ -2299,6 +2299,12 @@ class GalacticGateway:
     @property
     def supports_native_tools(self):
         """Determine if the current model supports native tool calling APIs."""
+        # 1. Per-model override
+        override = self._get_model_override('supports_tools')
+        if override is not None:
+            return bool(override)
+
+        # 2. Provider-based defaults
         provider = self.llm.provider.lower()
         model = self.llm.model.lower()
         if provider in ("openai", "anthropic", "google", "ollama", "xai", "nvidia", "groq", "mistral", "cerebras", "huggingface", "kimi", "minimax"):
@@ -2371,10 +2377,10 @@ class GalacticGateway:
         )
 
         browser_rules = (
-            "BROWSER TOOL WORKFLOW (MANDATORY for all chrome_* tasks):\n"
-            "1. ALWAYS call chrome_read_page FIRST after navigating to scan the page.\n"
-            "2. chrome_type does NOT auto-submit by default. Set `\"submit\": true` in the arguments to press Enter, OR follow it with a `chrome_click` on the search/submit button.\n"
-            "3. NAVIGATION: Use chrome_navigate. Then ALWAYS use chrome_read_page to see the elements.\n"
+            "BROWSER TOOL WORKFLOW (MANDATORY for all browser_* tasks):\n"
+            "1. ALWAYS call browser_snapshot FIRST after navigating to scan the page.\n"
+            "2. browser_type does NOT auto-submit by default. Set `\"press_enter\": true` in the arguments to press Enter, OR follow it with a `browser_click` on the search/submit button.\n"
+            "3. NAVIGATION: Use browser_navigate. Then ALWAYS use browser_snapshot to see the elements.\n"
             "4. NO HALLUCINATION: You MUST read the page before clicking or typing.\n"
             "5. DO NOT STOP: Output tool call JSON immediately. No prose first.\n"
         )
@@ -2415,14 +2421,14 @@ class GalacticGateway:
             '  4. Run a shell command:\n'
             '  {"tool": "exec_shell", "args": {"command": "dir"}}\n\n'
             '  5. Navigate and scroll a feed (X/Reddit):\n'
-            '  {"tool": "chrome_navigate", "args": {"url": "https://x.com"}}\n'
-            '  {"tool": "chrome_read_page", "args": {"filter": "interactive"}}\n'
-            '  {"tool": "chrome_scroll_continuous", "args": {"steps": 10, "pause_per_step": 2}}\n\n'
+            '  {"tool": "browser_navigate", "args": {"url": "https://x.com"}}\n'
+            '  {"tool": "browser_snapshot", "args": {"interactive": true}}\n'
+            '  {"tool": "browser_scroll", "args": {"direction": "down", "amount": 1000}}\n\n'
             '  6. Authorized Account Login (MANDATORY USE):\n'
-            '  {"tool": "chrome_navigate", "args": {"url": "https://www.ups.com"}}\n'
-            '  {"tool": "chrome_type", "args": {"selector": "#user_id", "text": "my_username"}}\n'
-            '  {"tool": "chrome_type", "args": {"selector": "#password", "text": "my_password123"}}\n'
-            '  {"tool": "chrome_click", "args": {"selector": "#login_btn"}}\n'
+            '  {"tool": "browser_navigate", "args": {"url": "https://www.ups.com"}}\n'
+            '  {"tool": "browser_type", "args": {"selector": "#user_id", "text": "my_username"}}\n'
+            '  {"tool": "browser_type", "args": {"selector": "#password", "text": "my_password123"}}\n'
+            '  {"tool": "browser_click", "args": {"selector": "#login_btn"}}\n'
         )
 
         protocol = (
@@ -2692,9 +2698,10 @@ class GalacticGateway:
         if self.galactic_memory:
             try:
                 # Retrieve relevant bits from long-term memory based on user input
-                memories = self.galactic_memory.recall(user_input, limit=5)
+                memories = await self.galactic_memory.recall(user_input, limit=5)
                 if memories:
-                    semantic_context = "\n[LONG-TERM MEMORY CONTEXT]\n" + "\n".join([f"- {m}" for m in memories])
+                    # memories is a list of dicts: {'id', 'content', 'distance', 'metadata'}
+                    semantic_context = "\n[LONG-TERM MEMORY CONTEXT]\n" + "\n".join([f"- {m['content']}" for m in memories])
                     logger.info(f"🧠 Retrieved {len(memories)} semantic memories.")
             except Exception as e:
                 logger.error(f"Semantic recall failed: {e}")
@@ -2815,7 +2822,10 @@ class GalacticGateway:
             'generate_image_imagen', 'generate_video',
             'chrome_read_page', 'chrome_scroll', 'chrome_wait', 'chrome_wait_for', 'chrome_get_text',
             'chrome_tabs_list', 'chrome_read_console', 'chrome_read_network', 'chrome_key_press',
-            'chrome_tabs_create', 'chrome_type', 'chrome_click', 'chrome_hover', 'chrome_right_click'
+            'chrome_tabs_create', 'chrome_type', 'chrome_click', 'chrome_hover', 'chrome_right_click',
+            'browser_navigate', 'browser_open', 'browser_click', 'browser_type', 
+            'browser_click_by_ref', 'browser_type_by_ref', 'browser_hover', 'browser_scroll',
+            'browser_wait', 'browser_execute_js', 'browser_extract'
         }
         _DISCOVERY_TOOLS = {'list_dir', 'read_file', 'find_files', 'grep_search', 'glob', 'system_info', 'process_status'}
         _ACTION_TOOLS = {'edit_file', 'write_file', 'exec_shell', 'process_start', 'git_commit', 'save_memory', 'post_to_social'}
@@ -2944,7 +2954,7 @@ class GalacticGateway:
                         self._tool_call_history[call_sig] += 1
                         repetition_count = self._tool_call_history[call_sig]
                         
-                        is_chrome = tool_name.startswith('chrome_')
+                        is_browser_tool = tool_name.startswith('chrome_') or tool_name.startswith('browser_')
                         
                         # Block if the SAME tool+args is called too many times across ALL turns
                         if repetition_count > 3:
@@ -2959,7 +2969,7 @@ class GalacticGateway:
                             continue
 
                         if call_sig == last_tool_call:
-                            if is_chrome or tool_name in _DUPLICATE_EXEMPT:
+                            if is_browser_tool or tool_name in _DUPLICATE_EXEMPT:
                                 await self.core.log(f"🚀 Sequential Bypass: {tool_name}", priority=2)
                             else:
                                 await self.core.log(f"⚠️ Duplicate blocked: {tool_name}", priority=2)
@@ -2976,7 +2986,7 @@ class GalacticGateway:
 
                         # ── Block scroll-before-type ──
                         # If user wants typing and model tries to scroll before typing, block it
-                        if tool_name == 'chrome_scroll' and 'chrome_type' not in recent_tools:
+                        if tool_name in ('chrome_scroll', 'browser_scroll') and not any(t in recent_tools for t in ('chrome_type', 'browser_type', 'browser_fill_form')):
                             _lower_input = user_input.lower()
                             if any(kw in _lower_input for kw in ['type ', "type'", 'type"', 'search for', 'search ', 'antigravity']):
                                 await self.core.log("🛑 Blocked scroll-before-type: must type first!", priority=1)
@@ -2984,7 +2994,7 @@ class GalacticGateway:
                                     "role": "tool",
                                     "tool_call_id": tool_call_id,
                                     "name": safe_name,
-                                    "content": "[ERROR] You must call chrome_type BEFORE scrolling. The user asked you to type text. Call chrome_type(text='...') first, then scroll the results.",
+                                    "content": f"[ERROR] You must call {tool_name.replace('scroll', 'type')} BEFORE scrolling. The user asked you to type text. Call that tool first, then scroll the results.",
                                     "tool_name": tool_name
                                 })
                                 continue
@@ -2993,20 +3003,26 @@ class GalacticGateway:
                         # Map safe_name back to actual registered tool name
                         actual_tool_name = next((k for k in self.tools if re.sub(r'[^a-zA-Z0-9_]', '_', k) == tool_name), tool_name)
                         
-                        if tool_name == 'chrome_navigate':
+                        if tool_name in ('chrome_navigate', 'browser_navigate'):
                             target_url = tool_args.get('url', '').rstrip('/')
-                            # Fetch current URL from extension
+                            # Fetch current URL from extension or Browser Pro
                             try:
-                                chrome_skill = next((s for s in self.core.skills if getattr(s, 'skill_name', '') == 'chrome_bridge'), None)
-                                if chrome_skill:
-                                    current_url = await chrome_skill.get_active_tab_url()
+                                # Check for either chrome_bridge or browser_pro
+                                browser_skill = next((s for s in self.core.plugins if getattr(s, 'skill_name', '') in ('chrome_bridge', 'browser_pro')), None)
+                                if browser_skill:
+                                    current_url = None
+                                    if hasattr(browser_skill, 'get_active_tab_url'):
+                                        current_url = await browser_skill.get_active_tab_url()
+                                    elif hasattr(browser_skill, 'get_current_url'): # fallback for custom extensions
+                                        current_url = await browser_skill.get_current_url()
+                                    
                                     if current_url and current_url.rstrip('/') == target_url:
                                         await self.core.log(f"🛑 Blocked redundant navigation to {target_url}", priority=1)
                                         messages.append({
                                             "role": "tool",
                                             "tool_call_id": tool_call_id,
                                             "name": safe_name,
-                                            "content": f"[ERROR] Redundant navigation blocked. You are already at {current_url}. Do NOT call chrome_navigate again. Use chrome_scroll_continuous or chrome_read_page to proceed.",
+                                            "content": f"[ERROR] Redundant navigation blocked. You are already at {current_url}. Do NOT call {tool_name} again. Use {tool_name.replace('navigate', 'scroll')} or other tools to proceed.",
                                             "tool_name": tool_name
                                         })
                                         continue
@@ -3049,12 +3065,18 @@ class GalacticGateway:
                                                        tool=actual_tool_name, result=str(result)[:3000], success=False)
                         
                         # ── Browser Stagnation Guard ──
-                        if is_chrome and actual_tool_name in ('chrome_click', 'chrome_type', 'chrome_key_press'):
+                        if is_browser_tool and actual_tool_name in ('chrome_click', 'chrome_type', 'chrome_key_press', 'browser_click', 'browser_type', 'browser_press', 'browser_click_by_ref'):
                             try:
-                                chrome_skill = next((s for s in self.core.skills if getattr(s, 'skill_name', '') == 'chrome_bridge'), None)
-                                if chrome_skill:
+                                # Find either chrome_bridge or browser_pro
+                                browser_skill = next((s for s in self.core.skills if getattr(s, 'skill_name', '') in ('chrome_bridge', 'browser_pro')), None)
+                                if browser_skill:
                                     # Get current state after action
-                                    new_url = await chrome_skill.get_active_tab_url()
+                                    new_url = None
+                                    if hasattr(browser_skill, 'get_active_tab_url'):
+                                        new_url = await browser_skill.get_active_tab_url()
+                                    elif hasattr(browser_skill, 'get_current_url'):
+                                        new_url = await browser_skill.get_current_url()
+
                                     # We don't want to read the whole page again (slow), just check if URL or Title changed
                                     if self._last_chrome_state:
                                         last_url, last_title = self._last_chrome_state
@@ -3406,6 +3428,7 @@ class GalacticGateway:
         'image_resize': 15, 'image_convert': 15, 'http_request': 60,
         # Chrome Bridge tools
         'chrome_screenshot': 15, 'chrome_navigate': 30, 'chrome_read_page': 15,
+        'browser_snapshot': 15, 'browser_navigate': 30, 'browser_read_page': 15,
         'chrome_find': 10, 'chrome_click': 10, 'chrome_type': 15,
         'chrome_scroll': 10, 'chrome_form_input': 10, 'chrome_execute_js': 30,
         'chrome_get_text': 15, 'chrome_tabs_list': 10, 'chrome_tabs_create': 10,
@@ -3872,10 +3895,10 @@ class GalacticGateway:
             # ── Route to provider ─────────────────────────────────────────
             if base_provider == "google":
                 # Gemini now supports the OpenAI compatibility endpoint
-                return await self._call_openai_compatible_messages(messages)
+                return await self._call_openai_compatible_messages(messages, active_tools=active_tools)
 
             elif base_provider == "deepseek":
-                return await self._call_openai_compatible_messages(messages)
+                return await self._call_openai_compatible_messages(messages, active_tools=active_tools)
 
             elif base_provider == "anthropic":
                 # Anthropic Messages API: separate system field + messages array
@@ -3886,11 +3909,11 @@ class GalacticGateway:
                         system_msg = m["content"]
                     else:
                         msg_list.append(m)
-                return await self._call_anthropic_messages(system_msg, msg_list)
+                return await self._call_anthropic_messages(system_msg, msg_list, active_tools=active_tools)
 
             elif base_provider == "ollama":
                 # Ollama supports the full OpenAI /chat/completions messages array
-                return await self._call_openai_compatible_messages(messages)
+                return await self._call_openai_compatible_messages(messages, active_tools=active_tools)
 
             elif base_provider == "xai":
                 # xAI: collapse to prompt+context (stateless one-shot)
@@ -3898,14 +3921,14 @@ class GalacticGateway:
                 context_str = "\n".join(
                     [f"{m['role']}: {m['content']}" for m in messages[:-1]]
                 )
-                return await self._call_openai_compatible(prompt, context_str)
+                return await self._call_openai_compatible(prompt, context_str, active_tools=active_tools)
 
             elif base_provider in ["nvidia", "openai", "groq", "mistral", "cerebras",
                                         "openrouter", "huggingface", "kimi", "zai", "minimax",
                                         "xiaomi", "moonshot", "qwen-portal", "qianfan", "together",
                                         "vllm", "doubao", "byteplus", "cloudflare-ai-gateway", "kilocode"]:
                 # OpenAI-compatible providers: pass full messages array for proper multi-turn context
-                return await self._call_openai_compatible_messages(messages)
+                return await self._call_openai_compatible_messages(messages, active_tools=active_tools)
 
             else:
                 return f"[ERROR] Unknown provider: {orig_provider}"
@@ -3997,7 +4020,7 @@ class GalacticGateway:
         except Exception as e:
             return f"[ERROR] Anthropic: {str(e)}"
 
-    async def _call_anthropic_messages(self, system_prompt, messages):
+    async def _call_anthropic_messages(self, system_prompt, messages, active_tools=None):
         """
         Anthropic Messages API with full conversation history.
         Used by _call_llm() for multi-turn Anthropic conversations (preserves tool-call context).
@@ -4048,14 +4071,14 @@ class GalacticGateway:
             "messages": merged,
         }
 
-        if self.supports_native_tools and getattr(self, "tools", None):
+        if self.supports_native_tools and active_tools:
             payload["tools"] = [
                 {
                     "name": name,
                     "description": spec.get("description", ""),
                     "input_schema": spec.get("parameters", {})
                 }
-                for name, spec in self.tools.items()
+                for name, spec in active_tools.items()
             ]
 
         try:
@@ -4143,26 +4166,30 @@ class GalacticGateway:
         """Return a per-model override value for the active model, falling back to global config."""
         model_id = getattr(self.llm, 'model', '') or ''
         overrides = self.core.config.get('model_overrides', {}) or {}
+        
+        def _extract(d, k):
+            v = d.get(k)
+            if v is None: return None
+            if isinstance(v, bool): return v
+            try:
+                iv = int(v)
+                return iv if iv > 0 else None # Keep legacy behavior for positive ints
+            except (TypeError, ValueError):
+                return v
+
         # Check exact model match first
         if model_id in overrides and key in (overrides[model_id] or {}):
-            try:
-                val = int(overrides[model_id][key])
-                if val > 0:
-                    return val
-            except (TypeError, ValueError):
-                pass
+            val = _extract(overrides[model_id], key)
+            if val is not None: return val
+            
         # Check aliases — if model_id matches an alias value, also check by alias name
         aliases = self.core.config.get('aliases', {}) or {}
         for alias, aliased_model in aliases.items():
             # aliased_model might be "provider/model" form; strip provider prefix
             stripped = aliased_model.split('/', 1)[-1] if '/' in aliased_model else aliased_model
             if (aliased_model == model_id or stripped == model_id) and alias in overrides:
-                try:
-                    val = int((overrides[alias] or {}).get(key, 0))
-                    if val > 0:
-                        return val
-                except (TypeError, ValueError):
-                    pass
+                val = _extract(overrides[alias], key)
+                if val is not None: return val
         return default
 
     def _get_max_tokens(self, default=None):
@@ -4206,7 +4233,7 @@ class GalacticGateway:
         }
         return provider_defaults.get(provider, default or 32768)
 
-    async def _call_openai_compatible(self, prompt, context):
+    async def _call_openai_compatible(self, prompt, context, active_tools=None):
         """OpenAI-compatible API call (NVIDIA, XAI, Ollama). All URLs are config-driven."""
 
         # FLUX models are image-generation only — they don't support chat/completions.
@@ -4230,7 +4257,7 @@ class GalacticGateway:
             and self.core.config.get('models', {}).get('streaming', True)
         )
         if use_streaming:
-            return await self._call_openai_compatible_streaming(prompt, context, url, headers)
+            return await self._call_openai_compatible_streaming(prompt, context, url, headers, active_tools=active_tools)
 
         payload = {
             "model": self.llm.model,
@@ -4239,6 +4266,21 @@ class GalacticGateway:
                 {"role": "user", "content": prompt}
             ]
         }
+        
+        # Inject native tools for stateless OpenAI format
+        if self.supports_native_tools and active_tools:
+            payload["tools"] = [
+                {
+                    "type": "function",
+                    "function": {
+                        "name": re.sub(r'[^a-zA-Z0-9_]', '_', name),
+                        "description": spec.get("description", ""),
+                        "parameters": spec.get("parameters", {})
+                    }
+                }
+                for name, spec in active_tools.items()
+            ]
+
         max_tokens = self._get_max_tokens()
         if max_tokens:
             payload["max_tokens"] = max_tokens
@@ -4279,7 +4321,7 @@ class GalacticGateway:
         except Exception as e:
             return f"[ERROR] {self.llm.provider}: {str(e)}"
 
-    async def _call_openai_compatible_streaming(self, prompt, context, url, headers):
+    async def _call_openai_compatible_streaming(self, prompt, context, url, headers, active_tools=None):
         """Streaming variant – returns full text but streams internally for real-time web UI updates."""
         payload = {
             "model": self.llm.model,
@@ -4289,6 +4331,20 @@ class GalacticGateway:
             ],
             "stream": True
         }
+
+        # Inject native tools for streaming payload
+        if self.supports_native_tools and active_tools:
+            payload["tools"] = [
+                {
+                    "type": "function",
+                    "function": {
+                        "name": re.sub(r'[^a-zA-Z0-9_]', '_', name),
+                        "description": spec.get("description", ""),
+                        "parameters": spec.get("parameters", {})
+                    }
+                }
+                for name, spec in active_tools.items()
+            ]
         full_response = []
         try:
             async with httpx.AsyncClient(timeout=120.0, verify=False) as client:
@@ -4472,122 +4528,133 @@ class GalacticGateway:
                 for name, spec in active_tools.items()
             ]
 
-        if not use_streaming:
-            # ── Non-streaming path ──
+        max_attempts = 2
+        for attempt in range(max_attempts):
+            if not use_streaming:
+                # ── Non-streaming path ──
+                try:
+                    _timeout = httpx.Timeout(connect=30.0, read=600.0, write=30.0, pool=30.0)
+                    async with httpx.AsyncClient(timeout=_timeout, verify=False) as client:
+                        resp = await client.post(url, json=payload)
+                        if resp.status_code != 200:
+                            if resp.status_code == 400 and "does not support tools" in resp.text and "tools" in payload:
+                                await self.core.log(f"⚠️ Ollama {self.llm.model} does not support tools. Retrying...", priority=2)
+                                payload.pop("tools", None)
+                                continue
+                            return f"[ERROR] ollama HTTP {resp.status_code}: {resp.text[:500]}"
+                        data = resp.json()
+                        msg = data.get('message', {})
+                        content = (msg.get('content') or '').strip()
+                        # Handle native tool calls
+                        if not content and msg.get('tool_calls'):
+                            tc_list = msg['tool_calls']
+                            synthesized = []
+                            for tc in tc_list:
+                                fn = tc.get('function', {})
+                                synthesized.append(json.dumps({
+                                    "tool": fn.get('name', ''),
+                                    "args": fn.get('arguments', {}) if isinstance(fn.get('arguments'), dict) else json.loads(fn.get('arguments', '{}')),
+                                }))
+                            return "\n".join(synthesized)
+                        return content or f"[ERROR] ollama: empty response"
+                except Exception as e:
+                    return f"[ERROR] ollama: {str(e)}"
+
+            # ── Streaming path (native JSON lines) ──
+            full_response = []
             try:
                 _timeout = httpx.Timeout(connect=30.0, read=600.0, write=30.0, pool=30.0)
                 async with httpx.AsyncClient(timeout=_timeout, verify=False) as client:
-                    resp = await client.post(url, json=payload)
-                    if resp.status_code != 200:
-                        return f"[ERROR] ollama HTTP {resp.status_code}: {resp.text[:500]}"
-                    data = resp.json()
-                    msg = data.get('message', {})
-                    content = (msg.get('content') or '').strip()
-                    # Handle native tool calls
-                    if not content and msg.get('tool_calls'):
-                        tc_list = msg['tool_calls']
-                        synthesized = []
-                        for tc in tc_list:
-                            fn = tc.get('function', {})
-                            synthesized.append(json.dumps({
-                                "tool": fn.get('name', ''),
-                                "args": fn.get('arguments', {}) if isinstance(fn.get('arguments'), dict) else json.loads(fn.get('arguments', '{}')),
-                            }))
-                        return "\n".join(synthesized)
-                    return content or f"[ERROR] ollama: empty response"
-            except Exception as e:
-                return f"[ERROR] ollama: {str(e)}"
-
-        # ── Streaming path (native JSON lines) ──
-        full_response = []
-        try:
-            _timeout = httpx.Timeout(connect=30.0, read=600.0, write=30.0, pool=30.0)
-            async with httpx.AsyncClient(timeout=_timeout, verify=False) as client:
-                async with client.stream("POST", url, json=payload) as response:
-                    if response.status_code != 200:
-                        body = await response.aread()
-                        return f"[ERROR] ollama HTTP {response.status_code}: {body.decode('utf-8', errors='replace')[:500]}"
-                    
-                    token_buf = []
-                    _tc_accumulators = {}
-                    _suppress_stream = False
-                    
-                    async for line in response.aiter_lines():
-                        if not line.strip():
-                            continue
-                        try:
-                            chunk = json.loads(line)
-                        except json.JSONDecodeError:
-                            continue
-                        
-                        msg = chunk.get('message', {})
-                        delta = (msg.get('content') or '')
-                        
-                        # Handle thinking content
-                        thinking = (msg.get('thinking') or '')
-                        if thinking and not delta:
-                            delta = thinking
-                        
-                        # Accumulate tool calls (arrive in final chunk when done=true)
-                        tc_list = msg.get('tool_calls', [])
-                        for i, tc in enumerate(tc_list or []):
-                            fn = tc.get('function', {})
-                            if fn.get('name'):
-                                _tc_accumulators[i] = {
-                                    'name': fn['name'],
-                                    'args': fn.get('arguments', {}),
-                                }
-                        
-                        if delta:
-                            full_response.append(delta)
-                            
-                            # Heuristic to hide JSON tool calls from the live UI stream
-                            _current = "".join(full_response).lstrip()
-                            # If it starts with { or drops a { on a new line, it's likely a tool call
-                            if _current.startswith("{") or '\n{' in _current or '{"tool":' in _current:
-                                _suppress_stream = True
-
-                            if not _suppress_stream:
-                                token_buf.append(delta)
-                                if len(token_buf) >= 8:
-                                    await self.core.relay.emit(3, "stream_chunk", "".join(token_buf))
-                                    token_buf = []
-                        
-                        # Check if done
-                        if chunk.get('done'):
-                            break
-                    
-                    # Flush remaining buffer
-                    if token_buf:
-                        await self.core.relay.emit(3, "stream_chunk", "".join(token_buf))
-                    
-                    # Handle accumulated tool calls
-                    if _tc_accumulators:
-                        thought = "".join(full_response).strip()
-                        synthesized_list = []
-                        for idx, acc in sorted(_tc_accumulators.items()):
-                            if not acc['name']:
+                    async with client.stream("POST", url, json=payload) as response:
+                        if response.status_code != 200:
+                            body = await response.aread()
+                            body_text = body.decode('utf-8', errors='replace')
+                            if response.status_code == 400 and "does not support tools" in body_text and "tools" in payload:
+                                await self.core.log(f"⚠️ Ollama {self.llm.model} does not support tools. Retrying...", priority=2)
+                                payload.pop("tools", None)
                                 continue
-                            fn_args = acc['args']
-                            if isinstance(fn_args, str):
-                                try:
-                                    fn_args = json.loads(fn_args)
-                                except json.JSONDecodeError:
-                                    fn_args = {}
-                            synthesized_list.append({
-                                "tool": acc['name'],
-                                "args": fn_args,
-                                "thought": thought if idx == 0 else None
-                            })
-                        if synthesized_list:
-                            # We still return the JSON strings so the `_extract_tool_call` parser can read them,
-                            # but we don't emit them via stream_chunk to the UI here.
-                            full_response = [json.dumps(call) + "\n" for call in synthesized_list]
+                            return f"[ERROR] ollama HTTP {response.status_code}: {body_text[:500]}"
+                        
+                        token_buf = []
+                        _tc_accumulators = {}
+                        _suppress_stream = False
+                        
+                        async for line in response.aiter_lines():
+                            if not line.strip():
+                                continue
+                            try:
+                                chunk = json.loads(line)
+                            except json.JSONDecodeError:
+                                continue
                             
-                return "".join(full_response)
-        except Exception as e:
-            await self.core.log(f"🛑 Ollama native error: {e}", priority=1)
-            return f"[ERROR] ollama (native): {str(e)}"
+                            msg = chunk.get('message', {})
+                            delta = (msg.get('content') or '')
+                            
+                            # Handle thinking content
+                            thinking = (msg.get('thinking') or '')
+                            if thinking and not delta:
+                                delta = thinking
+                            
+                            # Accumulate tool calls (arrive in final chunk when done=true)
+                            tc_list = msg.get('tool_calls', [])
+                            for i, tc in enumerate(tc_list or []):
+                                fn = tc.get('function', {})
+                                if fn.get('name'):
+                                    _tc_accumulators[i] = {
+                                        'name': fn['name'],
+                                        'args': fn.get('arguments', {}),
+                                    }
+                            
+                            if delta:
+                                full_response.append(delta)
+                                
+                                # Heuristic to hide JSON tool calls from the live UI stream
+                                _current = "".join(full_response).lstrip()
+                                # If it starts with { or drops a { on a new line, it's likely a tool call
+                                if _current.startswith("{") or '\n{' in _current or '{"tool":' in _current:
+                                    _suppress_stream = True
+
+                                if not _suppress_stream:
+                                    token_buf.append(delta)
+                                    if len(token_buf) >= 8:
+                                        await self.core.relay.emit(3, "stream_chunk", "".join(token_buf))
+                                        token_buf = []
+                            
+                            # Check if done
+                            if chunk.get('done'):
+                                break
+                        
+                        # Flush remaining buffer
+                        if token_buf:
+                            await self.core.relay.emit(3, "stream_chunk", "".join(token_buf))
+                        
+                        # Handle accumulated tool calls
+                        if _tc_accumulators:
+                            thought = "".join(full_response).strip()
+                            synthesized_list = []
+                            for idx, acc in sorted(_tc_accumulators.items()):
+                                if not acc['name']:
+                                    continue
+                                fn_args = acc['args']
+                                if isinstance(fn_args, str):
+                                    try:
+                                        fn_args = json.loads(fn_args)
+                                    except json.JSONDecodeError:
+                                        fn_args = {}
+                                synthesized_list.append({
+                                    "tool": acc['name'],
+                                    "args": fn_args,
+                                    "thought": thought if idx == 0 else None
+                                })
+                            if synthesized_list:
+                                # We still return the JSON strings so the `_extract_tool_call` parser can read them,
+                                # but we don't emit them via stream_chunk to the UI here.
+                                full_response = [json.dumps(call) + "\n" for call in synthesized_list]
+                                
+                        return "".join(full_response)
+            except Exception as e:
+                await self.core.log(f"🛑 Ollama native error: {e}", priority=1)
+                return f"[ERROR] ollama (native): {str(e)}"
 
     async def _call_openai_compatible_messages(self, messages, active_tools=None):
         """
@@ -4727,7 +4794,7 @@ class GalacticGateway:
                 payload["reasoning_effort"] = self.thinking_level
 
             # Inject native tools for OpenAI format
-            if self.supports_native_tools and getattr(self, "tools", None):
+            if self.supports_native_tools and active_tools:
                 payload["tools"] = [
                     {
                         "type": "function",
@@ -4737,7 +4804,7 @@ class GalacticGateway:
                             "parameters": spec.get("parameters", {})
                         }
                     }
-                    for name, spec in self.tools.items()
+                    for name, spec in active_tools.items()
                 ]
             full_response = []
             try:

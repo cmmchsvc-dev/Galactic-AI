@@ -11,12 +11,13 @@ class GalacticSkill:
     """Base class for all Galactic AI skills (core and community)."""
 
     # ── Metadata (override in subclass) ──────────────────────────────
-    skill_name  = "unnamed_skill"
-    version     = "0.1.0"
-    author      = "unknown"
-    description = "No description provided."
-    category    = "general"          # browser, social, system, desktop, data, general
-    icon        = "\u2699\ufe0f"
+    skill_name   = "unnamed_skill"
+    display_name = None              # "Friendly Name" (defaults to capitalized skill_name)
+    version      = "0.1.0"
+    author       = "cmmchsvc"
+    description  = "No description provided."
+    category     = "general"          # browser, social, system, desktop, data, general
+    icon         = "\u2699\ufe0f"
     is_core     = False              # Set by loader — True for skills/core/
 
     def __init__(self, core):
