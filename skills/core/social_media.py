@@ -14,7 +14,7 @@ class SocialMediaSkill(GalacticSkill):
     """Twitter/X and Reddit integration for Galactic AI."""
 
     skill_name  = "social_media"
-    version     = "1.5.1"
+    version     = "1.5.2"
     author      = "Galactic AI"
     description = "Twitter/X and Reddit integration."
     category    = "social"

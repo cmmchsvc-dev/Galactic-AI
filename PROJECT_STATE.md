@@ -3,7 +3,7 @@
 **Last Updated:** 2026-03-05 04:30
 **Owner:** Chesley McDaniel (techno-hippie / Ches)
 **Repo Path:** C:\Users\Chesley\Galactic AI
-**Current Version:** v1.5.1 (The Memory Compaction Update)
+**Current Version:** v1.5.2 (The Hallucination Defense Update)
 
 ---
 

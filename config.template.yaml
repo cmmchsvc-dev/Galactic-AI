@@ -1,6 +1,6 @@
 system:
   name: Galactic AI
-  version: 1.5.1
+  version: 1.5.2
   port: 9999
   heartbeat_interval: 5
   update_check_interval: 21600
