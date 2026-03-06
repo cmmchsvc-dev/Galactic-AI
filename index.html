@@ -76,14 +76,73 @@
       }
     }
 
+    /* UTILITY CLASSES */
+    .btn-pulse {
+      animation: pulse-glow 2s infinite;
+    }
+
+    .memory-desc {
+      color: var(--muted);
+      margin: 1rem 0 2rem;
+    }
+
+    .hero-platforms {
+      margin-top: 1.5rem;
+      color: var(--muted);
+      font-size: 0.875rem;
+    }
+
+    .section-alt {
+      background: var(--bg2);
+      border-top: 1px solid var(--border);
+      border-bottom: 1px solid var(--border);
+    }
+
+    .center-text {
+      text-align: center;
+    }
+
+    .setup-footer {
+      text-align: center;
+      margin-top: 2rem;
+      color: var(--muted);
+      font-size: 0.9rem;
+    }
+
+    .setup-hint {
+      font-size: 0.85rem;
+      opacity: 0.8;
+      margin-top: 0.5rem;
+      display: inline-block;
+    }
+
+    .dot-green {
+      background: var(--green);
+    }
+
+    .dot-yellow {
+      background: var(--yellow);
+    }
+
+    .dot-cyan {
+      background: var(--accent3);
+    }
+
+    .memory-platforms {
+      color: var(--muted);
+      font-size: 0.8rem;
+      margin-top: 0.75rem;
+      text-align: center;
+    }
+
     /* NAV */
     nav {
       position: sticky;
       top: 0;
       z-index: 100;
       background: var(--glass-bg);
-      backdrop-filter: blur(16px);
       -webkit-backdrop-filter: blur(16px);
+      backdrop-filter: blur(16px);
       border-bottom: 1px solid var(--glass-border);
       padding: 0 2rem;
       display: flex;
@@ -206,6 +265,7 @@
 
     .btn-secondary {
       background: var(--glass-bg);
+      -webkit-backdrop-filter: blur(10px);
       backdrop-filter: blur(10px);
       color: var(--text);
       padding: 0.9rem 2.2rem;
@@ -240,6 +300,7 @@
       justify-content: center;
       gap: 4rem;
       flex-wrap: wrap;
+      -webkit-backdrop-filter: blur(5px);
       backdrop-filter: blur(5px);
     }
 
@@ -406,8 +467,8 @@
 
     .feature-card {
       background: var(--glass-bg);
-      backdrop-filter: blur(10px);
       -webkit-backdrop-filter: blur(10px);
+      backdrop-filter: blur(10px);
       border: 1px solid var(--glass-border);
       border-radius: 16px;
       padding: 2rem;
@@ -782,8 +843,8 @@
       memory (ChromaDB), interruptible Live Voice mode, and advanced vision-based computer use. Runs on your machine. No
       subscriptions. No cloud required.</p>
     <div class="hero-actions">
-      <a href="https://github.com/cmmchsvc-dev/Galactic-AI/releases/latest" class="btn-primary"
-        style="animation: pulse-glow 2s infinite;">Download v1.5.2 Free</a>
+      <a href="https://github.com/cmmchsvc-dev/Galactic-AI/releases/latest" class="btn-primary btn-pulse">Download
+        v1.5.2 Free</a>
       <a href="https://github.com/cmmchsvc-dev/Galactic-AI" class="btn-secondary">View on GitHub</a>
     </div>
     <p class="hero-sub">Free &amp; open source · Python 3.10+ · Windows / macOS / Linux</p>
@@ -805,7 +866,7 @@
         <div>
           <div class="memory-label">FLAGSHIP FEATURE</div>
           <h2>True Persistent Memory.<br>Near-Zero Token Cost.</h2>
-          <p style="color:var(--muted);margin:1rem 0 2rem;">Most AI tools forget everything when you close the window.
+          <p class="memory-desc">Most AI tools forget everything when you close the window.
             Galactic AI builds a living memory file that persists across restarts — and costs almost nothing extra to
             use.</p>
           <div class="steps">
@@ -852,7 +913,7 @@
             <span class="comment"># IDENTITY.md, SOUL.md, USER.md, VAULT.md also loaded</span>
             <span class="comment"># Total token cost: size of your .md files, once.</span>
           </div>
-          <p style="color:var(--muted);font-size:0.8rem;margin-top:0.75rem;text-align:center;">All .md files live on
+          <p class="memory-platforms">All .md files live on
             your machine. Edit them any time in the Memory tab.</p>
         </div>
       </div>
@@ -1006,7 +1067,7 @@
   </section>
 
   <!-- PROVIDERS -->
-  <div style="background:var(--bg2);border-top:1px solid var(--border);border-bottom:1px solid var(--border);">
+  <div class="section-alt">
     <section id="providers">
       <h2>14 AI Providers. One Interface.</h2>
       <p class="section-sub">Switch mid-conversation. Set automatic fallback. Use free tiers or run completely offline.
@@ -1028,9 +1089,9 @@
         <div class="provider-pill"><span class="dot local"></span>Ollama (local)</div>
       </div>
       <div class="provider-legend">
-        <span><span class="legend-dot" style="background:var(--green)"></span>Free tier available</span>
-        <span><span class="legend-dot" style="background:var(--yellow)"></span>Paid only</span>
-        <span><span class="legend-dot" style="background:var(--accent3)"></span>Completely free, runs locally</span>
+        <span><span class="legend-dot dot-green"></span>Free tier available</span>
+        <span><span class="legend-dot dot-yellow"></span>Paid only</span>
+        <span><span class="legend-dot dot-cyan"></span>Completely free, runs locally</span>
       </div>
     </section>
   </div>
@@ -1191,7 +1252,7 @@
   </section>
 
   <!-- QUICK START -->
-  <div style="background:var(--bg2);border-top:1px solid var(--border);border-bottom:1px solid var(--border);">
+  <div class="section-alt">
     <section id="quickstart">
       <h2>Up in 60 seconds.</h2>
       <p class="section-sub">Extract the ZIP, run the installer, open your browser.</p>
@@ -1225,10 +1286,10 @@
           </div>
         </div>
       </div>
-      <p style="text-align:center;margin-top:2rem;color:var(--muted);font-size:0.9rem;">
+      <p class="setup-footer">
         Then open <strong style="color:var(--accent3)">http://127.0.0.1:17789</strong> — the Setup Wizard guides you
         through the rest.<br>
-        <span style="font-size:0.85rem;opacity:0.8;margin-top:0.5rem;display:inline-block;">On Linux or macOS? Run
+        <span class="setup-hint">On Linux or macOS? Run
           <code>python3 scripts/diagnostic.py</code> to verify your environment.</span>
       </p>
     </section>
@@ -1236,8 +1297,8 @@
 
   <!-- TERMINAL DEMO -->
   <section>
-    <h2 style="text-align:center;">See it in action.</h2>
-    <p class="section-sub" style="text-align:center;">The AI chaining tools autonomously — this is a real interaction.
+    <h2 class="center-text">See it in action.</h2>
+    <p class="section-sub center-text">The AI chaining tools autonomously — this is a real interaction.
     </p>
     <div class="terminal">
       <div class="terminal-bar">
@@ -1282,7 +1343,7 @@
       <a href="https://github.com/cmmchsvc-dev/Galactic-AI/releases/latest" class="btn-primary">Download v1.5.2 Free</a>
       <a href="https://github.com/cmmchsvc-dev/Galactic-AI" class="btn-secondary">View Source on GitHub</a>
     </div>
-    <p style="margin-top:1.5rem;color:var(--muted);font-size:0.875rem;">Windows · macOS · Linux · Chromebook · WSL2</p>
+    <p class="hero-platforms">Windows · macOS · Linux · Chromebook · WSL2</p>
   </div>
 
   <!-- FOOTER -->
