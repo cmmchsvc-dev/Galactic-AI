@@ -868,11 +868,16 @@
     <div class="whats-new">
       <div class="whats-new-label">✦ NEW IN v1.5.1 — THE MEMORY COMPACTION UPDATE</div>
       <ul>
-        <li><strong>Auto-Compaction:</strong> The gateway now automatically summarizes long conversation history using Gemini 2.0 Flash when context limits are reached.</li>
-        <li><strong>Recursive Folding:</strong> Old summaries are folded into new ones, preventing "context debt" and keeping history truly compact.</li>
-        <li><strong>Provider-Aware Context:</strong> Implemented massive 1M+ token windows for cloud models while preserving 32k limits for local Ollama.</li>
-        <li><strong>Reliability Failsafe:</strong> Fixed infinite loop hangs with a 3-iteration limit and hard truncation fallback for over-stuffed prompts.</li>
-        <li><strong>System Prompt Exclusion:</strong> Tool definitions and rules no longer eat into your conversation budget.</li>
+        <li><strong>Auto-Compaction:</strong> The gateway now automatically summarizes long conversation history using
+          Gemini 2.0 Flash when context limits are reached.</li>
+        <li><strong>Recursive Folding:</strong> Old summaries are folded into new ones, preventing "context debt" and
+          keeping history truly compact.</li>
+        <li><strong>Provider-Aware Context:</strong> Implemented massive 1M+ token windows for cloud models while
+          preserving 32k limits for local Ollama.</li>
+        <li><strong>Reliability Failsafe:</strong> Fixed infinite loop hangs with a 3-iteration limit and hard
+          truncation fallback for over-stuffed prompts.</li>
+        <li><strong>System Prompt Exclusion:</strong> Tool definitions and rules no longer eat into your conversation
+          budget.</li>
       </ul>
     </div>
 
@@ -1162,7 +1167,7 @@
       <div class="tool-cat">
         <h4>Chrome Extension (27 tools)</h4>
         <ul>
-          <li>chrome_navigate / chrome_tabs_list</li>
+          <li>browser_navigate / browser_snapshot</li>
           <li>chrome_read_page / chrome_find</li>
           <li>chrome_click / chrome_form_input</li>
           <li>chrome_screenshot / chrome_zoom</li>

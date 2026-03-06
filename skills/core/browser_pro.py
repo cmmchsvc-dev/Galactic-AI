@@ -60,9 +60,10 @@ def ensurePageState(page):
 
 
 class BrowserProSkill(GalacticSkill):
-    skill_name  = "browser_pro"
-    version     = "1.1.2"
-    author      = "Galactic AI"
+    skill_name   = "browser_pro"
+    display_name = "Browser Pro"
+    version      = "1.5.1"
+    author       = "cmmchsvc"
     description = "Full Playwright browser automation (55 tools)."
     category    = "browser"
     icon        = "\U0001f310"

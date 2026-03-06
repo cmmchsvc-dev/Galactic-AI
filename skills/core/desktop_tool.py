@@ -35,7 +35,7 @@ class DesktopSkill(GalacticSkill):
     """OS-level desktop control: screenshots, mouse, keyboard."""
 
     skill_name  = "desktop_tool"
-    version     = "1.1.2"
+    version     = "1.5.1"
     author      = "Galactic AI"
     description = "OS-level mouse, keyboard, and screenshot control via pyautogui."
     category    = "desktop"

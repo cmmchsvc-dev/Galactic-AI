@@ -13,12 +13,16 @@ class WatchdogSkill(GalacticSkill):
     Periodically checks if the system is unresponsive during long tasks.
     """
     
+    skill_name   = "watchdog"
+    display_name = "WatchDog Core"
+    version      = "1.5.1"
+    author       = "cmmchsvc"
+    description  = "Monitors system health, detects hung tasks, and auto-recovers deadlocked ReAct loops."
+    category     = "system"
+    icon         = "🐕"
+
     def __init__(self, core):
         super().__init__(core)
-        self.skill_name  = "watchdog"
-        self.description = "Monitors system health, detects hung tasks, and auto-recovers deadlocked ReAct loops."
-        self.category    = "system"
-        self.icon        = "🐕"
         self.check_interval = 30  # seconds
         self.hang_threshold = 3600 # seconds (60 mins)
         self._last_heartbeat = time.time()
