@@ -60,9 +60,11 @@ class GalacticMemory:
             if self.core:
                 await self.core.log(f"Imprint failed for {file_path}: {e}")
 
-    async def recall(self, query, top_k=5):
+    async def recall(self, query, limit=5, **kwargs):
         """Compatibility wrapper for 'recall' (calls query_memory)."""
-        return self.query_memory(query, n_results=top_k)
+        # Supports both 'limit' and legacy 'top_k' parameters
+        n_results = kwargs.get('top_k', limit)
+        return self.query_memory(query, n_results=n_results)
 
     @property
     def model(self):
