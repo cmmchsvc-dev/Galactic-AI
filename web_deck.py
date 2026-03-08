@@ -2640,7 +2640,6 @@ const PROV_ICONS = {
   'flux': '🎨 FLUX (Image Gen)',
   'xiaomi': '📱 Xiaomi',
   'moonshot': '🌙 Moonshot',
-  'qwen-portal': '🌐 Qwen Portal',
   'qianfan': '⛴️ Qianfan',
   'together': '🤝 Together AI',
   'vllm': '🚀 vLLM',
@@ -3288,7 +3287,7 @@ function populateSettingsProviders() {
   const fallbackOrder = [
     'google','anthropic','openai','xai','groq','mistral','cerebras',
     'openrouter','huggingface','kimi','zai','minimax','nvidia','ollama','deepseek',
-    'together','vllm','moonshot','qwen-portal','qianfan','doubao','byteplus',
+    'together','vllm','moonshot','qianfan','doubao','byteplus',
     'cloudflare-ai-gateway','amazon-bedrock','xiaomi','kilocode','github-copilot'
   ];
 
@@ -4763,6 +4762,8 @@ try {
         # Model config
         models_cfg = self.core.config.get('models', {})
 
+        # Memory Stats (QoL/Premium Visibility)
+        indexer = next((s for s in self.core.skills if getattr(s, 'skill_name', '') == 'neural_indexer'), None)
         return web.json_response({
             'global_max_tokens': models_cfg.get('max_tokens', 0),
             'global_context_window': models_cfg.get('context_window', 0),
@@ -4788,10 +4789,11 @@ try {
             'speak_timeout': models_cfg.get('speak_timeout', 600),
             'thinking_level': getattr(self.core.gateway, 'thinking_level', models_cfg.get('thinking_level', 'low')),
             
-            # Memory Stats (QoL/Premium Visibility)
             'memory': {
-                'vector_count': self.core.gateway.galactic_memory.conn.execute("SELECT COUNT(*) FROM episodic_memories").fetchone()[0] if getattr(self.core.gateway, 'galactic_memory', None) else 0,
+                'vector_count': self.core.gateway.galactic_memory.db_conn.execute("SELECT COUNT(*) FROM episodic_memories").fetchone()[0] if getattr(self.core.gateway, 'galactic_memory', None) else 0,
                 'auto_recall_enabled': any(getattr(s, 'skill_name', '') == 'conversation_auto_recall' for s in self.core.skills),
+                'indexer_progress': getattr(indexer, 'progress', 0) if indexer else 0,
+                'is_indexing': getattr(indexer, 'is_scanning', False) if indexer else False,
             },
             'nitro_only': models_cfg.get('nitro_only', False),
 
@@ -4970,7 +4972,7 @@ try {
                     return web.json_response({"status": "error", "message": "Invalid session."}, status=401)
             # Check if API key is actually configured
             current_key = getattr(self.core.gateway.llm, 'api_key', '')
-            if provider != 'ollama' and (not current_key or current_key == 'NONE'):
+            if provider not in ('ollama', 'vertex') and (not current_key or current_key == 'NONE'):
                 return web.json_response({'ok': False, 'needs_key': True, 'provider': provider, 'model': model})
             await self.core.log(f"Shifted Model via Web Deck: {model}", priority=2)
             return web.json_response({'ok': True, 'provider': provider, 'model': model})
