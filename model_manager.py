@@ -404,6 +404,9 @@ class ModelManager:
         self.core.gateway.llm.provider = fallback['provider']
         self.core.gateway.llm.model = fallback['model']
         self._set_api_key(fallback['provider'])
+        
+        # Ensure internally stored provider is normalized for future comparisons
+        self.fallback_provider = fallback['provider']
 
         return fallback
 
@@ -423,6 +426,9 @@ class ModelManager:
         self.core.gateway.llm.model = primary['model']
         self._set_api_key(primary['provider'])
 
+        # Store the intended provider (may be a segment like openrouter-frontier)
+        self.primary_provider = primary['provider']
+
         return primary
 
     async def handle_api_error(self, error_msg):
@@ -438,46 +444,9 @@ class ModelManager:
             await self.switch_to_fallback(reason=f"API errors: {self.error_count}")
 
     def _set_api_key(self, provider):
-        """Set correct API key for provider."""
-        providers_cfg = self.core.config.get('providers', {})
-        
-        # Resolve base provider for pseudo-providers
-        base_provider = provider
-        if provider.startswith("openrouter-"):
-            base_provider = "openrouter"
-
-        if base_provider == "nvidia":
-            # Route to the correct NVIDIA API key based on the active model name
-            # Try unified key first
-            nvidia_cfg = providers_cfg.get('nvidia', {})
-            unified = nvidia_cfg.get('apiKey', '') or nvidia_cfg.get('api_key', '')
-            if unified:
-                self.core.gateway.llm.api_key = unified
-                return
-            keys = nvidia_cfg.get('keys', {})
-            model = self.core.gateway.llm.model or ''
-            model_lower = model.lower()
-            key_routing = [
-                (['qwen'],                  'qwen'),
-                (['z-ai', 'glm'],           'glm'),
-                (['moonshotai', 'kimi'],     'kimi'),
-                (['stepfun'],               'stepfun'),
-                (['deepseek'],              'deepseek'),
-            ]
-            selected_key = None
-            for fragments, key_name in key_routing:
-                if any(frag in model_lower for frag in fragments):
-                    selected_key = keys.get(key_name)
-                    break
-            all_keys = list(keys.values())
-            self.core.gateway.llm.api_key = selected_key or (all_keys[0] if all_keys else "NONE")
-        elif base_provider == "ollama":
-            self.core.gateway.llm.api_key = "NONE"
-        else:
-            # All other providers use apiKey field
-            prov_cfg = providers_cfg.get(base_provider, {})
-            key = prov_cfg.get('apiKey', '') or prov_cfg.get('api_key', '') or prov_cfg.get('apikey', '')
-            self.core.gateway.llm.api_key = key or "NONE"
+        """Set correct API key for provider by delegating to Gateway logic."""
+        key = self.core.gateway._get_provider_api_key(provider)
+        self.core.gateway.llm.api_key = key or "NONE"
 
     async def set_primary(self, provider, model):
         """Set new primary model and switch to it."""

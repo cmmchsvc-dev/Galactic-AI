@@ -15,7 +15,7 @@ class WatchdogSkill(GalacticSkill):
     
     skill_name   = "watchdog"
     display_name = "WatchDog Core"
-    version      = "1.5.2"
+    version      = "1.6.0"
     author       = "cmmchsvc"
     description  = "Monitors system health, detects hung tasks, and auto-recovers deadlocked ReAct loops."
     category     = "system"
