@@ -33,7 +33,7 @@ class ChromeBridgeSkill(GalacticSkill):
     """
 
     skill_name  = "chrome_bridge"
-    version     = "1.5.2"
+    version     = "1.6.0"
     author      = "Galactic AI"
     description = "Chrome extension WebSocket bridge for real browser control."
     category    = "browser"
@@ -80,9 +80,10 @@ class ChromeBridgeSkill(GalacticSkill):
                 "fn": self._tool_chrome_screenshot
             },
             "chrome_navigate": {
-                "description": "Navigate the user's real Chrome browser to a URL, or use 'back'/'forward' for history navigation.",
+                "description": "Navigate the user's real Chrome browser to a URL. Use force=true to bypass 'Leave site?' dialogs.",
                 "parameters": {"type": "object", "properties": {
                     "url": {"type": "string", "description": "URL to navigate to, or 'back'/'forward'"},
+                    "force": {"type": "boolean", "description": "Bypass navigation confirmation dialogs (default: false)"},
                 }, "required": ["url"]},
                 "fn": self._tool_chrome_navigate
             },
@@ -112,13 +113,14 @@ class ChromeBridgeSkill(GalacticSkill):
                 "fn": self._tool_chrome_click
             },
             "chrome_type": {
-                "description": "Type text into an element in the user's Chrome browser and optionally press Enter to submit (default: submit=false). If ref and selector are omitted, auto-detects the best input: focused element → search box → first visible text input.",
+                "description": "Type text into an element in the user's Chrome browser. If ref and selector are omitted, auto-detects the best input. Use click_first=true for complex editors like Reddit/Twitter.",
                 "parameters": {"type": "object", "properties": {
                     "text": {"type": "string", "description": "Text to type"},
-                    "ref": {"type": "string", "description": "Optional element ref ID from chrome_read_page"},
+                    "ref": {"type": "string", "description": "Optional element ref ID"},
                     "selector": {"type": "string", "description": "Optional CSS selector"},
                     "clear": {"type": "boolean", "description": "Clear existing content before typing (default: true)"},
-                    "submit": {"type": "boolean", "description": "Press Enter after typing to submit (default: false)"},
+                    "click_first": {"type": "boolean", "description": "Click the element before typing (default: false)"},
+                    "submit": {"type": "boolean", "description": "Press Enter after typing (default: false)"},
                 }, "required": ["text"]},
                 "fn": self._tool_chrome_type
             },
@@ -181,6 +183,7 @@ class ChromeBridgeSkill(GalacticSkill):
                 "description": "Open a new tab in the user's Chrome browser.",
                 "parameters": {"type": "object", "properties": {
                     "url": {"type": "string", "description": "URL to open (default: new tab page)"},
+                    "force": {"type": "boolean", "description": "Bypass navigation confirmation dialogs if necessary (default: false)"},
                 }},
                 "fn": self._tool_chrome_tabs_create
             },
@@ -232,7 +235,7 @@ class ChromeBridgeSkill(GalacticSkill):
             "chrome_zoom": {
                 "description": "Capture a cropped region of the Chrome browser for close inspection of small elements (icons, buttons, form fields). region=[x0,y0,x1,y1] in pixels from top-left of viewport. Returns a JPEG of just that region.",
                 "parameters": {"type": "object", "properties": {
-                    "region": {"type": "array", "description": "Bounding box [x0, y0, x1, y1] in pixels from viewport top-left. E.g. [0, 0, 200, 200] for top-left 200x200px"},
+                    "region": {"type": "array", "items": {"type": "number"}, "description": "Bounding box [x0, y0, x1, y1] in pixels from viewport top-left. E.g. [0, 0, 200, 200] for top-left 200x200px"},
                 }, "required": ["region"]},
                 "fn": self._tool_chrome_zoom
             },
@@ -296,9 +299,12 @@ class ChromeBridgeSkill(GalacticSkill):
             "chrome_wait": {
                 "description": "Wait for N seconds. Use to let pages load, animations settle, or rate-limit between actions.",
                 "parameters": {
-                    "seconds": {"type": "number", "description": "Number of seconds to wait (max 30)"}
+                    "type": "object",
+                    "properties": {
+                        "seconds": {"type": "number", "description": "Number of seconds to wait (max 30)"}
+                    },
+                    "required": ["seconds"]
                 },
-                "required": ["seconds"],
                 "fn": self._tool_chrome_wait
             },
             "chrome_dialog_response": {
@@ -315,24 +321,27 @@ class ChromeBridgeSkill(GalacticSkill):
             "chrome_gif_start": {
                 "description": "Start recording the browser as an animated GIF. Captures screenshots at the specified frame rate. Call chrome_gif_stop when done, then chrome_gif_export to save.",
                 "parameters": {
-                    "fps": {"type": "number", "description": "Frames per second (default: 2, max: 5)"}
+                    "type": "object",
+                    "properties": {
+                        "fps": {"type": "number", "description": "Frames per second (default: 2, max: 5)"}
+                    }
                 },
-                "required": [],
                 "fn": self._tool_chrome_gif_start
             },
             "chrome_gif_stop": {
                 "description": "Stop the GIF recording. Frames are kept in memory. Call chrome_gif_export to save the GIF.",
-                "parameters": {},
-                "required": [],
+                "parameters": {"type": "object", "properties": {}},
                 "fn": self._tool_chrome_gif_stop
             },
             "chrome_gif_export": {
                 "description": "Export the recorded frames as an animated GIF. Saves to logs/recordings/ and returns the file path.",
                 "parameters": {
-                    "filename": {"type": "string", "description": "Output filename (without .gif extension). Defaults to timestamp."},
-                    "frame_duration_ms": {"type": "number", "description": "Duration per frame in milliseconds (default: 500)"}
+                    "type": "object",
+                    "properties": {
+                        "filename": {"type": "string", "description": "Output filename (without .gif extension). Defaults to timestamp."},
+                        "frame_duration_ms": {"type": "number", "description": "Duration per frame in milliseconds (default: 500)"}
+                    }
                 },
-                "required": [],
                 "fn": self._tool_chrome_gif_export
             },
             "chrome_scroll_continuous": {
@@ -442,7 +451,8 @@ class ChromeBridgeSkill(GalacticSkill):
     async def _tool_chrome_navigate(self, args):
         if not self.ws_connection: return "[ERROR] Chrome extension not connected."
         url = args.get('url', '')
-        result = await self.navigate(url)
+        force = args.get('force', False)
+        result = await self.navigate(url, force=force)
         if result.get('status') == 'success':
             return f"[CHROME] Navigated to: {result.get('url', url)}"
         return f"[ERROR] Chrome navigate: {result.get('error') or result.get('message') or 'unknown error'}"
@@ -547,6 +557,12 @@ class ChromeBridgeSkill(GalacticSkill):
         err = await self._check_self_interaction()
         if err: return err
 
+        # Optional focus click for complex editors
+        click_first = args.get('click_first', False)
+        if click_first and (args.get('ref') or args.get('selector')):
+            await self.click(ref=args.get('ref'), selector=args.get('selector'))
+            await asyncio.sleep(0.3) # Wait for focus/IME
+
         result = await self.type_text(
             text=args.get('text', ''),
             ref=args.get('ref'), selector=args.get('selector'),
@@ -556,18 +572,18 @@ class ChromeBridgeSkill(GalacticSkill):
             return f"[ERROR] Chrome type: {result.get('error') or result.get('message') or 'unknown error'}"
         typed_msg = f"[CHROME] Typed {len(args.get('text', ''))} chars"
         
-        # Auto-submit: press Enter after typing (default: true)
-        should_submit = args.get('submit', True)
+        # Auto-submit: default false for safety
+        should_submit = args.get('submit', False)
         if should_submit:
             try:
-                await asyncio.sleep(0.15)  # Brief pause before Enter
+                await asyncio.sleep(0.2)
                 enter_result = await self.key_press(key='Enter', repeat=1)
                 if enter_result.get('status') == 'success':
-                    typed_msg += " + pressed Enter to submit"
+                    typed_msg += " + pressed Enter"
                 else:
-                    typed_msg += " (Enter key failed, try chrome_key_press manually)"
+                    typed_msg += " (Enter failed)"
             except Exception as e:
-                typed_msg += f" (auto-submit error: {e})"
+                typed_msg += f" (submit error: {e})"
         
         return typed_msg
 
@@ -1122,9 +1138,9 @@ class ChromeBridgeSkill(GalacticSkill):
         """Capture a screenshot of the active (or specified) tab."""
         return await self.send_command("screenshot", {"tab_id": tab_id})
 
-    async def navigate(self, url: str, tab_id=None):
+    async def navigate(self, url: str, tab_id=None, force=False):
         """Navigate a tab to the given URL."""
-        res = await self.send_command("navigate", {"url": url, "tab_id": tab_id})
+        res = await self.send_command("navigate", {"url": url, "tab_id": tab_id, "force": force})
         # Mandatory settle wait. 1.5s is safer for complex sites like UPS/FedEx/Amazon
         await asyncio.sleep(1.5)
         return res
@@ -1210,9 +1226,9 @@ class ChromeBridgeSkill(GalacticSkill):
         """List all open tabs."""
         return await self.send_command("tabs_list", {})
 
-    async def tabs_create(self, url: str | None = None):
+    async def tabs_create(self, url: str | None = None, force=False):
         """Create a new tab, optionally navigating to *url*."""
-        return await self.send_command("tabs_create", {"url": url})
+        return await self.send_command("tabs_create", {"url": url, "force": force})
 
     async def key_press(self, key: str, repeat: int = 1, tab_id=None):
         """Press a keyboard key or shortcut (e.g. ``Enter``, ``ctrl+a``)."""
