@@ -7,7 +7,7 @@ set -e
 echo ""
 echo "============================================"
 echo "  GALACTIC AI - Automation Suite Installer"
-echo "  v1.6.3"
+echo "  v1.6.8"
 echo "============================================"
 # Determine OS
 OS_TYPE=$(uname -s | tr '[:upper:]' '[:lower:]')
