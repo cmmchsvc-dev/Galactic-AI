@@ -1,5 +1,7 @@
-## v1.6.8 — Sub-Agent Reliability & Hive Mind UI (2026-03-08)
-
+- 🚀 **Phase 29: Progress Bars & UI**: Implemented real-time progress bars in both the terminal (ASCII) and the Control Deck (CSS) for main and sub-agents.
+- 🎮 **Asteroids v9 Integration**: Upgraded the internal arcade system to Asteroids v9 (asteroid9.html).
+- 🛡️ **Repo Security Audit**: Performed a manual security sweep and git history purge to remove accidentally exposed API keys.
+- 🔄 **Version Restoration**: Globally restored and standardized the project version to **v1.6.8** across all configuration, documentation, and core files after the history purge.
 - 🌐 **Hive Mind UI Sync**: Fixed real-time visibility of sub-agents in the Control Deck. Reindexed session IDs and added newline delimiters for stable streaming.
 - 🛡️ **Zero-Error Delegation**: Implemented a mandatory "Verification Turn" for all sub-agents. They are now strictly required to check their own code for syntax and logic errors before reporting success.
 - 📍 **Absolute Path Enforcement**: Sub-agents are now injected with environmental context to ensure they always use absolute paths (e.g., your OneDrive Desktop) instead of guessing relative locations.
