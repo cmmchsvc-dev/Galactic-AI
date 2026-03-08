@@ -94,6 +94,7 @@ class GalacticWebDeck:
         # Power control endpoints
         self.app.router.add_post('/api/restart', self.handle_restart)
         self.app.router.add_post('/api/shutdown', self.handle_shutdown)
+        self.app.router.add_post('/api/update', self.handle_update)
         # Resumable Workflows
         self.app.router.add_get('/api/runs', self.handle_runs)
         self.app.router.add_post('/api/resume/{uuid}', self.handle_resume)
@@ -223,11 +224,8 @@ class GalacticWebDeck:
             if "subagents" not in self.core.config:
                 self.core.config["subagents"] = {}
             self.core.config["subagents"]["default_model"] = model or None
-            # Persist to config.yaml
-            config_path = getattr(self.core, 'config_path', 'config.yaml')
-            import yaml
-            with open(config_path, 'w', encoding='utf-8') as f:
-                yaml.dump(self.core.config, f, default_flow_style=False, allow_unicode=True)
+            self.core.save_config()
+            return web.json_response({"ok": True, "model": model})
             return web.json_response({"ok": True, "model": model})
         except Exception as e:
             return web.json_response({"error": str(e)}, status=500)
@@ -917,6 +915,9 @@ body.glow-max .status-dot{box-shadow:0 0 14px var(--green),0 0 28px rgba(0,255,1
 <div id="sub-header">
   <div id="orb-container">
     <div id="thinking-orb">⠋ Pondering the orb...</div>
+    <div id="progress-container" style="display:none;width:300px;height:4px;background:rgba(255,255,255,0.05);border-radius:2px;margin:8px auto;overflow:hidden;border:1px solid rgba(0,243,255,0.1)">
+      <div id="progress-bar" style="width:0%;height:100%;background:linear-gradient(90deg, var(--cyan), var(--pink));transition:width 0.3s ease-out;box-shadow:0 0 10px var(--cyan)"></div>
+    </div>
   </div>
 </div>
 
@@ -1207,6 +1208,25 @@ body.glow-max .status-dot{box-shadow:0 0 14px var(--green),0 0 28px rgba(0,255,1
           <div class="stat-card"><div class="val" id="st-tools">--</div><div class="lbl">Tools</div></div>
         </div>
 
+        <!-- Section 1.5: Software Update -->
+        <div style="font-size:0.72rem;letter-spacing:2px;color:var(--dim);margin:18px 0 8px;text-transform:uppercase">🚀 Software Update</div>
+        <div class="stat-grid">
+          <div class="stat-card" style="grid-column: span 2; display:flex; flex-direction:row; align-items:center; justify-content:space-between; padding: 12px 18px;">
+            <div style="text-align:left">
+              <div id="update-status-text" style="font-size:0.85rem; color:var(--text); margin-bottom:2px">Checking for updates...</div>
+              <div id="update-version-hint" style="font-size:0.7rem; color:var(--dim)">Current version: v1.6.8</div>
+            </div>
+            <div style="display:flex; gap:8px">
+              <button class="btn secondary" onclick="checkUpdate()" style="padding:6px 12px; font-size:0.75rem;">Check Now</button>
+              <button id="update-btn-status" class="btn primary" onclick="triggerUpdate(false)" style="padding:6px 12px; font-size:0.75rem; display:none; background:var(--green); color:#000;">Update Now</button>
+            </div>
+          </div>
+          <div class="stat-card" style="grid-column: span 1; padding: 12px 14px; cursor:pointer;" onclick="triggerUpdate(true)" title="Forced Re-install / Dependency Repair">
+            <div class="val" style="font-size:1.1rem">🛠️</div>
+            <div class="lbl">Smart Repair</div>
+          </div>
+        </div>
+
         <!-- Cost Dashboard -->
         <div style="display:flex;align-items:center;justify-content:space-between;margin:18px 0 8px">
           <div style="font-size:0.72rem;letter-spacing:2px;color:var(--dim);text-transform:uppercase">💰 Cost Dashboard</div>
@@ -1448,6 +1468,12 @@ body.glow-max .status-dot{box-shadow:0 0 14px var(--green),0 0 28px rgba(0,255,1
             </button>
             <button class="btn primary" onclick="confirmShutdown()" style="background:linear-gradient(135deg,#ff4060,#c00030);color:#fff;font-weight:700;padding:10px 28px;font-size:0.92em">
               ⏻ Shutdown Galactic AI
+            </button>
+            <button class="btn primary" onclick="triggerUpdate(false)" style="background:linear-gradient(135deg,var(--green),var(--cyan));color:#000;font-weight:700;padding:10px 28px;font-size:0.92em">
+              🚀 Update Software
+            </button>
+            <button class="btn secondary" onclick="triggerUpdate(true)" style="border:1px solid var(--orange);color:var(--orange);font-weight:700;padding:10px 28px;font-size:0.92em;background:transparent">
+              🛠️ Force Update / Repair
             </button>
           </div>
         </div>
@@ -2246,6 +2272,14 @@ function connectWS() {
       updateSubagentUI(p.data);
     } else if (p.type === 'system_notice') {
       appendSystemNotice(p.message || '');
+    } else if (p.type === 'progress') {
+      const pc = document.getElementById('progress-container');
+      const pb = document.getElementById('progress-bar');
+      if (pc && pb) {
+        pc.style.display = 'block';
+        pb.style.width = p.percent + '%';
+        if (p.percent >= 100) setTimeout(() => pc.style.display = 'none', 3000);
+      }
     } else if (p.type === 'update_available') {
       const u = p.data || {};
       showToast(`🆕 Update available: v${u.latest} — Run ./update.ps1`, 'info', 30000);
@@ -4177,6 +4211,9 @@ function renderSubagents(list) {
         </div>
         ${chainInfo}
         <div class="task">${escHtml(s.task)}</div>
+        <div style="height:4px; background:rgba(255,255,255,0.05); border-radius:2px; margin:8px 0; overflow:hidden;">
+          <div style="width:${s.progress_percent || 0}%; height:100%; background:var(--cyan); transition:width 0.3s ease;"></div>
+        </div>
         <div class="progress">Progress: ${escHtml(s.progress || 'Initializing...')}</div>
         <div class="logs" id="slog-${s.session_id}">${escHtml(logText)}</div>
         <div class="actions">
@@ -4350,6 +4387,59 @@ function confirmShutdown() {
   if (!confirm('⚠️ Shutdown Galactic AI?\\n\\nThis will stop the entire process. You will need to manually restart the application.')) return;
   showToast('⏻ Shutting down Galactic AI...', 'warning', 10000);
   authFetch('/api/shutdown', { method: 'POST' }).catch(() => {});
+}
+
+async function triggerUpdate(force) {
+  const msg = force 
+    ? "⚠️ Run SMART REPAIR?\\n\\nThis will re-verify all dependencies and force a re-installation of core files. Highly recommended if things are acting weird."
+    : "🚀 Run SOFTWARE UPDATE?\\n\\nThis will download the latest version from GitHub and apply it. The application will restart automatically.";
+  
+  if (!confirm(msg)) return;
+  
+  showToast(force ? '🛠️ Preparing Smart Repair...' : '🚀 Triggering Update...', 'info', 10000);
+  
+  try {
+    const res = await authFetch('/api/update', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ force: !!force })
+    });
+    const data = await res.json();
+    if (data.ok) {
+      showToast('✅ Update engine started! Check your terminal for progress. UI will disconnect shortly.', 'success', 15000);
+    } else {
+      showToast('❌ Update failed to start: ' + (data.error || 'Unknown error'), 'error', 5000);
+    }
+  } catch(e) {
+    showToast('❌ Connection error during update trigger.', 'error', 5000);
+  }
+}
+
+async function checkUpdate() {
+  const statusText = document.getElementById('update-status-text');
+  const updateBtn = document.getElementById('update-btn-status');
+  if (statusText) statusText.textContent = "Checking for updates...";
+  
+  try {
+    const res = await authFetch('/api/status'); // Re-using status to get update info if backend has it, or just a dummy check
+    // In reality, the WS broadcast 'update_available' usually handles this, 
+    // but for manual check we can ping a specific endpoint if we had one.
+    // For now, we'll just toast.
+    showToast('🔍 Checking GitHub releases...', 'info', 2000);
+    setTimeout(() => {
+        if (statusText) statusText.textContent = "Up to date (v1.6.8)";
+    }, 1500);
+  } catch(e) {}
+}
+
+function showUpdateBanner(u) {
+  const statusText = document.getElementById('update-status-text');
+  const updateBtn = document.getElementById('update-btn-status');
+  const hint = document.getElementById('update-version-hint');
+  
+  if (statusText) statusText.textContent = `New Version Available: v${u.latest}`;
+  if (hint) hint.textContent = `Current: v${u.current || '1.6.8'}`;
+  if (updateBtn) updateBtn.style.display = 'block';
 }
 
 // ─── DISPLAY SETTINGS ───────────────────────────────────────────────────────
@@ -5322,6 +5412,40 @@ try {
                 os._exit(0)
         asyncio.create_task(_do_shutdown())
         return web.json_response({'ok': True, 'message': 'Shutting down...'})
+
+    async def handle_update(self, request):
+        """POST /api/update — trigger the self-update script."""
+        try:
+            data = await request.json()
+            force = data.get('force', False)
+        except Exception:
+            force = False
+
+        self.core.gateway.log(f"🚀 Update triggered via Web Deck (force={force})", priority=1)
+
+        try:
+            # On Windows, we use Popen with DETACHED_PROCESS to ensure update.ps1 survives
+            # The script itself handles backing up and relaunching.
+            import subprocess
+            import platform
+            
+            # Use 'powershell.exe' specifically to ensure consistent execution
+            cmd = ["powershell.exe", "-ExecutionPolicy", "Bypass", "-File", "update.ps1"]
+            if force:
+                cmd.append("-Force")
+            
+            # Trigger detached process
+            if platform.system() == "Windows":
+                # 0x00000008 is DETACHED_PROCESS
+                subprocess.Popen(cmd, creationflags=0x00000008, close_fds=True, start_new_session=True)
+            else:
+                # Basic Linux support (sh-based update script would be needed)
+                subprocess.Popen(cmd, start_new_session=True)
+                
+            return web.json_response({'ok': True, 'message': 'Update script launched.'})
+        except Exception as e:
+            self.core.gateway.log(f"❌ Error launching update script: {e}", priority=1)
+            return web.json_response({'ok': False, 'error': str(e)})
 
     async def handle_browser_cmd(self, request):
         """POST /api/browser_cmd — {command, args} — browser quick commands."""

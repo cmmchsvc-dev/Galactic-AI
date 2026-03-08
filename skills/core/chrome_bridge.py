@@ -33,7 +33,7 @@ class ChromeBridgeSkill(GalacticSkill):
     """
 
     skill_name  = "chrome_bridge"
-    version     = "1.6.1"
+    version     = "1.6.3"
     author      = "Galactic AI"
     description = "Chrome extension WebSocket bridge for real browser control."
     category    = "browser"

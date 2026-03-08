@@ -62,7 +62,7 @@ def ensurePageState(page):
 class BrowserProSkill(GalacticSkill):
     skill_name   = "browser_pro"
     display_name = "Browser Pro"
-    version      = "1.6.1"
+    version      = "1.6.3"
     author       = "cmmchsvc"
     description = "Full Playwright browser automation (55 tools)."
     category    = "browser"
@@ -1374,30 +1374,56 @@ class BrowserProSkill(GalacticSkill):
         try:
             self.playwright = await async_playwright().start()
 
-            # Read browser engine from config (chromium | firefox | webkit)
-            engine_name = self.core.config.get('browser', {}).get('engine', 'chromium')
+            # Read browser engine and config
+            engine_conf = self.core.config.get('browser', {})
+            engine_name = engine_conf.get('engine', 'chromium')
             browser_engine = getattr(self.playwright, engine_name, self.playwright.chromium)
-            headless = self.core.config.get('browser', {}).get('headless', False)
+            headless = engine_conf.get('headless', False)
+            
+            # Persistent Profile Support
+            profile_path = engine_conf.get('profile_path') or engine_conf.get('persistent_profile')
+            
+            common_args = [
+                '--disable-blink-features=AutomationControlled',
+                '--disable-dev-shm-usage',
+                '--disable-web-security',
+                '--no-sandbox'
+            ]
+            user_agent = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
 
-            # Launch with realistic browser args (anti-detection)
-            self.browser = await browser_engine.launch(
-                headless=headless,
-                args=[
-                    '--disable-blink-features=AutomationControlled',
-                    '--disable-dev-shm-usage',
-                    '--disable-web-security',
-                    '--no-sandbox'
-                ]
-            )
+            if profile_path:
+                # Use launch_persistent_context for full persistence (cookies, cache, storage)
+                path = Path(profile_path).expanduser().resolve()
+                path.parent.mkdir(parents=True, exist_ok=True)
+                
+                await self.core.log(f"Browser: Launching persistent profile at {path}", priority=2)
+                
+                self.context = await browser_engine.launch_persistent_context(
+                    user_data_dir=str(path),
+                    headless=headless,
+                    no_viewport=True,
+                    user_agent=user_agent,
+                    args=common_args
+                )
+                # In persistent mode, the browser is implicit in the context
+                self.browser = None 
+            else:
+                # Standard transient launch
+                self.browser = await browser_engine.launch(
+                    headless=headless,
+                    args=common_args
+                )
+                self.context = await self.browser.new_context(
+                    no_viewport=True,
+                    user_agent=user_agent
+                )
 
-            # Context with realistic viewport
-            self.context = await self.browser.new_context(
-                no_viewport=True,
-                user_agent='Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
-            )
-
-            # Create initial page
-            page = await self.context.new_page()
+            # Create initial page (or use existing one if persistent context already has one)
+            if self.context.pages:
+                page = self.context.pages[0]
+            else:
+                page = await self.context.new_page()
+                
             page_id = "page_1"
             self.pages[page_id] = page
             self.active_page_id = page_id
@@ -1406,11 +1432,14 @@ class BrowserProSkill(GalacticSkill):
             ensurePageState(page)
 
             self.started = True
-            await self.core.log("Galactic Browser PRO: Online (Anti-Detection Mode)", priority=2)
-            return {"status": "started", "page_id": page_id}
+            mode_str = "Persistent" if profile_path else "Transient"
+            await self.core.log(f"Galactic Browser PRO: Online ({mode_str} / Anti-Detection)", priority=2)
+            return {"status": "started", "page_id": page_id, "mode": mode_str}
 
         except Exception as e:
             await self.core.log(f"Browser launch failed: {e}", priority=1)
+            import traceback
+            traceback.print_exc()
             return {"status": "error", "message": str(e)}
 
     def _get_page(self, page_id=None):
@@ -2581,11 +2610,22 @@ class BrowserProSkill(GalacticSkill):
 
     async def close(self):
         """Shutdown browser."""
+        if self.context:
+            await self.context.close()
+            self.context = None
+            
         if self.browser:
             await self.browser.close()
+            self.browser = None
+            
+        if self.playwright:
             await self.playwright.stop()
-            self.started = False
-            await self.core.log("Browser closed", priority=2)
+            self.playwright = None
+            
+        self.started = False
+        self.pages = {}
+        self.active_page_id = None
+        await self.core.log("Browser closed", priority=2)
 
     async def run(self):
         """Skill background loop."""

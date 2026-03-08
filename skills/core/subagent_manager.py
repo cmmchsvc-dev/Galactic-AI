@@ -32,6 +32,7 @@ class SubAgentSession:
         self.task_ref    = None         # asyncio.Task — prevents GC + enables cancel
         self.chain_id    = chain_id     # None if standalone
         self.chain_step  = chain_step   # 0-based index within the chain
+        self.progress_percent = 0       # 0-100
 
     @property
     def elapsed(self):
@@ -54,6 +55,7 @@ class SubAgentSession:
             "result_snippet": (self.result or "")[:300] if self.status in ("completed", "failed") else None,
             "chain_id":       self.chain_id,
             "chain_step":     self.chain_step,
+            "progress_percent": self.progress_percent,
         }
 
 
@@ -66,6 +68,7 @@ class AgentChain:
         self.sessions = []            # SubAgentSession list (filled as chain runs)
         self.current  = 0
         self.status   = "pending"
+        self.progress_percent = 0
 
 
 # ── Skill ────────────────────────────────────────────────────────────────────
@@ -74,7 +77,7 @@ class SubAgentSkill(GalacticSkill):
     """The Hive Mind: spawns and manages isolated sub-agent tasks and chains."""
 
     skill_name  = "subagent_manager"
-    version     = "1.6.3"
+    version     = "1.6.8"
     author      = "Galactic AI"
     description = "Multi-agent task orchestration with live monitoring and chains."
     category    = "system"
@@ -269,6 +272,8 @@ class SubAgentSkill(GalacticSkill):
             task_template  = step.get("task", "")
             task           = task_template.replace("{prev_result}", prev_result)
             chain.current  = i
+            chain.progress_percent = int(((i + 0.1) / len(chain.steps)) * 100)
+            await self._broadcast_update(chain, f"Running step {i+1} of {len(chain.steps)}")
 
             session_id = await self.spawn(
                 task, agent_id=agent_type, model=step_model,
@@ -294,6 +299,7 @@ class SubAgentSkill(GalacticSkill):
                 return
 
             prev_result = session.result or ""
+            chain.progress_percent = int(((i + 1) / len(chain.steps)) * 100)
             if i < len(chain.steps) - 1:
                 await self._chat_notify(f"⛓️ Chain **[{chain.id}]** step {i+1}/{len(chain.steps)} done → passing result to next agent...")
 
@@ -365,6 +371,7 @@ class SubAgentSkill(GalacticSkill):
 
             session.result   = result
             session.status   = "completed"
+            session.progress_percent = 100
             session.end_time = datetime.now()
             session.progress = "Done"
 
@@ -394,6 +401,7 @@ class SubAgentSkill(GalacticSkill):
             # We assume gateway_v3 emitted a session_abort trace before re-raising.
             error_msg = f"Crash: {str(e)[:200]}"
             session.status   = "failed"
+            session.progress_percent = 100
             session.progress = error_msg
             session.result   = f"[FATAL ERROR] {str(e)}"
             session.end_time = datetime.now()
@@ -437,6 +445,7 @@ class SubAgentSkill(GalacticSkill):
                 "status":     session.status,
                 "elapsed":    session.elapsed,
                 "progress":   session.progress,
+                "progress_percent": session.progress_percent,
                 "log_line":   line,
                 "chain_id":   session.chain_id,
                 "chain_step": session.chain_step,

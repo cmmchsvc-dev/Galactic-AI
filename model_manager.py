@@ -8,6 +8,7 @@ import asyncio
 import yaml
 import os
 import re
+import contextvars
 from datetime import datetime, timedelta
 
 # ── Error type constants ──────────────────────────────────────────────
@@ -92,9 +93,11 @@ class ModelManager:
             f"[{_fp_src}/{_fm_src}] config_path={self.config_path}"
         )
 
-        self.current_mode = 'primary'  # 'primary' or 'fallback'
-        self.error_count = 0
-        self.last_error_time = None
+        self._session_current_mode = contextvars.ContextVar('mm_current_mode', default='primary')
+        self._session_error_count = contextvars.ContextVar('mm_error_count', default=0)
+        self._session_last_error_time = contextvars.ContextVar('mm_last_error_time', default=None)
+        self._session_routed = contextvars.ContextVar('mm_routed', default=False)
+        self._session_pre_route_state = contextvars.ContextVar('mm_pre_route_state', default=None)
 
         # Auto-fallback settings
         self.auto_fallback_enabled = model_config.get('auto_fallback', True)
@@ -291,6 +294,31 @@ class ModelManager:
     # ─────────────────────────────────────────────────────────────────
     # Provider Health Tracking
     # ─────────────────────────────────────────────────────────────────
+
+    @property
+    def current_mode(self): return self._session_current_mode.get()
+    @current_mode.setter
+    def current_mode(self, v): self._session_current_mode.set(v)
+
+    @property
+    def error_count(self): return self._session_error_count.get()
+    @error_count.setter
+    def error_count(self, v): self._session_error_count.set(v)
+
+    @property
+    def last_error_time(self): return self._session_last_error_time.get()
+    @last_error_time.setter
+    def last_error_time(self, v): self._session_last_error_time.set(v)
+
+    @property
+    def _routed(self): return self._session_routed.get()
+    @_routed.setter
+    def _routed(self, v): self._session_routed.set(v)
+
+    @property
+    def _pre_route_state(self): return self._session_pre_route_state.get()
+    @_pre_route_state.setter
+    def _pre_route_state(self, v): self._session_pre_route_state.set(v)
 
     def _get_health(self, provider):
         """Get or create health record for a provider."""
@@ -593,3 +621,108 @@ class ModelManager:
                 report += f"**Last Error:** {elapsed}s ago\n"
 
         return report
+    def get_all_models(self):
+        """
+        Returns a flat list of all models from configured providers and discovered Ollama models.
+        Each entry: {"id": "provider/model_id", "label": "Model Name"}
+        Used to populate UI model selectors.
+        """
+        all_models = []
+        providers_cfg = self.core.config.get('providers', {})
+        
+        # 1. Load config/models.yaml
+        models_yaml_path = os.path.join(os.path.dirname(self.config_path), 'config', 'models.yaml')
+        models_data = {}
+        if os.path.exists(models_yaml_path):
+            try:
+                with open(models_yaml_path, 'r', encoding='utf-8') as f:
+                    models_data = yaml.safe_load(f) or {}
+            except Exception as e:
+                import logging
+                logging.error(f"Error loading models.yaml for get_all_models: {e}")
+
+        available_providers = models_data.get('providers', {})
+        
+        # 2. Collect from configured cloud providers
+        for provider, models_list in available_providers.items():
+            if provider == 'ollama':
+                continue # Handled below via discovery
+            
+            # Check if provider is configured with an API key
+            prov_cfg = providers_cfg.get(provider, {})
+            api_key = (prov_cfg.get('apiKey', '') or prov_cfg.get('api_key', '')
+                       or prov_cfg.get('apikey', ''))
+            
+            # NVIDIA special case: unified key or sub-keys
+            if provider == 'nvidia' and not api_key:
+                sub_keys = prov_cfg.get('keys', {})
+                if sub_keys and any(v for v in sub_keys.values()):
+                    api_key = next((v for v in sub_keys.values() if v), '')
+
+            if api_key and api_key not in ('', 'NONE'):
+                for m in models_list:
+                    if m.get('enabled', True):
+                        mid = m.get('id')
+                        mname = m.get('name', mid)
+                        
+                        # Format ID for subagent_manager.spawn(): "provider/model"
+                        full_id = mid
+                        if provider != 'openrouter' and '/' not in mid:
+                            full_id = f"{provider}/{mid}"
+                        
+                        all_models.append({
+                            "id": full_id,
+                            "name": f"{mname} ({provider})"
+                        })
+
+        # 3. Collect from discovered Ollama models
+        ollama_mgr = getattr(self.core, 'ollama_manager', None)
+        if ollama_mgr and hasattr(ollama_mgr, 'discovered_models'):
+            for m in ollama_mgr.discovered_models:
+                all_models.append({
+                    "id": f"ollama/{m}",
+                    "name": f"🦙 {m} (local)"
+                })
+        
+        return all_models
+
+    def resolve_model_id(self, query: str) -> str:
+        """
+        Resolves a fuzzy model string (e.g. "Qwen3", "ollama/qwen3", or full ID)
+        to the best matching unique provider/model ID.
+        Returns the original query string if no better match is found.
+        """
+        if not query:
+            return query
+            
+        all_models = self.get_all_models()
+        query_l = query.lower().strip()
+        
+        # 1. Exact ID match (case-insensitive)
+        for m in all_models:
+            mid = m['id'].lower()
+            if mid == query_l:
+                return m['id']
+                
+        # 2. Prefix match (e.g. "ollama/qwen" matches "ollama/qwen3:8b")
+        # Prioritize exact prefix + tag match
+        for m in all_models:
+            mid = m['id'].lower()
+            if mid.startswith(query_l + ":"):
+                return m['id']
+        
+        # 3. General prefix match
+        for m in all_models:
+            mid = m['id'].lower()
+            if mid.startswith(query_l):
+                return m['id']
+                
+        # 4. Keyword match on name/label (e.g. "qwen3" matches "🦙 qwen3:8b (local)")
+        # Split by '/' to handle case where user provided provider/part
+        query_part = query_l.split('/')[-1]
+        for m in all_models:
+            mname = m['name'].lower()
+            if query_part in mname:
+                return m['id']
+                
+        return query

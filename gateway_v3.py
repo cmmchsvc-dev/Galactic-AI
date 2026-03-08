@@ -369,6 +369,7 @@ class GalacticGateway:
         self._session_llm_provider = contextvars.ContextVar('session_llm_provider', default=self.provider)
         self._session_llm_model = contextvars.ContextVar('session_llm_model', default=self.model)
         self._session_llm_api_key = contextvars.ContextVar('session_llm_api_key', default=self.api_key)
+        self._session_progress_percent = contextvars.ContextVar('session_progress_percent', default=0)
 
         class LLMProxy:
             def __init__(self, prov_var, mod_var, key_var):
@@ -2611,6 +2612,7 @@ class GalacticGateway:
         cwd = os.getcwd()
         user_name = os.getenv('USERNAME', 'User')
         home_dir = os.path.expanduser('~')
+        subagent_model = self.core.config.get("subagents", {}).get("default_model", "Auto-Resolve")
         env_block = (
             f"CURRENT ENVIRONMENT:\n"
             f"- Date: {curr_time}\n"
@@ -2619,6 +2621,7 @@ class GalacticGateway:
             f"- User Context: {user_name} (Owner)\n"
             f"- Home Directory: {home_dir}\n"
             f"- Terminal Syntax: PowerShell (Use backslashes for paths, e.g., C:\\Users\\...)\n"
+            f"- Sub-Agent Default Model: {subagent_model}\n"
         )
 
         behavioral_rules = (
@@ -3169,6 +3172,23 @@ class GalacticGateway:
                 if watchdog: watchdog.heartbeat()
 
                 turn_count += 1
+                
+                # ── Progress Tracking ──
+                percent = 0
+                status_msg = f"Turn {turn_count}/{max_turns}"
+                if self.active_plan and isinstance(self.active_plan, dict):
+                    steps = self.active_plan.get('steps', [])
+                    curr = self.active_plan.get('current_step', 0)
+                    if steps:
+                        percent = min(98, int((curr / len(steps)) * 100))
+                        status_msg = f"Step {curr+1}/{len(steps)}: {steps[curr] if curr < len(steps) else 'Finishing'}"
+                else:
+                    percent = min(95, int((turn_count / max_turns) * 100))
+                
+                self._session_progress_percent.set(percent)
+                await self.core.update_status(f"Pondering... {status_msg}", percent=percent)
+                await self.core.relay.emit(2, "progress", {"percent": percent, "status": status_msg})
+
                 await self._emit_trace("turn_start", turn_count, session_id=trace_sid)
 
                 # Progressive backpressure
@@ -3620,6 +3640,8 @@ class GalacticGateway:
                 source = "telegram" if chat_id else "web"
                 await self._log_chat("assistant", display_text, source=source)
 
+                await self.core.update_status(f"Task Complete: {display_text[:50]}...", percent=100)
+                await self.core.relay.emit(2, "progress", {"percent": 100, "status": "Task Complete"})
                 await self._emit_trace("turn_end", turn_count, session_id=trace_sid)
                 await self._emit_trace("session_end", turn_count, session_id=trace_sid)
                 return display_text
@@ -3658,6 +3680,9 @@ class GalacticGateway:
         finally:
             self._active_tasks.discard(t)
             await spinner.stop()
+            # ── Clear terminal progress line ──
+            sys.stdout.write("\r\033[K")
+            sys.stdout.flush()
             # ── Always clear speaking flag and restore smart routing ──
             self._speaking = False
 
