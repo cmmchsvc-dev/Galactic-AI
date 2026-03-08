@@ -129,47 +129,60 @@ class GalacticCore:
 
     async def setup_systems(self):
         """Initialize core sub-systems."""
-        from gateway_v3 import GalacticGateway
-        from galactic_memory import GalacticMemory
-        from telegram_bridge import TelegramBridge
-        from web_deck import GalacticWebDeck
-        from scheduler import GalacticScheduler
-        from model_manager import ModelManager
-        
-        self.memory = GalacticMemory(self)
-        self.gateway = GalacticGateway(self)
-        self.gateway.galactic_memory = self.memory # Link them
-        # Cost tracking (persistent JSONL)
-        from gateway_v3 import CostTracker
-        logs_dir = self.config.get('paths', {}).get('logs', './logs')
-        self.cost_tracker = CostTracker(logs_dir)
-        self.model_manager = ModelManager(self)
+        try:
+            from gateway_v3 import GalacticGateway
+            from galactic_memory import GalacticMemory
+            from telegram_bridge import TelegramBridge
+            from web_deck import GalacticWebDeck
+            from scheduler import GalacticScheduler
+            from model_manager import ModelManager
+            
+            await self.log("Initializing core systems...", priority=2)
+            
+            self.memory = GalacticMemory(self)
+            self.gateway = GalacticGateway(self)
+            self.gateway.galactic_memory = self.memory # Link them
+            
+            # Cost tracking (persistent JSONL)
+            from gateway_v3 import CostTracker
+            logs_dir = self.config.get('paths', {}).get('logs', './logs')
+            self.cost_tracker = CostTracker(logs_dir)
+            
+            self.model_manager = ModelManager(self)
 
-        # Ollama Manager — robust local model support (health, discovery, context windows)
-        from ollama_manager import OllamaManager
-        self.ollama_manager = OllamaManager(self)
-        await self.ollama_manager.health_check()
-        await self.ollama_manager.discover_models()
+            # Ollama Manager — robust local model support (health, discovery, context windows)
+            from ollama_manager import OllamaManager
+            self.ollama_manager = OllamaManager(self)
+            try:
+                await self.ollama_manager.health_check()
+                await self.ollama_manager.discover_models()
+            except Exception as e:
+                await self.log(f"Ollama health check failed: {e}", priority=1)
 
-        self.telegram = TelegramBridge(self)
-        self.web = GalacticWebDeck(self)
-        self.scheduler = GalacticScheduler(self)
+            self.telegram = TelegramBridge(self)
+            self.web = GalacticWebDeck(self)
+            self.scheduler = GalacticScheduler(self)
 
-        # Set initial model from ModelManager
-        initial_model = self.model_manager.get_current_model()
-        self.gateway.llm.provider = initial_model['provider']
-        self.gateway.llm.model = initial_model['model']
-        self.model_manager._set_api_key(initial_model['provider'])
-        await self.log(
-            f"Model loaded: {initial_model['provider']}/{initial_model['model']} "
-            f"(fallback: {self.model_manager.fallback_provider}/{self.model_manager.fallback_model})",
-            priority=2
-        )
-        
-        await self.log("Systems initialized. Core capabilities running as Skills.", priority=2)
+            # Set initial model from ModelManager
+            initial_model = self.model_manager.get_current_model()
+            self.gateway.llm.provider = initial_model['provider']
+            self.gateway.llm.model = initial_model['model']
+            self.model_manager._set_api_key(initial_model['provider'])
+            await self.log(
+                f"Model loaded: {initial_model['provider']}/{initial_model['model']} "
+                f"(fallback: {self.model_manager.fallback_provider}/{self.model_manager.fallback_model})",
+                priority=2
+            )
+            
+            await self.log("Systems initialized. Core capabilities running as Skills.", priority=2)
 
-        # Load Skills (runs alongside plugins during migration)
-        await self.load_skills()
+            # Load Skills (runs alongside plugins during migration)
+            await self.load_skills()
+        except Exception as e:
+            await self.log(f"CRITICAL: Failed to setup systems: {e}", priority=1)
+            import traceback
+            await self.log(traceback.format_exc(), priority=1)
+            raise e
 
     def _load_skill(self, module_path, class_name, is_core=False):
         """Import and instantiate a single skill. Appends to self.skills on success."""
@@ -222,6 +235,12 @@ class GalacticCore:
             ('skills.core.subagent_manager', 'SubAgentSkill'),       # Phase 3
             ('skills.core.browser_pro',    'BrowserProSkill'),     # Phase 4
             ('skills.core.system_tools',     'SystemSkill'),
+            ('skills.core.self_healing',     'SelfHealingSkill'),
+            ('skills.core.forge',            'ForgeSkill'),
+            ('skills.core.gpu_offloader',    'GPUOffloader'),
+            ('skills.core.neural_indexer',   'NeuralIndexer'),
+            ('skills.core.forge_sentinel',   'ForgeSentinel'),
+            ('skills.core.tensor_context',   'TensorContext'),
         ]
         loaded_skill_names = []
         for module_path, class_name in CORE_SKILLS:
@@ -288,7 +307,6 @@ class GalacticCore:
         comp_label = component or "Core"
         timestamp = datetime.now().strftime("%H:%M:%S")
         log_entry = f"[{timestamp}] [{comp_label}] {message}"
-        import sys
         sys.stdout.write('\r\033[K' + log_entry + '\n')
         sys.stdout.flush()
 
@@ -321,7 +339,10 @@ class GalacticCore:
         except Exception:
             pass
 
-        await self.relay.emit(priority, "log", log_entry)
+    async def update_status(self, message: str):
+        """Update the current terminal line in place (progress bar style)."""
+        sys.stdout.write(f"\r\033[K{message}")
+        sys.stdout.flush()
 
     async def _ensure_firewall_rule(self, port: int):
         """Add a Windows Firewall inbound rule for the Control Deck port if one doesn't exist."""
@@ -580,7 +601,9 @@ class GalacticCore:
         
         # Try to print with UTF-8 encoding
         try:
-            print(splash.encode('utf-8').decode('utf-8'))
+            if hasattr(sys.stdout, 'reconfigure'):
+                sys.stdout.reconfigure(encoding='utf-8')
+            print(splash)
         except:
             print(splash)
         await self.log(f"Launching {self.config['system']['name']} v{self.config.get('system',{}).get('version','?')} (Async)...", priority=1)

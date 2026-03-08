@@ -21,6 +21,8 @@ opencv-python>=4.8.0         # Template matching for desktop_locate tool
 openai>=1.40.0               # OpenAI + compatible (Groq, Cerebras, etc.)
 anthropic>=0.34.0            # Anthropic Claude SDK
 google-genai>=1.0.0          # Google Gen AI SDK (Gemini + Imagen)
+google-cloud-aiplatform>=1.70.0 # Google Vertex AI SDK
+google-auth>=2.30.0          # Google auth for service accounts/OAuth
 
 # ─── Text-to-Speech & Audio ──────────────────────────────────────────────────
 edge-tts>=7.0.0              # FREE Microsoft neural voices

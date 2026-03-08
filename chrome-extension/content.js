@@ -635,6 +635,9 @@
           line += ` selected = ${el.getAttribute('aria-selected')} `;
         }
 
+        const rect = el.getBoundingClientRect();
+        line += ` coord=(${Math.round(rect.x)},${Math.round(rect.y)})`;
+
         lines.push(line);
 
         /* Walk children at increased depth */

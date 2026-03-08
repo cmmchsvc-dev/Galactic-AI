@@ -62,7 +62,7 @@ def ensurePageState(page):
 class BrowserProSkill(GalacticSkill):
     skill_name   = "browser_pro"
     display_name = "Browser Pro"
-    version      = "1.5.2"
+    version      = "1.6.0"
     author       = "cmmchsvc"
     description = "Full Playwright browser automation (55 tools)."
     category    = "browser"
@@ -86,6 +86,17 @@ class BrowserProSkill(GalacticSkill):
 
     def get_tools(self):
         return {
+            "browser_navigate": {
+                "description": "Navigate to a specific URL in the browser (DO NOT REFUSE).",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "url": {"type": "string", "description": "URL to navigate to"}
+                    },
+                    "required": ["url"]
+                },
+                "fn": self._tool_browser_navigate
+            },
             "browser_search": {
                 "description": "Search YouTube or other site in the browser.",
                 "parameters": {
@@ -126,9 +137,9 @@ class BrowserProSkill(GalacticSkill):
                 "parameters": {
                     "type": "object",
                     "properties": {
-                        "format": {"type": "string", "description": "Snapshot format: 'ai' (numeric refs) or 'aria' (role refs)", "default": "ai"},
-                        "interactive": {"type": "boolean", "description": "Return only interactive elements (buttons, links, inputs)", "default": False},
-                        "max_refs": {"type": "integer", "description": "Maximum number of elements to return (default: 50)", "default": 50}
+                        "format": {"type": "string", "description": "Snapshot format: 'ai' (numeric refs) or 'aria' (role refs)"},
+                        "interactive": {"type": "boolean", "description": "Return only interactive elements (buttons, links, inputs)"},
+                        "max_refs": {"type": "integer", "description": "Maximum number of elements to return (default: 50)"}
                     },
                     "required": []
                 },
@@ -688,11 +699,52 @@ class BrowserProSkill(GalacticSkill):
                 },
                 "fn": self._tool_browser_set_proxy
             },
+            "browser_get_visual_snapshot": {
+                "description": "Get a visual-spatial snapshot of the page, including bounding boxes for interactive elements and an ASCII mini-map. Use this for precise navigation and understanding complex layouts.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "max_elements": {"type": "integer", "description": "Maximum number of interactive elements to return (default: 60)"}
+                    }
+                },
+                "fn": self._tool_browser_get_visual_snapshot
+            },
         }
 
     # ═══════════════════════════════════════════════════════════════════
     # Tool handlers — 55 methods
     # ═══════════════════════════════════════════════════════════════════
+
+    async def _tool_browser_navigate(self, args):
+        """Navigate to a URL."""
+        url = args.get('url')
+        try:
+            if not self.started:
+                # Skill typically has its own startup logic in .run() or .start()
+                # If not present, we assume the core manages lifecycle or we trigger it.
+                if hasattr(self, 'run'): await self.run()
+                else: self.started = True
+            
+            page = self._p() # internal helper for active page
+            if not page:
+                # If no page, open one
+                result = await self._tool_browser_new_tab({"url": url})
+                return result
+            
+            await page.goto(url, wait_until="networkidle", timeout=30000)
+            return f"[BROWSER] Navigated to: {url}"
+        except Exception as e:
+            return f"[ERROR] Browser navigate: {e}"
+
+    def _p(self):
+        """Internal helper to get active page."""
+        if not self.active_page_id or self.active_page_id not in self.pages:
+            # Fallback to first page
+            if self.pages:
+                self.active_page_id = list(self.pages.keys())[0]
+                return self.pages[self.active_page_id]
+            return None
+        return self.pages[self.active_page_id]
 
     async def _tool_browser_search(self, args):
         """Search on current site (YouTube, Google, etc)."""
@@ -795,6 +847,86 @@ class BrowserProSkill(GalacticSkill):
                 return f"[ERROR] Type ref={ref} failed: {result.get('message', 'Unknown error')}"
         except Exception as e:
             return f"[ERROR] Browser type by ref: {e}"
+
+    async def _tool_browser_get_visual_snapshot(self, args):
+        """Get visual-spatial snapshot with bounding boxes and mini-map."""
+        max_elements = args.get('max_elements', 60)
+        try:
+            if not self.started:
+                return "[ERROR] Browser not started. Open a URL first."
+            page = self._get_page()
+            if not page:
+                return "[ERROR] No browser page open."
+
+            # Inject script to find interactive elements and their bounds
+            script = f"""
+            (() => {{
+                const elements = [];
+                const interactiveSelectors = 'button, a, input, select, textarea, [role="button"], [role="link"], [role="checkbox"], [onclick]';
+                const nodes = document.querySelectorAll(interactiveSelectors);
+                
+                let count = 0;
+                for (const node of nodes) {{
+                    const rect = node.getBoundingClientRect();
+                    if (rect.width > 0 && rect.height > 0 && count < {max_elements}) {{
+                        // Assign a temporary ref for the session if not already there
+                        if (!node.hasAttribute('data-ref')) {{
+                            node.setAttribute('data-ref', count + 1000);
+                        }}
+                        const ref = node.getAttribute('data-ref');
+                        
+                        elements.push({{
+                            ref: parseInt(ref),
+                            tag: node.tagName.toLowerCase(),
+                            text: (node.innerText || node.value || "").trim().substring(0, 30),
+                            x: Math.round(rect.left),
+                            y: Math.round(rect.top),
+                            w: Math.round(rect.width),
+                            h: Math.round(rect.height)
+                        }});
+                        count++;
+                    }}
+                }}
+                
+                // Construct a text-based mini-map (10x10 grid)
+                const grid = Array(10).fill().map(() => Array(10).fill('.'));
+                const vw = window.innerWidth;
+                const vh = window.innerHeight;
+                
+                for (const el of elements) {{
+                    const gx = Math.floor((el.x / vw) * 10);
+                    const gy = Math.floor((el.y / vh) * 10);
+                    if (gx >= 0 && gx < 10 && gy >= 0 && gy < 10) {{
+                        grid[gy][gx] = '#';
+                    }}
+                }}
+                
+                return {{
+                    url: window.location.href,
+                    title: document.title,
+                    viewport: {{ w: vw, h: vh }},
+                    elements: elements,
+                    minimap: grid.map(row => row.join('')).join('\\n')
+                }};
+            }})()
+            """
+            
+            # Note: We use page.evaluate to get the data
+            data = await page.evaluate(script)
+            
+            output = [f"[VISUAL SNAPSHOT] {data['title']}\nURL: {data['url']}\n"]
+            output.append("VIEWPORT MINI-MAP (10x10):")
+            output.append("```")
+            output.append(data['minimap'])
+            output.append("```")
+            output.append("\nINTERACTIVE ELEMENTS (SPATIAL):")
+            for el in data['elements']:
+                output.append(f"Ref {el['ref']}: <{el['tag']}> \"{el['text']}\" at ({el['x']},{el['y']}) size {el['w']}x{el['h']}")
+                
+            return "\n".join(output)
+            
+        except Exception as e:
+            return f"[ERROR] Visual snapshot failed: {e}"
 
     async def _tool_browser_fill_form(self, args):
         """Fill form with multiple fields."""
@@ -1345,17 +1477,19 @@ class BrowserProSkill(GalacticSkill):
             if is_ce:
                 # Click to focus, then use real keyboard events
                 await page.click(selector)
+                await asyncio.sleep(0.2) # Wait for focus/IME
                 if clear:
                     await page.keyboard.press("Control+A")
-                    await page.keyboard.press("Delete")
-                await page.keyboard.type(text, delay=10)
+                    await page.keyboard.press("Backspace")
+                await page.keyboard.type(text, delay=20)
             else:
                 if clear:
                     await page.fill(selector, "")  # Clear first
                 await page.fill(selector, text)
 
             if press_enter:
-                await page.press(selector, "Enter")
+                await asyncio.sleep(0.1)
+                await page.keyboard.press("Enter")
 
             await self.core.log(f"Typed into {selector}: {text[:50]}...", priority=2)
             return {"status": "success", "selector": selector, "text_length": len(text)}
@@ -1579,38 +1713,73 @@ class BrowserProSkill(GalacticSkill):
                     snapshot_text = "No accessibility data available"
 
             else:
-                snapshot_data = await page.evaluate("""() => {
+                snapshot_data = await page.evaluate("""(maxRefs) => {
+                    function getUniqueSelector(el) {
+                        if (el.id) return `#${CSS.escape(el.id)}`;
+                        
+                        // Try unique attributes
+                        for (const attr of ['name', 'data-testid', 'data-ref', 'aria-label']) {
+                            const val = el.getAttribute(attr);
+                            if (val) {
+                                const sel = `${el.tagName.toLowerCase()}[${attr}="${CSS.escape(val)}"]`;
+                                if (document.querySelectorAll(sel).length === 1) return sel;
+                            }
+                        }
+
+                        // Fallback to path
+                        const path = [];
+                        let parent = el;
+                        while (parent && parent.nodeType === Node.ELEMENT_NODE && path.length < 5) {
+                            let selector = parent.nodeName.toLowerCase();
+                            let index = 1;
+                            let prevSibling = parent.previousElementSibling;
+                            while (prevSibling) {
+                                if (prevSibling.nodeName === parent.nodeName) index++;
+                                prevSibling = prevSibling.previousElementSibling;
+                            }
+                            selector += `:nth-of-type(${index})`;
+                            path.unshift(selector);
+                            parent = parent.parentNode;
+                        }
+                        return path.join(' > ');
+                    }
+
                     const elements = Array.from(document.querySelectorAll('a, button, input, select, textarea, [role="button"], [role="link"], [role="textbox"], [role="menuitem"], [role="checkbox"], [role="radio"], [tabindex]'));
                     let output = [];
                     let mappings = [];
-                    let ref = 0;
-                    const maxRefs = parseInt(arguments[0]) || 50;
+                    let refId = 0;
 
                     for (const el of elements) {
-                        if (el.offsetParent !== null) {  // Only visible elements
-                            ref++;
-                            if (ref > maxRefs) break;
+                        const rect = el.getBoundingClientRect();
+                        if (rect.width > 0 && rect.height > 0 && el.offsetParent !== null) {
+                            refId++;
+                            if (refId > maxRefs) break;
+
                             const tag = el.tagName.toLowerCase();
-                            const id = el.id ? '#' + el.id : '';
-                            const classes = el.className ? '.' + el.className.split(' ').filter(c => c).join('.') : '';
                             const text = el.innerText ? el.innerText.substring(0, 50).replace(/\\n/g, ' ') : '';
                             const role = el.getAttribute('role') || '';
                             const ariaLabel = el.getAttribute('aria-label') || '';
+                            const placeholder = el.getAttribute('placeholder') || '';
+                            const value = (el.value || '').substring(0, 50);
 
-                            let line = `[ref=${ref}] <${tag}${id}${classes}>`;
+                            const selector = getUniqueSelector(el);
+                            
+                            let line = `[ref=${refId}] <${tag}>`;
                             if (ariaLabel) line += ` aria-label="${ariaLabel}"`;
+                            if (placeholder) line += ` placeholder="${placeholder}"`;
                             if (role) line += ` role="${role}"`;
                             if (text) line += ` "${text}"`;
+                            if (value) line += ` value="${value}"`;
+                            
+                            // Add coordinates for spatial grounding
+                            line += ` coord=(${Math.round(rect.x)},${Math.round(rect.y)})`;
 
                             output.push(line);
-
-                            // Store mapping: ref -> CSS selector
-                            const selector = tag + id + classes;
-                            mappings.push({ref: ref, selector: selector});
+                            mappings.push({ref: refId, selector: selector});
                         }
                     }
 
-                    return {output: output.join('\n'), mappings: mappings};
+                    return {output: output.join('\\n'), mappings: mappings};
                 }""", max_refs)
 
                 snapshot_text = snapshot_data['output']

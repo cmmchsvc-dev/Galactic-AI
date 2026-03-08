@@ -843,7 +843,7 @@ class GalacticGateway:
                 "description": "Write JSON rows to a CSV file. Takes a list of dictionaries as rows.",
                 "parameters": {"type": "object", "properties": {
                     "path": {"type": "string", "description": "Output CSV file path"},
-                    "rows": {"type": "array", "description": "Array of {key: value} objects"},
+                    "rows": {"type": "array", "items": {"type": "object"}, "description": "Array of {key: value} objects"},
                     "append": {"type": "boolean", "description": "Append to existing file (default: false)"},
                 }, "required": ["path", "rows"]},
                 "fn": self.tool_write_csv
@@ -915,7 +915,7 @@ class GalacticGateway:
                 "parameters": {"type": "object", "properties": {
                     "path": {"type": "string", "description": "Directory path (default: workspace)"},
                     "message": {"type": "string", "description": "Commit message"},
-                    "files": {"type": "array", "description": "Files to stage (default: all changed files)"},
+                    "files": {"type": "array", "items": {"type": "string"}, "description": "Files to stage (default: all changed files)"},
                 }, "required": ["message"]},
                 "fn": self.tool_git_commit
             },
@@ -1769,7 +1769,7 @@ class GalacticGateway:
             if not api_key:
                 return "[ERR] Google API key not configured for image analysis."
 
-            url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash-exp:generateContent?key={api_key}"
+            url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key={api_key}"
             payload = {"contents": [{"parts": [
                 {"text": prompt},
                 {"inline_data": {"mime_type": mime_type, "data": image_data}}
@@ -3331,7 +3331,7 @@ class GalacticGateway:
 
             elif base_provider in ["nvidia", "openai", "groq", "mistral", "cerebras",
                                         "openrouter", "huggingface", "kimi", "zai", "minimax",
-                                        "xiaomi", "moonshot", "qwen-portal", "qianfan", "together",
+                                        "xiaomi", "moonshot", "qianfan", "together",
                                         "vllm", "doubao", "byteplus", "cloudflare-ai-gateway", "kilocode"]:
                 # OpenAI-compatible providers: pass full messages array for proper multi-turn context
                 return await self._call_openai_compatible_messages(messages)

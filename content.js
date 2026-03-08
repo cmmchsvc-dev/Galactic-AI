@@ -633,6 +633,9 @@
           line += ` selected = ${el.getAttribute('aria-selected')} `;
         }
 
+        const rect = el.getBoundingClientRect();
+        line += ` coord=(${Math.round(rect.x)},${Math.round(rect.y)})`;
+
         lines.push(line);
 
         /* Walk children at increased depth */
@@ -910,36 +913,39 @@
       }
 
       const text = args?.text || '';
-      for (const char of text) {
-        // Organic Jitter: 40ms - 110ms
-        const jitter = 40 + Math.random() * 70;
+      const isLongText = text.length > 100;
 
-        // Full keyboard event suite for EVERY character to feel "organic"
-        const eventInit = {
-          key: char,
-          bubbles: true,
-          cancelable: true,
-          composed: true
-        };
-
-        el.dispatchEvent(new KeyboardEvent('keydown', eventInit));
-        el.dispatchEvent(new KeyboardEvent('keypress', eventInit));
-
+      if (isLongText) {
+        /* Optimization: For long text (marketing posts, etc.), use instant injection 
+           to avoid 30s tool timeouts while still triggering necessary events. */
         if ('value' in el) {
-          /* Standard input/textarea */
-          const start = el.selectionStart;
-          const end = el.selectionEnd;
-          el.value = el.value.substring(0, start) + char + el.value.substring(end);
-          el.selectionStart = el.selectionEnd = start + 1;
-          el.dispatchEvent(new InputEvent('input', { bubbles: true, inputType: 'insertText', data: char }));
+          el.value = text;
+          el.dispatchEvent(new InputEvent('input', { bubbles: true, inputType: 'insertText', data: text }));
         } else if (el.contentEditable === 'true') {
-          /* ContentEditable */
-          document.execCommand('insertText', false, char);
+          document.execCommand('selectAll', false, null);
+          document.execCommand('insertText', false, text);
         }
+      } else {
+        /* Organic jitter for short strings */
+        for (const char of text) {
+          const jitter = 15 + Math.random() * 35; // Reduced jitter for better responsiveness
+          const eventInit = { key: char, bubbles: true, cancelable: true, composed: true };
 
-        el.dispatchEvent(new KeyboardEvent('keyup', eventInit));
+          el.dispatchEvent(new KeyboardEvent('keydown', eventInit));
+          el.dispatchEvent(new KeyboardEvent('keypress', eventInit));
 
-        await new Promise(r => setTimeout(r, jitter));
+          if ('value' in el) {
+            const start = el.selectionStart;
+            const end = el.selectionEnd;
+            el.value = el.value.substring(0, start) + char + el.value.substring(end);
+            el.selectionStart = el.selectionEnd = start + 1;
+            el.dispatchEvent(new InputEvent('input', { bubbles: true, inputType: 'insertText', data: char }));
+          } else if (el.contentEditable === 'true') {
+            document.execCommand('insertText', false, char);
+          }
+          el.dispatchEvent(new KeyboardEvent('keyup', eventInit));
+          await new Promise(r => setTimeout(r, jitter));
+        }
       }
 
       if (el.contentEditable === 'true') {
@@ -1515,7 +1521,10 @@
     if (msg.type === 'galactic') {
       handleCommand(msg.command, msg.args)
         .then(result => sendResponse({ result }))
-        .catch(err => sendResponse({ error: err.message }));
+        .catch(err => {
+          console.error('[Galactic] Command error:', err);
+          sendResponse({ error: err.message || 'Unknown error' });
+        });
       return true; /* Keep channel open for async response */
     }
   });

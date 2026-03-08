@@ -35,7 +35,7 @@ class SystemSkill(GalacticSkill):
 
     skill_name   = "system_tools"
     display_name = "System Tools"
-    version      = "1.5.2"
+    version      = "1.6.0"
     author       = "cmmchsvc"
     description = "Essential OS, File System, Git, and Network utility tools."
     category    = "system"
@@ -305,7 +305,7 @@ class SystemSkill(GalacticSkill):
                     "type": "object",
                     "properties": {
                         "path": {"type": "string"},
-                        "rows": {"type": "array"}
+                        "rows": {"type": "array", "items": {"type": "object"}}
                     },
                     "required": ["path", "rows"]
                 },
