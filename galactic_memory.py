@@ -7,6 +7,8 @@ from chromadb.config import Settings
 from sentence_transformers import SentenceTransformer
 import sqlite3
 import json
+import asyncio
+import os
 from datetime import datetime
 from pathlib import Path
 import hashlib
@@ -30,15 +32,19 @@ class GalacticMemory:
             self.db_path = DB_PATH
             self.chroma_path = CHROMA_PATH
 
-        self.conn = sqlite3.connect(str(self.db_path))
-        self._init_sql()
-        
-        # 2. Init ChromaDB (Semantic - Meaning & Context)
-        self.client = chromadb.PersistentClient(path=str(self.chroma_path))
-        self.collection = self.client.get_or_create_collection(
-            name="galactic_context",
-            metadata={"hnsw:space": "cosine"}
+        # 2. Init Semantic Memory (ChromaDB)
+        self.chroma_client = chromadb.PersistentClient(path=self.chroma_path)
+        self.collection = self.chroma_client.get_or_create_collection(
+            name="galactic_memory", # Changed collection name
+            metadata={"hnsw:space": "cosine"} # Retained metadata
         )
+
+        # 1. Init episodic memory (SQLite)
+        self.db_conn = sqlite3.connect(self.db_path, check_same_thread=False) # Changed self.conn to self.db_conn, added check_same_thread
+        self._init_db() # Changed _init_sql to _init_db
+
+        # Thread safety lock
+        self._lock = asyncio.Lock()
         
         # 3. Init Embedding Model (Lazy load)
         self._model = None
@@ -46,7 +52,8 @@ class GalacticMemory:
     async def imprint(self, content, metadata=None):
         """Compatibility wrapper for 'imprint' (calls save_memory)."""
         category = (metadata or {}).get("category", "general")
-        return self.save_memory(content, category=category, metadata=metadata)
+        # Changed to async call
+        return await self.save_memory(content, category=category, metadata=metadata)
 
     async def imprint_file(self, file_path):
         """Imprint an entire file into memory."""
@@ -64,18 +71,26 @@ class GalacticMemory:
         """Compatibility wrapper for 'recall' (calls query_memory)."""
         # Supports both 'limit' and legacy 'top_k' parameters
         n_results = kwargs.get('top_k', limit)
-        return self.query_memory(query, n_results=n_results)
+        # Changed to async call
+        return await self.query_memory(query, n_results=n_results)
 
     @property
     def model(self):
         if self._model is None:
-            print("🧠 Loading embedding model (first time only, approx 10s)...")
-            self._model = SentenceTransformer(EMBEDDING_MODEL)
-            print("✅ Model loaded.")
+            # Look for GPUOffloader skill to handle hardware routing
+            device = "cpu"
+            if self.core:
+                offloader = next((s for s in self.core.skills if getattr(s, 'skill_name', '') == 'gpu_offloader'), None)
+                if offloader:
+                    device = offloader.get_device("embeddings")
+
+            print(f"🧠 Loading embedding model to {device} (approx 10s)...")
+            self._model = SentenceTransformer(EMBEDDING_MODEL, device=device)
+            print(f"✅ Model loaded on {device}.")
         return self._model
 
-    def _init_sql(self):
-        c = self.conn.cursor()
+    def _init_db(self): # Renamed from _init_sql
+        c = self.db_conn.cursor() # Changed self.conn to self.db_conn
         c.execute("""
             CREATE TABLE IF NOT EXISTS episodic_memories (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -86,73 +101,86 @@ class GalacticMemory:
                 vector_id TEXT UNIQUE
             )
         """)
-        self.conn.commit()
+        self.db_conn.commit() # Changed self.conn to self.db_conn
 
-    def save_memory(self, content: str, category: str = "general", metadata: dict = None):
+    async def save_memory(self, content: str, category: str = "general", metadata: dict = None, silent: bool = False):
         """Save a memory with both semantic (vector) and episodic (sql) storage."""
-        timestamp = datetime.now().isoformat()
-        
-        # Generate Vector Embedding
-        embedding = self.model.encode([content])[0].tolist()
-        vector_id = hashlib.md5(f"{timestamp}{content}".encode()).hexdigest()
-        
-        # 1. Save to Chroma (Semantic Search)
-        self.collection.upsert(
-            ids=[vector_id],
-            embeddings=[embedding],
-            documents=[content],
-            metadatas=[{"category": category, "timestamp": timestamp}]
-        )
-        
-        # 2. Save to SQLite (Exact Record Keeping)
-        meta_json = json.dumps(metadata) if metadata else "{}"
-        c = self.conn.cursor()
-        c.execute(
-            "INSERT OR IGNORE INTO episodic_memories (timestamp, category, content, metadata_json, vector_id) VALUES (?, ?, ?, ?, ?)",
-            (timestamp, category, content, meta_json, vector_id)
-        )
-        self.conn.commit()
-        
-        print(f"✅ Memory Saved [{category}]: '{content[:60]}...'")
-        return vector_id
+        async with self._lock:
+            try:
+                timestamp = datetime.now().isoformat()
+                
+                # Generate Vector Embedding (semantic)
+                embedding = self.model.encode([content], show_progress_bar=False)[0].tolist()
+                vector_id = hashlib.md5(f"{timestamp}{content}".encode()).hexdigest()
+                
+                # 1. Save to Chroma (Semantic Search)
+                self.collection.upsert(
+                    ids=[vector_id],
+                    embeddings=[embedding],
+                    documents=[content],
+                    metadatas=[{"category": category, "timestamp": timestamp}]
+                )
+                
+                # 2. Save to SQLite (Episodic - Exact Record)
+                # ... inserting logic ...
+                meta_json = json.dumps(metadata) if metadata else "{}"
+                cursor = self.db_conn.cursor()
+                cursor.execute(
+                    "INSERT OR IGNORE INTO episodic_memories (timestamp, category, content, metadata_json, vector_id) VALUES (?, ?, ?, ?, ?)",
+                    (timestamp, category, content, meta_json, vector_id)
+                )
+                self.db_conn.commit()
+                
+                if self.core and not silent:
+                    p = 6 if category == "codebase_index" else 5
+                    await self.core.log(f"✅ Memory Saved [{category}]: '{content[:60]}...'", priority=p)
+                return vector_id
+            except Exception as e:
+                if self.core:
+                    await self.core.log(f"❌ save_memory failed: {e}", priority=1)
+                raise e
 
-    def query_memory(self, query: str, n_results: int = 5, category: str = None):
+    async def query_memory(self, query: str, n_results: int = 5, category: str = None):
         """Query memory by meaning (semantic), with optional category filter."""
-        query_embedding = self.model.encode([query])[0].tolist()
-        
-        # Build Filter
-        where_filter = None
-        if category:
-            where_filter = {"category": category}
+        async with self._lock:
+            # SentenceTransformer encode is cpu-bound, but we run in thread to avoid blocking loop
+            # For now, keeping it simple as this is a local small model
+            query_embedding = self.model.encode([query], show_progress_bar=False)[0].tolist()
             
-        # Chroma Search (Cosine Similarity)
-        results = self.collection.query(
-            query_embeddings=[query_embedding],
-            n_results=n_results,
-            where=where_filter
-        )
-        
-        # Format Output
-        memories = []
-        if results['ids'] and results['ids'][0]:
-            for i, id in enumerate(results['ids'][0]):
-                memories.append({
-                    "id": id,
-                    "content": results['documents'][0][i],
-                    "distance": results['distances'][0][i], # Lower is better match
-                    "metadata": results['metadatas'][0][i]
-                })
-        
-        return memories
+            # Build Filter
+            where_filter = None
+            if category:
+                where_filter = {"category": category}
+                
+            # Chroma Search (Cosine Similarity)
+            results = self.collection.query(
+                query_embeddings=[query_embedding],
+                n_results=n_results,
+                where=where_filter
+            )
+            
+            # Format Output
+            memories = []
+            if results['ids'] and results['ids'][0]:
+                for i, id in enumerate(results['ids'][0]):
+                    memories.append({
+                        "id": id,
+                        "content": results['documents'][0][i],
+                        "distance": results['distances'][0][i], # Lower is better match
+                        "metadata": results['metadatas'][0][i]
+                    })
+            
+            return memories
 
-    def get_all_memories(self, limit: int = 10):
+    async def get_all_memories(self, limit: int = 10):
         """Get the most recent episodic memories."""
-        c = self.conn.cursor()
-        c.execute("SELECT timestamp, category, content FROM episodic_memories ORDER BY id DESC LIMIT ?", (limit,))
-        return c.fetchall()
+        async with self._lock:
+            c = self.db_conn.cursor()
+            c.execute("SELECT timestamp, category, content FROM episodic_memories ORDER BY id DESC LIMIT ?", (limit,))
+            return c.fetchall()
 
     def close(self):
-        self.conn.close()
+        self.db_conn.close()
 
 # --- Automated Test Suite ---
 def run_self_test():

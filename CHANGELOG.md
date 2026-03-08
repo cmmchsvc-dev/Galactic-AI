@@ -4,6 +4,15 @@ All notable changes to Galactic AI are documented here.
 
 ---
 
+## v1.6.0 — The Gateway v3 Update (2026-03-07)
+
+- 🚀 **Gateway v3 Full Release**: Massive architectural overhaul for maximum reliability and speed. Unified provider handling and streamlined ReAct loop.
+- 🔁 **Loop Reset on User Input**: Internal tool repetition history now clears every time the user sends a message, preventing "stuck" loops after manual state changes.
+- 🛡️ **Browser Hallucination Guard**: Added active detection and corrective nudges for models claiming browser actions without calling tools.
+- 🧠 **Recursive Context Compaction**: Enhanced memory folding and semantic recall to prevent context debt in extremely long sessions.
+- ⚡ **Model Routing Refinement**: Improved logic for provider-ID mapping and automatic fallback persistence during permanent errors.
+- 🔧 **Ollama Intelligence**: Better context window detection and optimized tool-call prompts for local models.
+
 ## v1.5.2 — Loop Reset & Hallucination Defense Update (2026-03-06)
 
 - **Loop Reset on User Input**: Internal tool repetition history now clears every time the user sends a message, preventing "stuck" loops after manual state changes.

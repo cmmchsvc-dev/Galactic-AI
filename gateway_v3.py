@@ -13,6 +13,7 @@ import webbrowser
 from datetime import datetime
 from collections import defaultdict, Counter
 from personality import GalacticPersonality
+from skills.util.monologue_formatter import MonologueFormatter
 
 try:
     from galactic_memory import GalacticMemory
@@ -78,26 +79,39 @@ Output a numbered list of steps, clearly outlining the plan. DO NOT execute anyt
 # ── Token pricing (USD per 1M tokens) ────────────────────────────────
 MODEL_PRICING = {
     # OpenRouter — Frontier
-    "google/gemini-3.1-pro-preview":   {"input": 1.25,  "output": 10.00},
-    "anthropic/claude-opus-4.6":       {"input": 15.00, "output": 75.00},
-    "openai/gpt-5.2":                  {"input": 2.50,  "output": 10.00},
-    "openai/gpt-5.2-codex":            {"input": 2.50,  "output": 10.00},
-    "x-ai/grok-4.1-fast":              {"input": 3.00,  "output": 15.00},
-    "deepseek/deepseek-v3.2":          {"input": 0.27,  "output": 1.10},
-    "qwen/qwen3.5-plus-02-15":         {"input": 0.30,  "output": 1.20},
-    # OpenRouter — Strong
-    "google/gemini-3-pro-preview":     {"input": 1.25,  "output": 5.00},
-    "google/gemini-3-flash-preview":   {"input": 0.10,  "output": 0.40},
+    "openai/gpt-5.4-pro":             {"input": 30.00, "output": 180.00},
+    "openai/gpt-5.4":                 {"input": 2.50,  "output": 15.00},
+    "anthropic/claude-opus-4.6":       {"input": 5.00,  "output": 25.00},
     "anthropic/claude-sonnet-4.6":     {"input": 3.00,  "output": 15.00},
-    "anthropic/claude-opus-4.5":       {"input": 15.00, "output": 75.00},
-    "openai/gpt-5.2-pro":             {"input": 2.50,  "output": 10.00},
-    "openai/gpt-5.1":                  {"input": 2.00,  "output": 8.00},
-    "openai/gpt-5.1-codex":            {"input": 2.00,  "output": 8.00},
-    "qwen/qwen3.5-397b-a17b":          {"input": 0.40,  "output": 1.60},
+    "google/gemini-3.1-pro-preview":   {"input": 2.00,  "output": 12.00},
+    "openai/gpt-5.3-chat":            {"input": 1.75,  "output": 14.00},
+    "openai/gpt-5.3-codex":            {"input": 1.75,  "output": 14.00},
+    "x-ai/grok-4":                     {"input": 3.00,  "output": 15.00},
+    "x-ai/grok-4.1-fast":              {"input": 0.20,  "output": 0.50},
+    "deepseek/deepseek-v3.2":          {"input": 0.25,  "output": 0.40},
+    "google/gemini-3.1-flash-lite-preview": {"input": 0.25, "output": 1.50},
+    "qwen/qwen3.5-plus-02-15":         {"input": 0.26,  "output": 1.56},
+    "qwen/qwen3.5-flash":              {"input": 0.10,  "output": 0.40},
+    "qwen/qwen3.5-35b-a3b":            {"input": 0.16,  "output": 1.30},
+    "qwen/qwen3.5-27b":                {"input": 0.20,  "output": 1.56},
+    "liquid/lfm-2-24b-a2b":             {"input": 0.03,  "output": 0.12},
+    "liquid/lfm-2.5-1.2b-thinking:free": {"input": 0.00,  "output": 0.00},
+    "liquid/lfm-2.5-1.2b-instruct:free": {"input": 0.00,  "output": 0.00},
+
+    # OpenRouter — Strong
+    "openai/gpt-5.2-pro":             {"input": 21.00, "output": 168.00},
+    "openai/gpt-5.2":                  {"input": 1.75,  "output": 14.00},
+    "google/gemini-3-pro-preview":     {"input": 2.00,  "output": 12.00},
+    "google/gemini-3-flash-preview":   {"input": 0.10,  "output": 0.40},
+    "openai/gpt-5.1":                  {"input": 1.25,  "output": 10.00},
+    "openai/gpt-5.1-codex":            {"input": 1.25,  "output": 10.00},
+    "qwen/qwen3.5-397b-a17b":          {"input": 0.39,  "output": 2.34},
+    "qwen/qwen3.5-122b-a10b":          {"input": 0.26,  "output": 2.08},
     "qwen/qwen3-coder-next":           {"input": 0.30,  "output": 1.20},
     "moonshotai/kimi-k2.5":            {"input": 0.60,  "output": 2.40},
-    "deepseek/deepseek-v3.2-speciale": {"input": 0.27,  "output": 1.10},
+    "deepseek/deepseek-v3.2-speciale": {"input": 0.40,  "output": 1.20},
     "z-ai/glm-5":                      {"input": 0.50,  "output": 2.00},
+
     # OpenRouter — Fast
     "mistralai/mistral-large-2512":    {"input": 2.00,  "output": 6.00},
     "mistralai/devstral-2512":         {"input": 0.10,  "output": 0.30},
@@ -105,7 +119,7 @@ MODEL_PRICING = {
     "perplexity/sonar-pro-search":     {"input": 3.00,  "output": 15.00},
     "nvidia/nemotron-3-nano-30b-a3b":  {"input": 0,     "output": 0},
     "stepfun/step-3.5-flash":          {"input": 0.02,  "output": 0.16},
-    "openai/gpt-5.2-chat":             {"input": 2.50,  "output": 10.00},
+    "openai/gpt-5.2-chat":             {"input": 1.75,  "output": 14.00},
     # Direct providers
     "claude-sonnet-4-20250514":        {"input": 3.00,  "output": 15.00},
     "gemini-2.5-flash":                {"input": 0.15,  "output": 0.60},
@@ -143,9 +157,10 @@ class CostTracker:
                         try:
                             self.entries.append(json.loads(line))
                         except json.JSONDecodeError:
+                            print(f"⚠️ [CostTracker] Corrupted JSON in {self.log_file}. Skipping line.")
                             continue
-        except Exception:
-            pass
+        except Exception as e:
+            print(f"⚠️ [CostTracker] Error loading {self.log_file}: {e}")
 
     async def _rewrite_file_async(self):
         """Rewrite the JSONL file from memory (after prune) asynchronously."""
@@ -154,8 +169,8 @@ class CostTracker:
                 with open(self.log_file, 'w', encoding='utf-8') as f:
                     for entry in self.entries:
                         f.write(json.dumps(entry) + '\n')
-            except Exception:
-                pass
+            except Exception as e:
+                print(f"⚠️ [CostTracker] Error rewriting {self.log_file}: {e}")
         
         loop = asyncio.get_running_loop()
         await loop.run_in_executor(None, _sync_rewrite)
@@ -198,8 +213,8 @@ class CostTracker:
             try:
                 with open(self.log_file, 'a', encoding='utf-8') as f:
                     f.write(json.dumps(entry) + '\n')
-            except Exception:
-                pass
+            except Exception as e:
+                print(f"⚠️ [CostTracker] Error appending to {self.log_file}: {e}")
         
         loop = asyncio.get_running_loop()
         await loop.run_in_executor(None, _sync_append)
@@ -380,16 +395,16 @@ class GalacticGateway:
         try:
             temp_history = []
             with open(self.history_file, 'r', encoding='utf-8') as f:
-                for line in f:
+                for i, line in enumerate(f, 1):
                     line = line.strip()
                     if not line: continue
                     try:
                         entry = json.loads(line)
                         if 'role' in entry and 'content' in entry:
-                            # Avoid adding duplicates if the app was restarted multiple times fast
-                            # Actually, we just want the last N messages for context.
                             temp_history.append({"role": entry['role'], "content": entry['content']})
-                    except: continue
+                    except json.JSONDecodeError:
+                        logger.warning(f"Skipping corrupted line {i} in chat_history.jsonl")
+                        continue
             
             # Keep last 20 messages for context
             self.history = temp_history[-20:]
@@ -922,7 +937,7 @@ class GalacticGateway:
                 "description": "Write JSON rows to a CSV file. Takes a list of dictionaries as rows.",
                 "parameters": {"type": "object", "properties": {
                     "path": {"type": "string", "description": "Output CSV file path"},
-                    "rows": {"type": "array", "description": "Array of {key: value} objects"},
+                    "rows": {"type": "array", "items": {"type": "object"}, "description": "Array of {key: value} objects"},
                     "append": {"type": "boolean", "description": "Append to existing file (default: false)"},
                 }, "required": ["path", "rows"]},
                 "fn": self.tool_write_csv
@@ -994,7 +1009,7 @@ class GalacticGateway:
                 "parameters": {"type": "object", "properties": {
                     "path": {"type": "string", "description": "Directory path (default: workspace)"},
                     "message": {"type": "string", "description": "Commit message"},
-                    "files": {"type": "array", "description": "Files to stage (default: all changed files)"},
+                    "files": {"type": "array", "items": {"type": "string"}, "description": "Files to stage (default: all changed files)"},
                 }, "required": ["message"]},
                 "fn": self.tool_git_commit
             },
@@ -1153,7 +1168,7 @@ class GalacticGateway:
     }
 
     async def tool_write_file(self, args):
-        """Write content to a file (non-blocking)."""
+        """Write content to a file (non-blocking) with robust error handling."""
         path = args.get('path')
         content = args.get('content')
         if not path:
@@ -1167,9 +1182,19 @@ class GalacticGateway:
             )
 
         def _write_sync():
-            with open(path, 'w', encoding='utf-8') as f:
-                f.write(content)
-            return f"Successfully wrote to {path}"
+            try:
+                # Ensure absolute path and directory existence
+                abs_path = os.path.abspath(path)
+                os.makedirs(os.path.dirname(abs_path), exist_ok=True)
+                with open(abs_path, 'w', encoding='utf-8') as f:
+                    f.write(content)
+                return f"Successfully wrote {len(content)} chars to {abs_path}"
+            except PermissionError:
+                return f"❌ Access Denied: Cannot write to {path}. File may be locked by another process or system restricted."
+            except OSError as e:
+                return f"❌ OS Error writing to {path}: {e.strerror if hasattr(e, 'strerror') else str(e)}"
+            except Exception as e:
+                return f"❌ Unexpected error writing to {path}: {str(e)}"
 
         try:
             loop = asyncio.get_running_loop()
@@ -3108,7 +3133,8 @@ class GalacticGateway:
                                     elif hasattr(browser_skill, 'get_current_url'): # fallback for custom extensions
                                         current_url = await browser_skill.get_current_url()
                                     
-                                    if current_url and current_url.rstrip('/') == target_url:
+                                    is_forced = tool_args.get('force', False)
+                                    if not is_forced and current_url and current_url.rstrip('/') == target_url:
                                         await self.core.log(f"🛑 Blocked redundant navigation to {target_url}", priority=1)
                                         messages.append({
                                             "role": "tool",
@@ -3203,9 +3229,21 @@ class GalacticGateway:
                             "tool_name": actual_tool_name
                         })
                         
-                        # Anti-spin
-                        if "[Tool Error]" in str(result): consecutive_failures += 1
-                        else: consecutive_failures = 0
+                        # Anti-spin & Reflection
+                        if "[Tool Error]" in str(result):
+                            consecutive_failures += 1
+                            if consecutive_failures >= 1 and turn_count < max_turns - 1:
+                                # Reflective Nudge: Force the agent to analyze why it failed
+                                messages.append({
+                                    "role": "user",
+                                    "content": (
+                                        "⚠️ [REFLECTION REQUIRED] The previous tool call failed or didn't produce the expected result. "
+                                        "Before your next action, explicitly [REFLECT] on why it failed and adjust your [PLAN]. "
+                                        "If you are stuck in a login/auth loop, try a different approach or verify the page state."
+                                    )
+                                })
+                        else:
+                            consecutive_failures = 0
 
                         # Checkpoints
                         self._tool_count_since_cp += 1
@@ -3340,7 +3378,7 @@ class GalacticGateway:
                 # No tool call detected → this is the final answer
                 # Use display_text (think-tags stripped) for the history and relay
                 # V12: Centralized jargon stripping for the final answer
-                display_text = self._strip_jargon(response_text)
+                display_text = MonologueFormatter.format_text(self._strip_jargon(response_text))
                 await self._emit_trace("final_answer", turn_count, session_id=trace_sid,
                                        content=display_text[:3000])
                 self.history.append({"role": "assistant", "content": display_text})
@@ -3812,7 +3850,7 @@ class GalacticGateway:
             old_text = old_text[-120000:]
 
         try:
-            fast_model = self.core.config.get('models', {}).get('planner_fallback_model', 'gemini-2.0-flash-preview')
+            fast_model = self.core.config.get('models', {}).get('planner_fallback_model', 'gemini-3.1-flash-lite-preview')
             prompt = (
                 "You are an AI core memory process. Summarize the following conversation block densely and accurately. "
                 "Retain factual details, technical context, tool results, errors, and conclusions. Do not roleplay. "
@@ -3824,8 +3862,15 @@ class GalacticGateway:
             orig_p = self.llm.provider
             orig_m = self.llm.model
             
+            # Resolved provider-prefixed model string (e.g. "google/gemini-3.1-pro-preview")
             if "/" in fast_model:
-                self.llm.provider, self.llm.model = fast_model.split("/", 1)
+                parts = fast_model.split("/", 1)
+                # Only treat it as [provider]/[model] if the first part is a known provider
+                known_providers = set(self.core.config.get('providers', {}).keys()) | {"openrouter", "ollama", "nvidia", "groq", "mistral", "anthropic", "google", "openai"}
+                if parts[0].lower() in known_providers:
+                    self.llm.provider, self.llm.model = parts[0], parts[1]
+                else:
+                    self.llm.model = fast_model # It's a namespaced model like "author/model"
             else:
                 self.llm.model = fast_model
                 
@@ -3994,21 +4039,64 @@ class GalacticGateway:
 
         # ── Ollama: pre-flight health check ──────────────────────────
 
-        # Pre-process pseudo-providers (e.g. openrouter-frontier -> openrouter)
-        orig_provider = self.llm.provider
-        base_provider = orig_provider
-        if base_provider.startswith("openrouter-"):
-            base_provider = "openrouter"
+    async def _call_llm(self, messages, active_tools=None):
+        """Routing method for multi-turn conversations."""
+        active_tools = active_tools or self._get_active_tools()
         
-        # Temporarily swap for the duration of the call to ensure 
-        # internal logic matches the expected API provider
-        self.llm.provider = base_provider
+        # Snapshot original state to restore in finally block
+        orig_provider = getattr(self.llm, 'provider', 'google')
+        orig_model    = getattr(self.llm, 'model', 'gemini-3.1-pro-preview')
+        orig_api_key  = getattr(self.llm, 'api_key', 'NONE')
+        
+        # Temporarily clear the LLM-level API key so children look up provider-specific keys from config
+        self.llm.api_key = "NONE"
+        
+        # PROVIDER NORMALIZATION (Single source of truth)
+        base_provider = str(orig_provider).lower()
+        if base_provider == "vertex":
+            base_provider = "google_vertex"
+        
+        if base_provider.startswith("openrouter"): 
+            base_provider = "openrouter"
+        elif base_provider.startswith("ollama"):
+            base_provider = "ollama"
 
+        # Strip redundant prefixes for native providers (Google, Ollama, NVIDIA, etc.)
+        # BUT: For OpenRouter, we MUST keep prefixes like 'openai/' or 'anthropic/'
+        if "/" in str(orig_model):
+            if base_provider == "ollama" and str(orig_model).startswith("ollama/"):
+                self.llm.model = str(orig_model).split("/", 1)[1]
+            elif base_provider not in ("openrouter", "ollama"):
+                parts = str(orig_model).split("/", 1)
+                prefix = parts[0].lower()
+                known = {"openai", "google", "anthropic", "mistral", "groq", "deepseek", "nvidia", "xai", "huggingface", "vertex"}
+                if prefix in known:
+                    if prefix != base_provider:
+                        # Normalize vertex to google_vertex even in prefix
+                        if prefix == "vertex": prefix = "google_vertex"
+                        await self.core.log(f"✂️ Routing override: {prefix} (from {base_provider})", priority=3)
+                    base_provider = prefix
+                    self.llm.model = parts[1]
+                
+        # Handle unique Vertex IDs (e.g. gemini-3.1-pro-preview-vertex)
+        if str(self.llm.model).endswith("-vertex"):
+            orig_v_model = self.llm.model
+            self.llm.model = str(self.llm.model)[:-7] # Strip -vertex
+            if base_provider == "google":
+                base_provider = "google_vertex"
+                await self.core.log(f"🧠 Detected Vertex model via suffix: {orig_v_model} -> google_vertex", priority=3)
+
+        # Final cleanup for native Google
+        if base_provider == "google" and str(self.llm.model).startswith("google/"):
+            self.llm.model = str(self.llm.model).split("/", 1)[1]
+
+        self.llm.provider = base_provider
+        
         try:
             # ── Route to provider ─────────────────────────────────────────
             if base_provider == "google":
-                # Gemini now supports the OpenAI compatibility endpoint
-                return await self._call_openai_compatible_messages(messages, active_tools=active_tools)
+                # Restore native Gemini handler to fix tool-call filtering
+                return await self._call_gemini_native_messages(messages, active_tools=active_tools)
 
             elif base_provider == "deepseek":
                 return await self._call_openai_compatible_messages(messages, active_tools=active_tools)
@@ -4024,30 +4112,40 @@ class GalacticGateway:
                         msg_list.append(m)
                 return await self._call_anthropic_messages(system_msg, msg_list, active_tools=active_tools)
 
+            elif base_provider == "openrouter":
+                # OpenAI-compatible with specialized headers
+                return await self._call_openai_compatible_messages(messages, active_tools=active_tools)
+
+            elif base_provider == "openai":
+                return await self._call_openai_compatible_messages(messages, active_tools=active_tools)
+
+            elif base_provider in ("vertex", "google_vertex"):
+                # Google Vertex AI (Cloud)
+                system_msg = ""
+                msg_list = []
+                for m in messages:
+                    if m["role"] == "system":
+                        system_msg = m["content"]
+                    else:
+                        msg_list.append(m)
+                return await self._call_vertex_ai_messages(system_msg, msg_list, active_tools=active_tools)
+
             elif base_provider == "ollama":
-                # Ollama supports the full OpenAI /chat/completions messages array
-                return await self._call_openai_compatible_messages(messages, active_tools=active_tools)
-
-            elif base_provider == "xai":
-                # xAI: collapse to prompt+context (stateless one-shot)
-                prompt = messages[-1]['content']
-                context_str = "\n".join(
-                    [f"{m['role']}: {m['content']}" for m in messages[:-1]]
-                )
-                return await self._call_openai_compatible(prompt, context_str, active_tools=active_tools)
-
-            elif base_provider in ["nvidia", "openai", "groq", "mistral", "cerebras",
-                                        "openrouter", "huggingface", "kimi", "zai", "minimax",
-                                        "xiaomi", "moonshot", "qwen-portal", "qianfan", "together",
-                                        "vllm", "doubao", "byteplus", "cloudflare-ai-gateway", "kilocode"]:
-                # OpenAI-compatible providers: pass full messages array for proper multi-turn context
-                return await self._call_openai_compatible_messages(messages, active_tools=active_tools)
+                # Local Ollama (native API)
+                return await self._call_ollama_native_messages(messages, active_tools=active_tools)
 
             else:
-                return f"[ERROR] Unknown provider: {orig_provider}"
+                # Default to OpenAI-compatible for any unknown/cloud provider
+                return await self._call_openai_compatible_messages(messages, active_tools=active_tools)
+        except Exception as e:
+            err_msg = f"[ERROR] Gateway Exception: {str(e)}"
+            await self.core.log(err_msg, priority=1)
+            return err_msg
         finally:
-            # ALWAYS restore the original provider (including pseudo-suffix)
+            # ALWAYS restore the original provider, model, AND api_key
             self.llm.provider = orig_provider
+            self.llm.model    = orig_model
+            self.llm.api_key  = orig_api_key
     
     async def _call_gemini(self, prompt, context):
         """Google Gemini API call."""
@@ -4075,6 +4173,276 @@ class GalacticGateway:
                 return candidate['content']['parts'][0]['text']
         except Exception as e:
             return f"[ERROR] Google: {str(e)}"
+
+    async def _call_vertex_ai_messages(self, system_prompt, messages, active_tools=None):
+        """Google Vertex AI (Cloud) call with full conversation history and tools."""
+        try:
+            import google.auth
+            from google.cloud import aiplatform
+            from google.oauth2 import service_account
+
+            # Load Vertex config
+            v_cfg = self.core.config.get('providers', {}).get('google_vertex', {})
+            project = v_cfg.get('project_id')
+            location = v_cfg.get('location', 'us-central1')
+            creds_path = v_cfg.get('credentials_path')
+
+            if not project:
+                return "[ERROR] Vertex AI requires 'project_id' in config.yaml (providers.google_vertex.project_id)"
+
+            # Initialize SDK with credentials if provided
+            try:
+                if creds_path and os.path.exists(creds_path):
+                    credentials = service_account.Credentials.from_service_account_file(creds_path)
+                    aiplatform.init(project=project, location=location, credentials=credentials)
+                else:
+                    aiplatform.init(project=project, location=location)
+            except Exception as e:
+                return f"[ERROR] Vertex AI Init: {str(e)}"
+
+            model_id = self.llm.model
+            
+            # Publisher Detection
+            if "claude" in model_id.lower():
+                publisher = "anthropic"
+                stream_type = "rawPredict"
+            elif "gemini" in model_id.lower():
+                publisher = "google"
+                stream_type = "streamGenerateContent" if v_cfg.get('stream', False) else "generateContent"
+            elif "minimax" in model_id.lower():
+                publisher = "minimax"
+                stream_type = "rawPredict"
+            elif "glm" in model_id.lower() or "zhipu" in model_id.lower():
+                publisher = "zhipu-ai"
+                stream_type = "rawPredict"
+            else:
+                publisher = "google" # Default
+                stream_type = "rawPredict"
+
+            # Fetch access token
+            if creds_path and os.path.exists(creds_path):
+                creds = service_account.Credentials.from_service_account_file(
+                    creds_path, scopes=['https://www.googleapis.com/auth/cloud-platform']
+                )
+            else:
+                creds, _ = google.auth.default(scopes=['https://www.googleapis.com/auth/cloud-platform'])
+            
+            auth_req = google.auth.transport.requests.Request()
+            creds.refresh(auth_req)
+            access_token = creds.token
+            headers = {
+                "Authorization": f"Bearer {access_token}",
+                "Content-Type": "application/json; charset=utf-8",
+            }
+
+            # Payload Construction based on Publisher
+            if publisher == "anthropic":
+                merged = []
+                for m in messages:
+                    if m.get("role") not in ("user", "assistant"): continue
+                    content = m.get("content") or ""
+                    if merged and merged[-1]["role"] == m["role"]:
+                        prev_content = merged[-1]["content"]
+                        merged[-1]["content"] = str(prev_content) + "\n" + str(content)
+                    else:
+                        merged.append({"role": m["role"], "content": content})
+                if not merged or merged[0]["role"] != "user":
+                    merged.insert(0, {"role": "user", "content": "(conversation start)"})
+
+                payload = {
+                    "anthropic_version": "vertex-2023-10-16",
+                    "messages": merged,
+                    "system": system_prompt,
+                    "max_tokens": self._get_max_tokens(default=8192),
+                    "stream": False
+                }
+            elif publisher == "google":
+                contents = []
+                for m in messages:
+                    role = "user" if m["role"] == "user" else "model"
+                    contents.append({"role": role, "parts": [{"text": m["content"]}]})
+                payload = {
+                    "contents": contents,
+                    "system_instruction": {"parts": [{"text": system_prompt}]} if system_prompt else None,
+                    "generationConfig": {
+                        "maxOutputTokens": self._get_max_tokens(default=8192),
+                        "temperature": getattr(self.llm, 'temperature', 0.7)
+                    }
+                }
+            else:
+                # Partner Models (MiniMax, GLM) use OpenAI-compatible schema on Vertex MaaS
+                payload = {
+                    "model": model_id,
+                    "messages": [{"role": "system", "content": system_prompt}] + messages if system_prompt else messages,
+                    "max_tokens": self._get_max_tokens(default=8192),
+                    "stream": False
+                }
+
+            if self.supports_native_tools and active_tools:
+                if publisher == "anthropic":
+                    payload["tools"] = [{
+                        "name": name, "description": spec.get("description", ""),
+                        "input_schema": spec.get("parameters", {})
+                    } for name, spec in active_tools.items()]
+                elif publisher == "google":
+                    # Vertex Gemini Tools
+                    payload["tools"] = [{"function_declarations": [
+                        {"name": name, "description": spec.get("description", ""), "parameters": spec.get("parameters", {})}
+                        for name, spec in active_tools.items()
+                    ]}]
+
+            # STEALTH REGION CASCADE: Try multiple regions to bypass 404s
+            locations_to_try = [location, "global", "us-east5", "europe-west1", "us-central1"]
+            
+            for loc in locations_to_try:
+                if not loc: continue
+                
+                # Build URL based on publisher requirements
+                if publisher == "google":
+                    url = f"https://{loc}-aiplatform.googleapis.com/v1/projects/{project}/locations/{loc}/publishers/google/models/{model_id}:{stream_type}"
+                else:
+                    # Partner Models and Anthropic logic
+                    base_url = f"https://global-aiplatform.googleapis.com" if loc == "global" else f"https://{loc}-aiplatform.googleapis.com"
+                    url = f"{base_url}/v1/projects/{project}/locations/{loc}/publishers/{publisher}/models/{model_id}:{stream_type}"
+
+                try:
+                    async with httpx.AsyncClient(timeout=120.0) as client:
+                        response = await client.post(url, headers=headers, json=payload)
+                        data = response.json()
+                        
+                        if response.status_code == 200:
+                            if publisher == "anthropic":
+                                if "content" in data and data["content"]:
+                                    text_blocks = [b["text"] for b in data["content"] if b.get("type") == "text"]
+                                    return "\n".join(text_blocks)
+                            elif publisher == "google":
+                                if "candidates" in data and data["candidates"]:
+                                    return data["candidates"][0]["content"]["parts"][0]["text"]
+                            else:
+                                # Partner Models (OpenAI-compatible)
+                                if "choices" in data and data["choices"]:
+                                    return data["choices"][0]["message"]["content"]
+                            
+                            return f"[ERROR] Vertex {publisher.capitalize()}: Empty response"
+                        
+                        if response.status_code == 404:
+                            continue # Silent fallback to next region
+                            
+                        if response.status_code == 403:
+                            err_msg = data.get('error', {}).get('message', '')
+                            if "Service Usage API" in err_msg or "is disabled" in err_msg:
+                                return f"[ERROR] Vertex AI API is DISABLED. Enable it here: https://console.cloud.google.com/apis/library/aiplatform.googleapis.com?project={project}"
+                            return f"[ERROR] Vertex AI Permissions (403): {err_msg}"
+                        
+                        if response.status_code == 429:
+                            return f"[ERROR] Vertex AI Quota Exhausted (429): Resource has been exhausted."
+                            
+                        if "error" in data:
+                            return f"[ERROR] Vertex {publisher.capitalize()} ({loc}): {data['error'].get('message', 'Unknown error')}"
+                        return f"[ERROR] Vertex {publisher.capitalize()} ({loc}): Status {response.status_code}"
+                except Exception as e:
+                    continue
+
+            return f"[INFO] Vertex AI: Model '{model_id}' unreachable in tested regions."
+
+        except ImportError:
+            return "[ERROR] Vertex AI requirements missing. Run: pip install google-cloud-aiplatform google-auth"
+        except Exception as e:
+            return f"[ERROR] Vertex AI Provider: {str(e)}"
+    
+    async def _call_gemini_native_messages(self, messages, active_tools=None):
+        """Native Google Gemini SDK call for high-reliability tool use (Modern SDK)."""
+        from google import genai
+        from google.genai import types
+        import asyncio
+        try:
+            api_key = self.llm.api_key
+            if not api_key or api_key == "NONE":
+                api_key = self.core.config.get('providers', {}).get('google', {}).get('apiKey', '')
+            
+            if not api_key:
+                return "[ERROR] Google API key not configured."
+
+            client = genai.Client(api_key=api_key)
+            
+            # Convert messages to Gemini format
+            contents = []
+            system_instruction = None
+            for m in messages:
+                role = m['role']
+                if role == 'system':
+                    system_instruction = str(m['content'])
+                else:
+                    gemini_role = 'user' if role == 'user' else 'model'
+                    text_input = str(m.get('content', ''))
+                    contents.append(types.Content(role=gemini_role, parts=[types.Part(text=text_input)]))
+
+            config_args = {}
+            if system_instruction:
+                config_args['system_instruction'] = system_instruction
+            
+            # Register tools if supported
+            if self.supports_native_tools and active_tools:
+                tools_declarations = []
+                for name, spec in active_tools.items():
+                    tools_declarations.append(types.FunctionDeclaration(
+                        name=name,
+                        description=spec.get("description", ""),
+                        parameters=spec.get("parameters", {})
+                    ))
+                if tools_declarations:
+                    config_args['tools'] = [types.Tool(function_declarations=tools_declarations)]
+                
+            # Use generate_content through asynchronous client
+            response = await client.aio.models.generate_content(
+                model=self.llm.model,
+                contents=contents,
+                config=types.GenerateContentConfig(**config_args) if config_args else None
+            )
+            
+            if not response or not response.candidates:
+                return "[ERROR] Gemini Native: No candidates (possible safety filter or API error)."
+            
+            candidate = response.candidates[0]
+            parts = candidate.content.parts
+            
+            tool_calls = []
+            text_content = ""
+            for part in parts:
+                if part.text:
+                    text_content += part.text
+                if part.function_call:
+                    tool_calls.append({
+                        "tool": part.function_call.name,
+                        "args": dict(part.function_call.args),
+                        "thought": text_content.strip() if not tool_calls else None
+                    })
+
+            if tool_calls:
+                return "\n".join(json.dumps(tc) for tc in tool_calls)
+            
+            result = text_content.strip()
+            if not result and hasattr(response, 'text'):
+                try: result = response.text.strip()
+                except: pass
+
+            if not result:
+                return "[ERROR] Gemini Native: Empty result (all parts filtered)."
+            
+            # Token counting safely
+            try:
+                self._last_usage = {
+                    "prompt_tokens": response.usage_metadata.prompt_token_count,
+                    "completion_tokens": response.usage_metadata.candidates_token_count,
+                }
+            except:
+                pass
+
+            return result
+        except Exception as e:
+            import traceback
+            logger.error(f"Gemini Native Fatal: {traceback.format_exc()}")
+            return f"[ERROR] Gemini Native ({type(e).__name__}): {str(e)}"
     
     async def _call_anthropic(self, prompt, context):
         """
@@ -4237,6 +4605,13 @@ class GalacticGateway:
             "ollama":       "http://127.0.0.1:11434/v1",
         }
         configured = providers_cfg.get(provider, {}).get('baseUrl', '')
+        # BUGFIX: If 'openrouter' key is missing, try the original provider name (e.g. 'openrouter-frontier')
+        if not configured and "openrouter" in provider:
+             # Find any provider that starts with 'openrouter' and has a baseUrl
+             for p_name, p_cfg in providers_cfg.items():
+                 if p_name.startswith("openrouter") and p_cfg.get('baseUrl'):
+                     configured = p_cfg['baseUrl']
+                     break
         base = configured or default_urls.get(provider, '')
         # Normalize Ollama URL — ensure it ends with /v1
         if provider == "ollama" and not base.rstrip('/').endswith('/v1'):
@@ -4244,15 +4619,22 @@ class GalacticGateway:
         return base.rstrip('/')
 
     def _get_provider_api_key(self, provider):
-        """Return the API key for a provider, falling back to config providers section."""
+        """Return the API key for a provider from config."""
+        lookup_provider = provider
         if provider and provider.startswith("openrouter-"):
-            provider = "openrouter"
-        # Use the live llm.api_key if it's set and not placeholder
-        key = self.llm.api_key
-        if key and key not in ("NONE", ""):
+            lookup_provider = "openrouter"
+        if provider == "vertex":
+            lookup_provider = "google_vertex"
+        
+        # 1. Use the live llm.api_key if it's set and NOT a placeholder
+        key = getattr(self.llm, 'api_key', '')
+        placeholders = ("NONE", "", "YOUR_OPENROUTER_KEY", "YOUR_OPENAI_KEY", "YOUR_ANTHROPIC_KEY", "YOUR_API_KEY")
+        if key and key.strip() not in placeholders:
             return key
+        
+        # 2. Fall back to config providers section
         providers_cfg = self.core.config.get('providers', {})
-        provider_cfg = providers_cfg.get(provider, {})
+        provider_cfg = providers_cfg.get(lookup_provider, {})
 
         # NVIDIA: prefer the unified apiKey (works for all 500+ models on build.nvidia.com).
         # Fall back to the legacy per-model keys: sub-dict for backwards compatibility
@@ -4269,11 +4651,33 @@ class GalacticGateway:
                 if nvapi_key and nickname.lower() in model_str:
                     return nvapi_key
             # 3. Fall back to first non-empty legacy key
-            for nvapi_key in nvidia_keys.values():
-                if nvapi_key:
-                    return nvapi_key
-
-        return provider_cfg.get('apiKey', '') or provider_cfg.get('api_key', '')
+        # 3. Resolve key from provider config
+        primary_key = provider_cfg.get('apiKey', '') or provider_cfg.get('api_key', '')
+        
+        # Vertex AI uses a JSON file, not a text key string — return a placeholder
+        # so the UI and ModelManager know it's "authorized".
+        if not primary_key and lookup_provider in ('google_vertex', 'vertex'):
+            if provider_cfg.get('credentials_path') or provider_cfg.get('project_id'):
+                return "SERVICE_ACCOUNT"
+            
+        # BUGFIX: If 'openrouter' key is missing or placeholder, try original or any openrouter segment
+        def _is_valid(k): return k and k.strip() not in placeholders
+        
+        if not _is_valid(primary_key) and "openrouter" in str(provider).lower():
+            # Try the original un-normalized provider name (e.g. 'openrouter-frontier')
+            if provider != lookup_provider:
+                p_cfg = providers_cfg.get(provider, {})
+                primary_key = p_cfg.get('apiKey', '') or p_cfg.get('api_key', '')
+            
+            # If still invalid, search all keys starting with 'openrouter'
+            if not _is_valid(primary_key):
+                for p_name, p_cfg in providers_cfg.items():
+                    if p_name.startswith("openrouter"):
+                        val = p_cfg.get('apiKey', '') or p_cfg.get('api_key', '')
+                        if _is_valid(val):
+                            return val
+        
+        return primary_key if _is_valid(primary_key) else ""
 
     def _get_model_override(self, key, default=None):
         """Return a per-model override value for the active model, falling back to global config."""
@@ -4435,7 +4839,7 @@ class GalacticGateway:
             return f"[ERROR] {self.llm.provider}: {str(e)}"
 
     async def _call_openai_compatible_streaming(self, prompt, context, url, headers, active_tools=None):
-        """Streaming variant – returns full text but streams internally for real-time web UI updates."""
+        """Streaming variant - returns full text but streams internally for real-time web UI updates."""
         payload = {
             "model": self.llm.model,
             "messages": [
@@ -4537,10 +4941,12 @@ class GalacticGateway:
         if active_tools is None:
             active_tools = self._get_active_tools()
 
-        # Get native Ollama base        # Prepare payload
-        ollama_base = self.core.config.get('providers', {}).get('ollama', {}).get('endpoint', 'http://localhost:11434/v1')
+        # Get native Ollama base
+        ollama_base = self._get_provider_base_url("ollama")
         native_base = ollama_base.rstrip('/').removesuffix('/v1')
         url = f"{native_base}/api/chat"
+        
+        await self.core.log(f"🤖 Calling Ollama Native: {self.llm.model} at {url}", priority=3)
 
         # Build options
         ollama_opts = {"temperature": 0.3}
@@ -4796,10 +5202,14 @@ class GalacticGateway:
                 "model": self.llm.model,
             })
 
-        # Ollama uses native /api/chat (supports options.num_ctx)
-        if provider == "ollama":
-            return await self._call_ollama_native_messages(messages, active_tools=active_tools)
-
+        # OpenRouter-specific model ID sanitization
+        model_id = self.llm.model
+        if provider == "openrouter":
+            # Force google/ prefix for Gemini models if missing
+            if ("gemini" in model_id.lower() or "google" in model_id.lower()) and "/" not in model_id:
+                model_id = f"google/{model_id}"
+                await self.core.log(f"🧠 Sanitized OpenRouter Model ID: {model_id}", priority=3)
+        
         url = f"{self._get_provider_base_url(provider)}/chat/completions"
 
         headers = {"Content-Type": "application/json"}
@@ -4808,8 +5218,11 @@ class GalacticGateway:
             api_key = self._get_provider_api_key(provider)
             if api_key:
                 headers["Authorization"] = f"Bearer {api_key}"
+            else:
+                await self.core.log(f"⚠️ Missing API key for {provider}", priority=1)
+            
             # OpenRouter requires an extra header
-            if provider == "openrouter":
+            if provider.startswith("openrouter"):
                 headers["HTTP-Referer"] = "https://galactic-ai.local"
                 headers["X-Title"] = "Galactic AI"
 
@@ -4885,8 +5298,46 @@ class GalacticGateway:
                     fm["content"] = "\n".join(text_parts)
                 # Ensure no 'images' field remains in history for local/picky providers
                 fm.pop("images", None)
+
+            # ── Strictly alternating roles for Gemini/Google models ────────
+            # If flattening is enabled, we merge consecutive same-role messages
+            if use_flattening and formatted_messages and fm.get("role") == formatted_messages[-1].get("role"):
+                prev_content = formatted_messages[-1].get("content") or ""
+                new_content = fm.get("content") or ""
+                # Force both to string for merging if for Gemini/picky models
+                def _to_str(c):
+                    if isinstance(c, str): return c
+                    if isinstance(c, list): 
+                        return "\n".join([p.get("text", "") for p in c if p.get("type") == "text"])
+                    return str(c)
                 
-            formatted_messages.append(fm)
+                merged = f"{_to_str(prev_content)}\n\n{_to_str(new_content)}".strip()
+                if not merged: merged = "[Empty Message]" # Avoid 400 for empty tokens
+                formatted_messages[-1]["content"] = merged
+            else:
+                # Ensure we don't have consecutive assistant messages even if content is empty
+                # (Some models crash on role repetition)
+                formatted_messages.append(fm)
+
+        # FINAL PASS: Ensure strictly alternating roles for Google/Gemini
+        if is_google:
+            final_messages = []
+            for m in formatted_messages:
+                if final_messages and m['role'] == final_messages[-1]['role']:
+                    # Merge content
+                    p_content = final_messages[-1].get('content') or ""
+                    n_content = m.get('content') or ""
+                    final_messages[-1]['content'] = f"{p_content}\n\n{n_content}".strip() or "[Empty]"
+                else:
+                    final_messages.append(m)
+            
+            # Must start with 'user' or 'system' (Google requirement)
+            if final_messages and final_messages[0]['role'] == 'assistant':
+                final_messages.insert(0, {"role": "user", "content": "Continue."})
+            
+            # Must end with 'user' for some providers if tools are present
+            # But normally Gemini supports assistant as last message for streaming.
+            formatted_messages = final_messages
 
         if use_streaming:
             # ── OpenRouter Nitro Override ──
@@ -6330,51 +6781,56 @@ $notify.Dispose()
     # ── New v0.9.2 Tool Implementations ──────────────────────────────
 
     async def tool_execute_python(self, args):
-        """Execute Python code in a subprocess."""
+        """Execute Python code in a subprocess with robust output capping and stderr prioritization."""
         code = args.get('code', '')
         timeout = min(int(args.get('timeout', 60)), 300)
         if not code.strip():
-            return "[ERROR] No code provided."
+            return "❌ Error: No code provided."
+        
         import tempfile
         tmp = None
         try:
             tmp = tempfile.NamedTemporaryFile(mode='w', suffix='.py', delete=False, encoding='utf-8')
             tmp.write(code)
             tmp.close()
+            
             proc = await asyncio.create_subprocess_exec(
                 'python', tmp.name,
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
             )
+            
             try:
                 stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=timeout)
             except asyncio.TimeoutError:
                 proc.kill()
                 await proc.wait()
-                return f"[Timeout] Python script exceeded {timeout}s and was killed."
-            out = stdout.decode('utf-8', errors='ignore').strip()
-            err = stderr.decode('utf-8', errors='ignore').strip()
+                return f"⏱️ Timeout: Python script exceeded {timeout}s and was terminated."
+
+            out = stdout.decode('utf-8', errors='replace').strip()
+            err = stderr.decode('utf-8', errors='replace').strip()
             
-            # Truncate to prevent context window explosion and massive TTFT hangs
-            if len(out) > 8000: out = out[:4000] + "\n...[STDOUT TRUNCATED]...\n" + out[-4000:]
-            if len(err) > 8000: err = err[:4000] + "\n...[STDERR TRUNCATED]...\n" + err[-4000:]
+            # Capping logic: 4000 chars per stream to protect context
+            if len(out) > 4000: out = out[:2000] + "\n...[STDOUT TRUNCATED]...\n" + out[-2000:]
+            if len(err) > 4000: err = err[:2000] + "\n...[STDERR TRUNCATED]...\n" + err[-2000:]
             
-            result = ""
-            if out:
-                result += f"STDOUT:\n{out}\n"
+            result_parts = []
             if err:
-                result += f"STDERR:\n{err}\n"
+                result_parts.append(f"❌ STDERR:\n{err}")
+            if out:
+                result_parts.append(f"✅ STDOUT:\n{out}")
+            
             if proc.returncode != 0:
-                result += f"Exit code: {proc.returncode}"
-            return result or "Script completed with no output."
+                result_parts.append(f"⚠️ Exit Code: {proc.returncode}")
+            
+            return "\n\n".join(result_parts) if result_parts else "✅ Script completed with no output."
+            
         except Exception as e:
-            return f"[ERROR] execute_python: {e}"
+            return f"❌ Error executing Python: {str(e)}"
         finally:
-            if tmp:
-                try:
-                    os.unlink(tmp.name)
-                except Exception:
-                    pass
+            if tmp and os.path.exists(tmp.name):
+                try: os.unlink(tmp.name)
+                except: pass
 
     async def tool_wait(self, args):
         """Pause execution."""
