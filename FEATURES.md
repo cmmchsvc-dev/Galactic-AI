@@ -1,6 +1,6 @@
 # Galactic AI — Feature Reference
 
-Complete feature reference for Galactic AI Automation Suite **v1.6.3**.
+Complete feature reference for Galactic AI Automation Suite **v1.6.8**.
 
 ---
 
@@ -173,7 +173,7 @@ Two community skills and a core gateway monitor reduce "amnesia" while keeping c
 
 ---
 
-## Agentic Code Intelligence (v1.6.3)
+## Agentic Code Intelligence (v1.6.8)
 
 ### Deep Codebase Research
 

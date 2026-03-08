@@ -3,21 +3,24 @@
 **Last Updated:** 2026-03-05 04:30
 **Owner:** Chesley McDaniel (techno-hippie / Ches)
 **Repo Path:** C:\Users\Chesley\Galactic AI
-**Current Version:** v1.6.3 (The Hallucination Defense Update)
+**Current Version:** v1.6.8 (The Hallucination Defense Update)
 
 ---
 
 ## Summary
+
 Galactic AI: Self-evolving AI platform w/ 189+ tools, skills ecosystem, Auto-Compacting Context, Semantic Recall (ChromaDB), Resumable Workflows (checkpoints), and hierarchical Subagents. Optimized for speed and cost-efficiency with Gemini 2.5 Flash integration.
 
 ---
 
 ## Current Focus
+
 - Production stability: Refining the Resumable Workflows system and monitoring the new Planner Fallback logic.
 
 ---
 
 ## Active Tasks
+
 - [x] Resumable Workflows (checkpoint/load) live
 - [x] Web Deck Thinking tab upgraded with Runs/Resume UI
 - [x] Workspace Oracle (plan_optimizer) skill deployed
@@ -30,6 +33,7 @@ Galactic AI: Self-evolving AI platform w/ 189+ tools, skills ecosystem, Auto-Com
 ---
 
 ## Milestones
+
 - [x] v1.3.0 The Intelligence Update (Agentic Code Intelligence, SOUL v2, Surgical Editing)
 - [x] v1.2.1 The Control Update (Centralized Model Manager, OpenClaw provider parity)
 - [x] v1.2.0 The Hivemind Update (Resumables, Oracle, CLI Bridge)
@@ -40,11 +44,13 @@ Galactic AI: Self-evolving AI platform w/ 189+ tools, skills ecosystem, Auto-Com
 ---
 
 ## Blockers / Issues
+
 - None. System is stable and pushed to GitHub.
 
 ---
 
 ## Key Files / Paths (C:\Users\Chesley\Galactic AI)
+
 - `gateway_v2.py` — ReAct brain w/ Resumable logic
 - `web_deck.py` — UI w/ status orb & checkpointing
 - `spinner.py` — High-speed terminal status engine
@@ -56,11 +62,13 @@ Galactic AI: Self-evolving AI platform w/ 189+ tools, skills ecosystem, Auto-Com
 ---
 
 ## Release Status
+
 - **Latest:** v1.2.1 (Current, all platforms)
 
 ---
 
 ## Commands
+
 - Launch: `python galactic_core_v2.py`
 - Setup: `python setup_wizard.py` (accessible via web UI)
 - Build: `python scripts/release.py`
@@ -68,6 +76,7 @@ Galactic AI: Self-evolving AI platform w/ 189+ tools, skills ecosystem, Auto-Com
 ---
 
 ## Architecture
+
 Core: gateway_v2 -> model_manager
 UI: web_deck + index.html
 Bridges: telegram/discord/gmail/whatsapp
@@ -78,4 +87,5 @@ Providers: Full redundant fallback chain
 ---
 
 ## Notes
+
 - Techno-hippie prefs: F100 mods (Holley Sniper EFI, glasspacks), skoolie/RV, NM commune, stars/space, non-conformist vibe.
