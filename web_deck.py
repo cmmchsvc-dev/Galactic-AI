@@ -103,6 +103,9 @@ class GalacticWebDeck:
         self.app.router.add_get('/api/subagents', self.handle_subagents)
         self.app.router.add_delete('/api/subagents/{session_id}', self.handle_cancel_subagent)
         self.app.router.add_post('/api/subagents/chain', self.handle_spawn_chain)
+        self.app.router.add_get('/api/subagents/default_model', self.handle_get_subagent_model)
+        self.app.router.add_post('/api/subagents/default_model', self.handle_set_subagent_model)
+        self.app.router.add_get('/api/subagents/models', self.handle_subagent_models)
         # Chrome Bridge WebSocket — connects the Galactic Browser extension
         self.app.router.add_get('/ws/chrome_bridge', self.handle_chrome_bridge_ws)
         self.trace_buffer = []  # last 500 agent trace entries for persistence
@@ -207,6 +210,51 @@ class GalacticWebDeck:
             return web.json_response({'error': str(e)}, status=500)
 
 
+    async def handle_get_subagent_model(self, request):
+        """GET /api/subagents/default_model"""
+        model = self.core.config.get("subagents", {}).get("default_model", "")
+        return web.json_response({"model": model})
+
+    async def handle_set_subagent_model(self, request):
+        """POST /api/subagents/default_model — persists to config.yaml"""
+        try:
+            data = await request.json()
+            model = data.get("model", "").strip()
+            if "subagents" not in self.core.config:
+                self.core.config["subagents"] = {}
+            self.core.config["subagents"]["default_model"] = model or None
+            # Persist to config.yaml
+            config_path = getattr(self.core, 'config_path', 'config.yaml')
+            import yaml
+            with open(config_path, 'w', encoding='utf-8') as f:
+                yaml.dump(self.core.config, f, default_flow_style=False, allow_unicode=True)
+            return web.json_response({"ok": True, "model": model})
+        except Exception as e:
+            return web.json_response({"error": str(e)}, status=500)
+
+    async def handle_subagent_models(self, request):
+        """GET /api/subagents/models — returns all known model IDs for the selector."""
+        try:
+            mm = getattr(self.core, "model_manager", None)
+            if mm and hasattr(mm, "get_all_models"):
+                models = mm.get_all_models()
+            elif mm and hasattr(mm, "models"):
+                models = mm.models
+            else:
+                models = []
+            # Flatten to list of {id, label} objects
+            result = []
+            for m in models:
+                if isinstance(m, dict):
+                    mid = m.get("model") or m.get("id", "")
+                    label = m.get("name") or mid
+                    result.append({"id": mid, "label": label})
+                elif isinstance(m, str):
+                    result.append({"id": m, "label": m})
+            return web.json_response(result)
+        except Exception as e:
+            return web.json_response([], status=200)
+
     async def handle_index(self, request):
         html = r"""<!DOCTYPE html>
 <html lang="en">
@@ -272,6 +320,8 @@ body{background:var(--bg);color:var(--text);font-family:var(--font);height:100vh
 .msg{display:flex;flex-direction:column;gap:5px;max-width:88%}
 .msg.user{align-self:flex-end;align-items:flex-end}
 .msg.bot{align-self:flex-start;align-items:flex-start}
+.msg.system{align-self:center;align-items:center;max-width:95%;opacity:0.82}
+.msg.system .bubble{padding:5px 14px;border-radius:20px;font-size:0.78rem;font-family:var(--mono);background:rgba(0,243,255,0.06);border:1px solid rgba(0,243,255,0.18);color:var(--dim);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:100%}
 .msg .bubble{padding:12px 16px;border-radius:16px;font-size:0.95rem;line-height:1.6;word-break:break-word;white-space:pre-wrap}
 .msg.user .bubble{background:linear-gradient(135deg,rgba(0,243,255,0.18),rgba(0,243,255,0.09));border:1px solid rgba(0,243,255,0.35);border-bottom-right-radius:4px}
 .msg.bot .bubble{background:var(--bg3);border:1px solid var(--border);border-bottom-left-radius:4px}
@@ -1446,6 +1496,15 @@ body.glow-max .status-dot{box-shadow:0 0 14px var(--green),0 0 28px rgba(0,255,1
           <div id="subagents-list" style="flex:1; overflow-y:auto; padding:16px;">
             <div style="color:var(--dim); font-size:0.85rem; text-align:center; margin-top:20px;">No active subagents.</div>
           </div>
+          <div style="padding:10px 16px; border-top:1px solid var(--border); flex-shrink:0; background:var(--bg3);">
+            <div style="font-size:0.72rem; color:var(--dim); letter-spacing:1px; text-transform:uppercase; margin-bottom:6px;">🤖 Default Sub-agent Model</div>
+            <div style="display:flex; gap:6px; align-items:center;">
+              <select id="subagent-default-model" onchange="saveSubagentModel()" style="flex:1; padding:5px 9px; background:var(--bg); border:1px solid var(--border); border-radius:7px; color:var(--text); font-size:0.82rem; outline:none;">
+                <option value="">— Same as main agent —</option>
+              </select>
+            </div>
+            <div style="font-size:0.7rem; color:var(--dim); margin-top:4px;">Applies to all autonomously spawned agents. Per-step overrides possible in Chain Builder.</div>
+          </div>
         </div>
       </div>
     </div>
@@ -2106,6 +2165,8 @@ async function init() {
   loadFileList();
   // Settings tab initialization
   loadSettingsValues();
+  // Sub-agent model selector
+  loadSubagentModels();
   // Restore the last active tab (defaults to 'chat' if none saved)
   const savedTab = localStorage.getItem('gal_activeTab') || 'chat';
   switchTab(savedTab);
@@ -2183,6 +2244,8 @@ function connectWS() {
       updateSubagentUI(p.data);
     } else if (p.type === 'subagent_done') {
       updateSubagentUI(p.data);
+    } else if (p.type === 'system_notice') {
+      appendSystemNotice(p.message || '');
     } else if (p.type === 'update_available') {
       const u = p.data || {};
       showToast(`🆕 Update available: v${u.latest} — Run ./update.ps1`, 'info', 30000);
@@ -3960,7 +4023,11 @@ function handleAgentTrace(data) {
     stopOrb();
     resetOrb(); // Force aggressive stop on abort
     label = 'ABORTED';
-    html = escHtml(data.reason || 'max turns exceeded');
+    let reasonText = escHtml(data.reason || 'max turns exceeded');
+    if (data.details) {
+      reasonText += '<pre style="margin-top:8px;font-size:0.85em;color:var(--red);background:rgba(255,0,0,0.1);padding:8px;border-radius:4px;overflow-x:auto;">' + escHtml(data.details) + '</pre>';
+    }
+    html = reasonText;
   } else if (phase === 'final_answer') {
     stopOrb();
     resetOrb(); // Force aggressive stop on final answer
@@ -4158,11 +4225,19 @@ function addChainStep() {
   const div = document.createElement('div');
   div.className = 'chain-step';
   div.id = `chain-step-${chainStepCount}`;
+  const modelOpts = (window._subagentModels || []).map(m =>
+    `<option value="${m.id}">${m.label}</option>`
+  ).join('');
   div.innerHTML = `
     <div class="chain-step-remove" onclick="this.parentElement.remove()">&times;</div>
     <div style="font-weight:bold; color:var(--cyan); margin-bottom:8px; font-size:0.85rem;">STEP <span class="step-num">${chainStepCount}</span></div>
     <label style="display:block; font-size:0.75rem; color:var(--dim); margin-bottom:4px;">Task Definition (Prompt):</label>
     <textarea class="step-task" rows="3" style="width:100%; padding:8px; border-radius:6px; background:var(--bg3); border:1px solid var(--border); color:var(--text); resize:vertical; font-family:var(--font); font-size:0.85rem;" placeholder="e.g. Research the latest news on..."></textarea>
+    <label style="display:block; font-size:0.75rem; color:var(--dim); margin-top:8px; margin-bottom:4px;">Model Override <span style="color:var(--dim);font-size:0.85em">(optional)</span>:</label>
+    <select class="step-model" style="width:100%; padding:6px 9px; background:var(--bg3); border:1px solid var(--border); border-radius:6px; color:var(--text); font-size:0.82rem;">
+      <option value="">— Use default —</option>
+      ${modelOpts}
+    </select>
   `;
   document.getElementById('chain-steps-container').appendChild(div);
   updateStepNumbers();
@@ -4174,17 +4249,20 @@ function updateStepNumbers() {
 }
 
 async function submitChain() {
-  const tasks = Array.from(document.querySelectorAll('.chain-step .step-task')).map(el => el.value.trim()).filter(v => v);
-  if (!tasks.length) {
+  const stepEls = document.querySelectorAll('.chain-step');
+  const steps = Array.from(stepEls).map(el => ({
+    task: el.querySelector('.step-task')?.value.trim() || '',
+    model: el.querySelector('.step-model')?.value.trim() || null,
+  })).filter(s => s.task);
+  if (!steps.length) {
     showToast('Add at least one step with a task description.', 'error');
     return;
   }
-  
   try {
     const res = await authFetch('/api/subagents/chain', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ steps: tasks })
+      body: JSON.stringify({ steps })
     });
     const data = await res.json();
     if (data.ok) {
@@ -4198,6 +4276,56 @@ async function submitChain() {
     console.error(e);
     showToast('Error spawning chain.', 'error');
   }
+}
+
+// ── SYSTEM NOTICE (sub-agent event bubbles in chat) ────────────────────
+function appendSystemNotice(msg) {
+  const log = document.getElementById('chat-log');
+  const sb = document.getElementById('stream-bubble');
+  const div = document.createElement('div');
+  div.className = 'msg system';
+  div.innerHTML = `<div class="bubble">${msg}</div>`;
+  log.insertBefore(div, sb);
+  if (autoScroll) div.scrollIntoView({block:'end',behavior:'smooth'});
+}
+
+// ── SUBAGENT DEFAULT MODEL SELECTOR ─────────────────────────────────────
+async function loadSubagentModels() {
+  try {
+    const [modelsRes, defaultRes] = await Promise.all([
+      authFetch('/api/subagents/models'),
+      authFetch('/api/subagents/default_model')
+    ]);
+    const models = await modelsRes.json();
+    const {model: currentModel} = await defaultRes.json();
+    window._subagentModels = models;
+    const sel = document.getElementById('subagent-default-model');
+    if (!sel) return;
+    // Clear existing options except the first (Same as main)
+    while (sel.options.length > 1) sel.remove(1);
+    for (const m of models) {
+      const opt = document.createElement('option');
+      opt.value = m.id;
+      opt.textContent = m.label;
+      sel.appendChild(opt);
+    }
+    if (currentModel) sel.value = currentModel;
+  } catch(e) { console.warn('Could not load subagent models:', e); }
+}
+
+async function saveSubagentModel() {
+  const sel = document.getElementById('subagent-default-model');
+  const model = sel ? sel.value : '';
+  try {
+    const res = await authFetch('/api/subagents/default_model', {
+      method: 'POST',
+      headers: {'Content-Type':'application/json'},
+      body: JSON.stringify({model})
+    });
+    const d = await res.json();
+    if (d.ok) showToast(model ? `Sub-agent model set: ${model}` : 'Sub-agent model reset to default', 'success');
+    else showToast('Failed to save: ' + d.error, 'error');
+  } catch(e) { showToast('Error saving model', 'error'); }
 }
 
 // ─── POWER CONTROLS ─────────────────────────────────────────────────────────
@@ -6200,7 +6328,7 @@ try {
     async def _broadcast(self, msg_dict):
         """Send a JSON payload to all connected stream clients."""
         import json
-        payload = json.dumps(msg_dict).encode('utf-8')
+        payload = (json.dumps(msg_dict) + "\n").encode('utf-8')
         for adapter in self.core.clients:
             try:
                 adapter.write(payload)

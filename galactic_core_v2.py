@@ -51,6 +51,13 @@ class GalacticRelay:
             self.queue.task_done()
 
 class GalacticCore:
+    """The central orchestrator for Galactic AI.
+    Integrates Gateway, ModelManager, Skills, and Dashboard.
+    """
+    NAME    = "Galactic AI"
+    VERSION = "1.6.7"
+    PORT    = 9999
+
     def __init__(self, config_path='config.yaml'):
         self.config_path = os.path.abspath(config_path)
         self.config = self.load_config()
@@ -90,7 +97,7 @@ class GalacticCore:
             'aliases':  {},
             'social_media': {
                 'twitter': {'consumer_key': '', 'consumer_secret': '', 'access_token': '', 'access_token_secret': ''},
-                'reddit':  {'client_id': '', 'client_secret': '', 'username': '', 'password': '', 'user_agent': 'GalacticAI/1.6.0'},
+                'reddit':  {'client_id': '', 'client_secret': '', 'username': '', 'password': '', 'user_agent': 'GalacticAI/1.6.1'},
             },
             'chrome_bridge': {'enabled': True, 'timeout': 30},
         }
@@ -106,9 +113,9 @@ class GalacticCore:
                         migrated = True
 
         # Ensure system section has newer keys
-        sys_defaults = {'update_check_interval': 21600, 'version': '1.6.1'}
+        sys_defaults = {'update_check_interval': 21600, 'version': '1.6.1', 'port': 9999}
         if 'system' not in config:
-            config['system'] = {'name': 'Galactic AI', 'port': 9999}
+            config['system'] = {'name': 'Galactic AI'}
             config['system'].update(sys_defaults)
             migrated = True
         else:
@@ -139,7 +146,13 @@ class GalacticCore:
             
             await self.log("Initializing core systems...", priority=2)
             
-            self.memory = GalacticMemory(self)
+            # Resilient memory initialization (handles old/new signatures during upgrade)
+            try:
+                self.memory = GalacticMemory(self)
+            except TypeError:
+                self.memory = GalacticMemory()
+                self.memory.core = self # Manual link for legacy versions
+            
             self.gateway = GalacticGateway(self)
             self.gateway.galactic_memory = self.memory # Link them
             
@@ -160,7 +173,8 @@ class GalacticCore:
                 await self.log(f"Ollama health check failed: {e}", priority=1)
 
             self.telegram = TelegramBridge(self)
-            self.web = GalacticWebDeck(self)
+            self.web_deck = GalacticWebDeck(self)
+            self.web = self.web_deck # Legacy alias
             self.scheduler = GalacticScheduler(self)
 
             # Set initial model from ModelManager
@@ -646,7 +660,8 @@ class GalacticCore:
                 await self._ensure_firewall_rule(port)
 
         # Start Bridge (Socket Server)
-        server = await asyncio.start_server(self.handle_client, '127.0.0.1', self.config['system']['port'])
+        server_port = self.config.get('system', {}).get('port', 9999)
+        server = await asyncio.start_server(self.handle_client, '127.0.0.1', server_port)
 
         # Start Tasks
         asyncio.create_task(self.relay.route_loop())
