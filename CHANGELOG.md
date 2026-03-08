@@ -1,3 +1,4 @@
+- 🚀 **Phase 31: Arcade Expansion (Neon Horizon)**: Integrated two new high-fidelity arcade games—**Cosmic Cruiser** (futuristic truck racing) and **Neon Horizon V4** (hoverboard platformer)—directly into the landing page.
 - 🚀 **Phase 29: Progress Bars & UI**: Implemented real-time progress bars in both the terminal (ASCII) and the Control Deck (CSS) for main and sub-agents.
 - 🎮 **Asteroids v9 Integration**: Upgraded the internal arcade system to Asteroids v9 (asteroid9.html).
 - 🛡️ **Repo Security Audit**: Performed a manual security sweep and git history purge to remove accidentally exposed API keys.
