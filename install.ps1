@@ -1,10 +1,11 @@
-# Galactic AI - Windows Installer
-# Run: .\install.ps1
+param(
+    [switch]$Force
+)
 
 Write-Host ""
 Write-Host "============================================" -ForegroundColor Cyan
 Write-Host "  GALACTIC AI - Automation Suite Installer" -ForegroundColor Cyan
-Write-Host "  v1.6.1" -ForegroundColor DarkCyan
+Write-Host "  v1.6.3" -ForegroundColor DarkCyan
 Write-Host "============================================" -ForegroundColor Cyan
 Write-Host ""
 
@@ -60,7 +61,21 @@ Write-Host "  pip upgraded." -ForegroundColor Green
 
 # Install pip dependencies from requirements.txt
 Write-Host "[4/6] Installing Python dependencies (this may take a few minutes)..." -ForegroundColor Yellow
-pip install -r requirements.txt
+if ($Force) {
+    Write-Host "  Smart Repair active: Auditing your Python environment..." -ForegroundColor Magenta
+    $missingDeps = python scripts/check_deps.py requirements.txt
+    if ($missingDeps) {
+        Write-Host "  Missing dependencies found: $missingDeps" -ForegroundColor Cyan
+        Write-Host "  Repairing now (no-cache mode)..." -ForegroundColor DarkCyan
+        pip install $missingDeps.Split(" ") --no-cache-dir
+    }
+    else {
+        Write-Host "  All dependencies are healthy. Skipping reinstall." -ForegroundColor Green
+    }
+}
+else {
+    pip install -r requirements.txt
+}
 if ($LASTEXITCODE -ne 0) {
     Write-Host "  ERROR: pip install failed. Check internet connection and try again." -ForegroundColor Red
     exit 1
