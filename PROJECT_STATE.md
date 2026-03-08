@@ -63,7 +63,7 @@ Galactic AI: Self-evolving AI platform w/ 189+ tools, skills ecosystem, Auto-Com
 
 ## Release Status
 
-- **Latest:** v1.2.1 (Current, all platforms)
+- **Latest:** v1.6.8 (Current)
 
 ---
 

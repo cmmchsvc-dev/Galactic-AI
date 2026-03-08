@@ -566,7 +566,7 @@ MIT License — see LICENSE file.
 | Version | Highlights |
 |---|---|
 | v1.6.8 | Tooling | **Loop Reset & Hallucination Defense** • Multi-turn loop detection resets on new input • Browser Hallucination Guard to catch lying models • Hardened provider-aware fallback resilience |
-| v1.5.1 | Memory | **Auto-Compaction & Semantic Recall** • Dynamic summarization of old history • ChromaDB integration for long-term memory logs • New `/context`, `/compact`, and `/clear` commands • Gemini 2.5 Flash default background model |
+| v1.6.8 | **Current Release** | Phase 29: Progress Bars & Security Purge • v1.6.8 Standardization across repo • Asteroids v9 integrated |
 | v1.4.8 | Security | **Unified Security Protocol** • Hardened Discord & WhatsApp bridges with "Default Deny" policy • Unified authorization helpers • New `/id` commands for setup. |
 | v1.4.7 | Security | 🛡️ **Security Hardening Update** • Strict "Default Deny" Telegram access control • Callback Query (button) bypass security fix • New `/id` command. |
 | **v1.4.6** | 🔧 **Imagen Fix Update** • Fixed Imagen 4 model IDs (`NOT_FOUND` errors resolved) • Fixed `chrome_navigate` crash (`list.get()` error) • Eliminated AI hallucination loop after image generation • Added embed URL + stop signal to image tool returns • VC++ Redistributable installer UAC fix. |
