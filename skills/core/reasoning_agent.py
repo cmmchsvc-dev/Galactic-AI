@@ -1,7 +1,7 @@
 """
 Galactic AI -- Reasoning Agent Skill v1.0
 Specialized sub-agent with advanced reasoning, reflection, and spatial awareness.
-Designed to mimic the 'Agentic Soul' demonstrated in Galactic AI v1.6.1.
+Designed to mimic the 'Agentic Soul' demonstrated in Galactic AI v1.6.3.
 """
 
 import asyncio

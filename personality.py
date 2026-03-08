@@ -130,20 +130,29 @@ class GalacticPersonality:
 
     # ── Output ───────────────────────────────────────────────
 
-    def get_system_prompt(self):
+    def get_system_prompt(self, is_coding=False):
         """Build the system prompt injected into every LLM call."""
         parts = [f"IDENTITY: {self.name}, a {self.creature}. VIBE: {self.vibe}"]
+        
+        if is_coding:
+            parts.append(
+                "CODING MINDSET: You are a elite Senior Software Engineer. You value efficiency, DRY principles, and robust architecture. "
+                "You are proactive—you don't wait for permission to explore the codebase. You analyze first, then propose, then execute."
+            )
+
         if self.soul:
             parts.append(f"SOUL:\n{self.soul}")
         if self.user_context:
             parts.append(f"USER:\n{self.user_context}")
         if self.memory_md:
             parts.append(f"MEMORY (persistent — things you've learned across sessions):\n{self.memory_md}")
+        
         tools_md = self._read_md('TOOLS.md')
         if tools_md:
             parts.append(
                 f"TOOL GUIDE (how to use specialized tools effectively):\n{tools_md}"
             )
+        
         vault_md = self._read_md('VAULT.md')
         if vault_md:
             parts.append(

@@ -44,22 +44,22 @@ providers:
   vertex:
     - id: "claude-4-6-sonnet-20251201"
       name: "Claude 4.6 Sonnet (Vertex) 🚀"
-      enabled: true
+      enabled: false
     - id: "claude-4-6-opus-20251201"
       name: "Claude 4.6 Opus (Vertex) 👑"
-      enabled: true
+      enabled: false
     - id: "claude-4-5-opus-20251001"
       name: "Claude 4.5 Opus (Vertex) 🏛️"
-      enabled: true
+      enabled: false
     - id: "claude-4-5-haiku-20251001"
       name: "Claude 4.5 Haiku (Vertex) ⚡"
-      enabled: true
+      enabled: false
     - id: "claude-3-5-sonnet-v2@20241022"
       name: "Claude 3.5 Sonnet v2 (Vertex) 🎭"
-      enabled: true
+      enabled: false
     - id: "claude-3-5-haiku@20241022"
       name: "Claude 3.5 Haiku (Vertex) 🚄"
-      enabled: true
+      enabled: false
     - id: "gemini-3.1-pro-preview-vertex"
       name: "Gemini 3.1 Pro (Vertex) 🧠 [LATEST]"
       enabled: true
@@ -68,6 +68,9 @@ providers:
       enabled: true
     - id: "minimax-m2"
       name: "MiniMax M2 (Vertex) 🦾"
+      enabled: true
+    - id: "glm-5"
+      name: "GLM-5 (Vertex) 🦾"
       enabled: true
     - id: "glm-4-7-maas"
       name: "GLM 4.7 (Vertex) 📖"
