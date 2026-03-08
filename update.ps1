@@ -142,7 +142,8 @@ try {
     Expand-Archive -Path $tempZip -DestinationPath $tempDir -Force
 
     # Handle both flat and nested ZIPs (Galactic-AI-vX.X.X/ subfolder)
-    $innerDir = Get-ChildItem $tempDir -Directory | Select-Object -First 1
+    # Be more robust: check if the inner directory contains galactic_core_v2.py
+    $innerDir = Get-ChildItem $tempDir -Directory | Where-Object { Test-Path "$($_.FullName)\galactic_core_v2.py" } | Select-Object -First 1
     $sourceDir = if ($innerDir) { $innerDir.FullName } else { $tempDir }
 
     $filesToCopy = Get-ChildItem $sourceDir -Recurse -File | Where-Object {
@@ -185,7 +186,21 @@ if ($patched -ne $configRaw) {
 
 # ── Step 6: Update pip dependencies ───────────────────────────────────────────
 Write-Host "[6/6] Updating Python dependencies..." -ForegroundColor Yellow
-python -m pip install -r "$InstallDir\requirements.txt" --quiet --upgrade
+if ($Force) {
+    Write-Host "  Smart Repair active: Auditing your Python environment..." -ForegroundColor Magenta
+    $missingDeps = python scripts/check_deps.py "$InstallDir\requirements.txt"
+    if ($missingDeps) {
+        Write-Host "  Missing dependencies found: $missingDeps" -ForegroundColor Cyan
+        Write-Host "  Repairing now (no-cache mode)..." -ForegroundColor DarkCyan
+        python -m pip install $missingDeps.Split(" ") --no-cache-dir
+    }
+    else {
+        Write-Host "  All dependencies are healthy. Skipping reinstall." -ForegroundColor Green
+    }
+}
+else {
+    python -m pip install -r "$InstallDir\requirements.txt" --upgrade
+}
 Write-Host "  Dependencies up to date." -ForegroundColor Green
 
 # ── Done ──────────────────────────────────────────────────────────────────────

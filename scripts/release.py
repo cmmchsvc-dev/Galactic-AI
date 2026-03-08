@@ -37,6 +37,10 @@ INCLUDE_LIST = [
     "terms.html",
     "update.ps1",
     "update.sh",
+    "scripts",
+    "PROJECT_STATE.md",
+    "README_DEV.md",
+    "TODOS.md",
     "create_shortcut.ps1",
     "galactic_ai_flux_v4.ico",
     "gateway_v3.py",
@@ -288,7 +292,8 @@ def build_packages(version, release_target_dir):
         for root, _, files in os.walk(BUILD_DIR):
             for file in files:
                 file_path = os.path.join(root, file)
-                arcname = os.path.relpath(file_path, BUILD_DIR)
+                # Nest under Galactic-AI-v{version}/
+                arcname = os.path.join(zip_base, os.path.relpath(file_path, BUILD_DIR))
                 zipf.write(file_path, arcname)
     packages.append(zip_path)
     

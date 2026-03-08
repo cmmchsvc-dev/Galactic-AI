@@ -35,7 +35,7 @@ class SystemSkill(GalacticSkill):
 
     skill_name   = "system_tools"
     display_name = "System Tools"
-    version      = "1.6.1"
+    version      = "1.6.3"
     author       = "cmmchsvc"
     description = "Essential OS, File System, Git, and Network utility tools."
     category    = "system"

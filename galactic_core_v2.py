@@ -55,7 +55,7 @@ class GalacticCore:
     Integrates Gateway, ModelManager, Skills, and Dashboard.
     """
     NAME    = "Galactic AI"
-    VERSION = "1.6.7"
+    VERSION = "1.6.8"
     PORT    = 9999
 
     def __init__(self, config_path='config.yaml'):
@@ -133,6 +133,47 @@ class GalacticCore:
                 pass  # Non-fatal — config still works in memory
 
         return config
+
+    def save_config(self):
+        """
+        Thread-safe configuration persistence.
+        Re-reads the disk file before writing to prevent overwriting 
+        concurrent on-disk changes (like version bumps from other processes).
+        """
+        import yaml
+        config_full_path = os.path.abspath(self.config_path)
+        
+        try:
+            # 1. Read the latest state from disk
+            disk_config = {}
+            if os.path.exists(config_full_path):
+                with open(config_full_path, 'r', encoding='utf-8') as f:
+                    disk_config = yaml.load(f, Loader=yaml.FullLoader) or {}
+
+            # 2. Update disk state with in-memory state
+            # We treat in-memory as the source of truth for logic, 
+            # but disk might have metadata (like version) we shouldn't revert.
+            disk_config.update(self.config)
+            
+            # Ensure critical fields like version are synchronized
+            if 'system' in disk_config:
+                disk_config['system']['version'] = self.VERSION
+
+            # 3. Atomic write back to disk
+            import secrets
+            temp_path = config_full_path + "." + secrets.token_hex(4) + ".tmp"
+            with open(temp_path, 'w', encoding='utf-8') as f:
+                yaml.dump(disk_config, f, default_flow_style=False, allow_unicode=True, sort_keys=False)
+            
+            # Use os.replace for atomic overwrite
+            os.replace(temp_path, config_full_path)
+            
+            # 4. Sync our in-memory config to match disk
+            self.config = disk_config
+            return True
+        except Exception as e:
+            print(f"[Core] Error saving config: {e}")
+            return False
 
     async def setup_systems(self):
         """Initialize core sub-systems."""
@@ -356,9 +397,15 @@ class GalacticCore:
         except Exception:
             pass
 
-    async def update_status(self, message: str):
+    async def update_status(self, message: str, percent: float = None):
         """Update the current terminal line in place (progress bar style)."""
-        sys.stdout.write(f"\r\033[K{message}")
+        bar = ""
+        if percent is not None:
+            width = 20
+            filled = int(width * (percent / 100))
+            bar = f" |[\033[92m{'█' * filled}\033[90m{'░' * (width - filled)}\033[0m] {percent:3.0f}%| "
+        
+        sys.stdout.write(f"\r\033[K{bar}{message}")
         sys.stdout.flush()
 
     async def _ensure_firewall_rule(self, port: int):

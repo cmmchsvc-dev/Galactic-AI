@@ -9,7 +9,7 @@ class ShellSkill(GalacticSkill):
     """The 'Hands' of Galactic AI: Executes local shell commands."""
 
     skill_name  = "shell_executor"
-    version     = "1.6.1"
+    version     = "1.6.3"
     author      = "Galactic AI"
     description = "Execute local shell commands (PowerShell)."
     category    = "system"
@@ -18,13 +18,14 @@ class ShellSkill(GalacticSkill):
     def get_tools(self):
         return {
             "exec_shell": {
-                "description": "Execute a shell command (PowerShell on Windows, Bash on Linux). Supports working directory and custom timeout.",
+                "description": "Execute a shell command (PowerShell on Windows, Bash on Linux). Supports working directory, custom timeout, and detached execution.",
                 "parameters": {
                     "type": "object",
                     "properties": {
                         "command": {"type": "string",  "description": "Command to execute."},
                         "cwd":     {"type": "string",  "description": "Optional working directory."},
-                        "timeout": {"type": "integer", "description": "Optional timeout in seconds (default: 120)."}
+                        "timeout": {"type": "integer", "description": "Optional timeout in seconds (default: 120)."},
+                        "detach":  {"type": "boolean", "description": "If true, launches the command in a new process and returns immediately.", "default": False}
                     },
                     "required": ["command"]
                 },
@@ -40,11 +41,12 @@ class ShellSkill(GalacticSkill):
         
         cwd = args.get('cwd') or os.getcwd()
         timeout = int(args.get('timeout', 120))
+        detach = bool(args.get('detach', False))
         
-        return await self.execute(command, cwd=cwd, timeout=timeout)
+        return await self.execute(command, cwd=cwd, timeout=timeout, detach=detach)
 
     # ── Enhanced execute() ───────────────────────────────────────────────────
-    async def execute(self, command, cwd=None, timeout=120):
+    async def execute(self, command, cwd=None, timeout=120, detach=False):
         """Execute a shell command and return the combined output and exit code."""
         try:
             cwd = cwd or os.getcwd()
@@ -62,9 +64,14 @@ class ShellSkill(GalacticSkill):
                 executable,
                 *shell_args,
                 cwd=cwd,
-                stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.PIPE
+                stdout=asyncio.subprocess.PIPE if not detach else None,
+                stderr=asyncio.subprocess.PIPE if not detach else None,
+                creationflags=0x00000008 if (os.name == 'nt' and detach) else 0 # DETACHED_PROCESS
             )
+
+            if detach:
+                await self.core.log(f"🚀 Detached command launched: {command[:50]}...", priority=2)
+                return f"[OK] Detached command launched. Use get_system_health or logs to monitor progress."
 
             try:
                 stdout, stderr = await asyncio.wait_for(
