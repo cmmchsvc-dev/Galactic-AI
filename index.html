@@ -696,6 +696,97 @@
       color: var(--accent2);
     }
 
+    /* ARCADE SECTION */
+    .arcade-section {
+      background: radial-gradient(circle at 50% 50%, #1a0033 0%, var(--bg) 100%);
+      border-top: 1px solid rgba(168, 85, 247, 0.2);
+      border-bottom: 1px solid rgba(168, 85, 247, 0.2);
+      padding: 6rem 2rem;
+      position: relative;
+      overflow: hidden;
+    }
+
+    .arcade-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(340px, 1fr));
+      gap: 2rem;
+      max-width: 1100px;
+      margin: 0 auto;
+    }
+
+    .arcade-card {
+      background: rgba(15, 16, 22, 0.8);
+      border: 2px solid rgba(168, 85, 247, 0.3);
+      border-radius: 20px;
+      padding: 0;
+      overflow: hidden;
+      transition: all 0.4s cubic-bezier(0.175, 0.885, 0.32, 1.275);
+      position: relative;
+      text-decoration: none;
+      color: inherit;
+      display: flex;
+      flex-direction: column;
+    }
+
+    .arcade-card:hover {
+      transform: translateY(-10px) scale(1.02);
+      border-color: var(--accent2);
+      box-shadow: 0 20px 40px rgba(0, 0, 0, 0.6), 0 0 30px rgba(168, 85, 247, 0.4);
+    }
+
+    .arcade-thumb {
+      width: 100%;
+      height: 200px;
+      background: #000;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 4rem;
+      border-bottom: 1px solid var(--border);
+      position: relative;
+    }
+
+    .arcade-thumb::after {
+      content: 'PLAY NOW';
+      position: absolute;
+      bottom: 10px;
+      right: 15px;
+      font-size: 0.7rem;
+      font-weight: 800;
+      letter-spacing: 2px;
+      color: var(--accent2);
+      opacity: 0.7;
+    }
+
+    .arcade-info {
+      padding: 1.5rem;
+    }
+
+    .arcade-info h3 {
+      font-size: 1.25rem;
+      margin-bottom: 0.5rem;
+      color: var(--text);
+    }
+
+    .arcade-info p {
+      font-size: 0.9rem;
+      color: var(--muted);
+      line-height: 1.4;
+    }
+
+    .arcade-badge {
+      display: inline-block;
+      background: rgba(6, 182, 212, 0.15);
+      color: var(--accent3);
+      padding: 2px 8px;
+      border-radius: 4px;
+      font-size: 0.65rem;
+      font-weight: 800;
+      text-transform: uppercase;
+      letter-spacing: 1px;
+      margin-bottom: 0.5rem;
+    }
+
     /* QUICK START */
     .qs-grid {
       display: grid;
@@ -837,7 +928,7 @@
 
   <!-- HERO -->
   <div class="hero">
-    <div class="hero-badge">v1.6.3 — Loop Reset · Hallucination Guards · Fallback Resilience</div>
+    <div class="hero-badge">v1.6.8 — Loop Reset · Hallucination Guards · Fallback Resilience</div>
     <h1>Your AI that actually<br><span class="grad">does everything.</span></h1>
     <p>A local-first AI automation platform with 188+ built-in tools, a dual-brain Strategic Planner, true persistent
       memory (ChromaDB), interruptible Live Voice mode, and advanced vision-based computer use. Runs on your machine. No
@@ -1134,14 +1225,14 @@
         </ul>
       </div>
       <div class="whats-new">
-      <div class="whats-new-label">LATEST IN v1.6.3</div>
-      <ul>
-        <li><strong>Gateway v3</strong>: Maximum reliability & speed</li>
-        <li><strong>Hallucination Guard</strong>: Prevents browser loops</li>
-        <li><strong>Recursive Compaction</strong>: Infinite context memory</li>
-        <li><strong>Ollama Pro</strong>: Enhanced local intelligence</li>
-      </ul>
-    </div>
+        <div class="whats-new-label">LATEST IN v1.6.8</div>
+        <ul>
+          <li><strong>Gateway v3</strong>: Maximum reliability & speed</li>
+          <li><strong>Hallucination Guard</strong>: Prevents browser loops</li>
+          <li><strong>Recursive Compaction</strong>: Infinite context memory</li>
+          <li><strong>Ollama Pro</strong>: Enhanced local intelligence</li>
+        </ul>
+      </div>
       <div class="tool-cat">
         <h4>Dev &amp; Sub-Agents</h4>
         <ul>
@@ -1335,12 +1426,42 @@
     </div>
   </section>
 
+  <!-- ARCADE -->
+  <div class="arcade-section" id="arcade">
+    <div style="text-align:center; margin-bottom: 4rem;">
+      <div class="hero-badge">BUILT BY THE AI</div>
+      <h2 style="font-size: 3rem;">The Galactic Arcade</h2>
+      <p class="section-sub">Proof of capability: These games were coded entirely by Galactic AI sub-agents in a single
+        turn.</p>
+    </div>
+
+    <div class="arcade-grid">
+      <a href="asteroid4.html" class="arcade-card">
+        <div class="arcade-thumb" style="background: linear-gradient(45deg, #000, #1a001a);">🛸</div>
+        <div class="arcade-info">
+          <div class="arcade-badge">Physics Engine</div>
+          <h3>Asteroids: Techno-Hippie</h3>
+          <p>Neon vectors, particle explosions, and smooth inertia. Built with vanilla HTML5 Canvas + JS.</p>
+        </div>
+      </a>
+
+      <a href="pong5.html" class="arcade-card">
+        <div class="arcade-thumb" style="background: linear-gradient(45deg, #050508, #001a1a);">🏓</div>
+        <div class="arcade-info">
+          <div class="arcade-badge">Classic Revived</div>
+          <h3>Neuro-Pong</h3>
+          <p>Dynamic starfields and glow effects. A psychedelic take on the original arcade classic.</p>
+        </div>
+      </a>
+    </div>
+  </div>
+
   <!-- FINAL CTA -->
   <div class="cta-section">
     <h2>Ready to run your own AI?</h2>
     <p>Free. Open source. Runs on your machine. No subscriptions, no cloud lock-in, no data leaks.</p>
     <div class="hero-actions">
-      <a href="https://github.com/cmmchsvc-dev/Galactic-AI/releases/latest" class="btn-primary">Download v1.6.3 Free</a>
+      <a href="https://github.com/cmmchsvc-dev/Galactic-AI/releases/latest" class="btn-primary">Download v1.6.8 Free</a>
       <a href="https://github.com/cmmchsvc-dev/Galactic-AI" class="btn-secondary">View Source on GitHub</a>
     </div>
     <p class="hero-platforms">Windows · macOS · Linux · Chromebook · WSL2</p>
@@ -1348,7 +1469,7 @@
 
   <!-- FOOTER -->
   <footer>
-    <span id="footer-version">⭐ Galactic AI v1.6.3</span>
+    <span id="footer-version">⭐ Galactic AI v1.6.8</span>
     <a href="https://github.com/cmmchsvc-dev/Galactic-AI">GitHub</a>
     <a href="https://github.com/cmmchsvc-dev/Galactic-AI/releases">Releases</a>
     <a href="https://github.com/cmmchsvc-dev/Galactic-AI/blob/main/README.md">Docs</a>
