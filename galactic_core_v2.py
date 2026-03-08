@@ -66,7 +66,7 @@ class GalacticCore:
         config_full_path = os.path.abspath(self.config_path)
         if not os.path.exists(config_full_path):
             config = {
-                'system': {'name': 'Galactic AI', 'version': '1.5.2', 'port': 9999},
+                'system': {'name': 'Galactic AI', 'version': '1.6.0', 'port': 9999},
                 'paths': {'logs': './logs', 'images': './images', 'plugins': './plugins'},
                 'gateway': {'provider': 'placeholder', 'model': 'placeholder'}
             }
@@ -90,7 +90,7 @@ class GalacticCore:
             'aliases':  {},
             'social_media': {
                 'twitter': {'consumer_key': '', 'consumer_secret': '', 'access_token': '', 'access_token_secret': ''},
-                'reddit':  {'client_id': '', 'client_secret': '', 'username': '', 'password': '', 'user_agent': 'GalacticAI/1.5.2'},
+                'reddit':  {'client_id': '', 'client_secret': '', 'username': '', 'password': '', 'user_agent': 'GalacticAI/1.6.0'},
             },
             'chrome_bridge': {'enabled': True, 'timeout': 30},
         }
@@ -106,7 +106,7 @@ class GalacticCore:
                         migrated = True
 
         # Ensure system section has newer keys
-        sys_defaults = {'update_check_interval': 21600, 'version': '1.5.2'}
+        sys_defaults = {'update_check_interval': 21600, 'version': '1.6.0'}
         if 'system' not in config:
             config['system'] = {'name': 'Galactic AI', 'port': 9999}
             config['system'].update(sys_defaults)
@@ -194,11 +194,13 @@ class GalacticCore:
             skill.is_core = is_core
             self.skills.append(skill)
             return skill
-        except ModuleNotFoundError:
-            print(f"[Skill] {class_name} not found — skipping")
+        except ModuleNotFoundError as e:
+            print(f"[Skill] {class_name} missing dependency: {e} — skipping")
             return None
         except Exception as e:
             print(f"[Skill] {class_name} failed to load: {e}")
+            import traceback
+            traceback.print_exc()
             return None
 
     def _read_registry(self):
@@ -241,6 +243,7 @@ class GalacticCore:
             ('skills.core.neural_indexer',   'NeuralIndexer'),
             ('skills.core.forge_sentinel',   'ForgeSentinel'),
             ('skills.core.tensor_context',   'TensorContext'),
+            ('skills.core.reasoning_agent',  'ReasoningAgentSkill'),
         ]
         loaded_skill_names = []
         for module_path, class_name in CORE_SKILLS:
@@ -580,6 +583,15 @@ class GalacticCore:
 ╚═══════════════════════════════════════════════════════════════╝
 """
         def _gradient(text, start_hex, end_hex):
+            # Check for TrueColor support
+            has_truecolor = os.environ.get('COLORTERM') in ('truecolor', '24bit')
+            # Windows Terminal, VS Code, iTerm, etc.
+            is_modern = any(x in os.environ for x in ['WT_SESSION', 'TERM_PROGRAM', 'VSCODE_GIT_IPC_HANDLE'])
+            
+            if not has_truecolor and not is_modern and os.name != 'nt':
+                # Only fallback to flat color if we are fairly sure it's legacy/basic
+                return f"\033[1;36m{text}\033[0m"
+
             start = tuple(int(start_hex[i:i+2], 16) for i in (0, 2, 4))
             end = tuple(int(end_hex[i:i+2], 16) for i in (0, 2, 4))
             lines = text.strip('\n').split('\n')
@@ -602,10 +614,11 @@ class GalacticCore:
         # Try to print with UTF-8 encoding
         try:
             if hasattr(sys.stdout, 'reconfigure'):
-                sys.stdout.reconfigure(encoding='utf-8')
+                sys.stdout.reconfigure(encoding='utf-8', errors='replace')
             print(splash)
         except:
-            print(splash)
+            # Fallback to plain text if UTF-8 fails
+            print("\n" + full_splash.replace("║", "|").replace("═", "=").replace("╔", "+").replace("╗", "+").replace("╚", "+").replace("╝", "+") + "\n")
         await self.log(f"Launching {self.config['system']['name']} v{self.config.get('system',{}).get('version','?')} (Async)...", priority=1)
 
         await self.setup_systems()
