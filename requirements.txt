@@ -43,6 +43,7 @@ pypdf>=5.0.0                 # Modern PDF support (successor to PyPDF2)
 Pillow>=10.4.0               # Image processing (analyze_image tool)
 
 # ─── Memory & ML (Core) ──────────────────────────────────────────────────────
+torch>=2.2.0                 # GPU acceleration support (GPUOffloader)
 chromadb>=0.4.24             # Vector database for long-term memory
 sentence-transformers>=2.2.2 # Embeddings generation
 numpy>=1.26.0                # Numerical processing
