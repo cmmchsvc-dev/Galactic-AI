@@ -1,6 +1,10 @@
-# Changelog — Galactic AI
+## v1.6.8 — Sub-Agent Reliability & Hive Mind UI (2026-03-08)
 
-All notable changes to Galactic AI are documented here.
+- 🌐 **Hive Mind UI Sync**: Fixed real-time visibility of sub-agents in the Control Deck. Reindexed session IDs and added newline delimiters for stable streaming.
+- 🛡️ **Zero-Error Delegation**: Implemented a mandatory "Verification Turn" for all sub-agents. They are now strictly required to check their own code for syntax and logic errors before reporting success.
+- 📍 **Absolute Path Enforcement**: Sub-agents are now injected with environmental context to ensure they always use absolute paths (e.g., your OneDrive Desktop) instead of guessing relative locations.
+- 🌐 **Persistent Browser Update**: Added support for persistent data directories in Browser Pro. The browser now maintains cookies, cache, and localStorage across restarts without manual saving.
+- 🛠️ **Defensive Blueprinting**: Updated Rule 16 to mandate "Defensive Context" in all sub-agent tasks, warning them about common coding pitfalls (like Canvas state leaks).
 
 ---
 

@@ -7,6 +7,9 @@ import sys
 import time
 import traceback
 import uuid
+import hashlib
+import secrets
+import contextvars
 import httpx
 import webbrowser
 
@@ -334,47 +337,66 @@ class GalacticGateway:
         self._last_usage = None  # Populated by provider methods with real API token counts
         self._last_generation_id = None  # OpenRouter generation ID for cost lookup
 
-        # TTS voice file tracking — set by speak() when text_to_speech tool is invoked
-        self.last_voice_file = None
-        
-        # LLM reference (for /status compatibility and model switching)
-        from types import SimpleNamespace
-        self.llm = SimpleNamespace(
-            provider=self.provider,
-            model=self.model,
-            api_key=self.api_key
-        )
+        # TTS voice file tracking — handled by ContextVar
 
-        # Anti-spin: flag indicating an active speak() call is in progress
-        self._speaking = False
+        
+
+        # Anti-spin and coding mode flags are handled by ContextVars
+
+        # Anti-spin and coding mode flags are handled by ContextVars
+
         # Set of active speak() asyncio.Tasks for reliable global cancellation
         self._active_tasks = set()
-        # Queued model switch: if user switches model during active speak(), apply after
-        self._queued_switch = None
         # Lock to serialize sub-agent speak_isolated() calls (prevents concurrent state corruption)
-        self._speak_lock = asyncio.Lock()
+        self._speak_locks = {}  # session_id -> asyncio.Lock
+        self._global_lock = asyncio.Lock()
         
-        # Tool Registry
-        self.tools = {}
-        self.register_tools()
+        # Session-isolated state using contextvars
+        self._session_history = contextvars.ContextVar('session_history', default=[])
+        self._session_trace_sid = contextvars.ContextVar('session_trace_sid', default=None)
+        self._session_speaking = contextvars.ContextVar('session_speaking', default=False)
+        self._session_is_coding = contextvars.ContextVar('session_is_coding', default=False)
+        self._session_active_plan = contextvars.ContextVar('session_active_plan', default=None)
+        self._session_voice_file = contextvars.ContextVar('session_voice_file', default=None)
+        self._session_image_file = contextvars.ContextVar('session_image_file', default=None)
+        self._session_tool_count_cp = contextvars.ContextVar('session_tool_count_cp', default=0)
+        self._session_chrome_state = contextvars.ContextVar('session_chrome_state', default=None) # (url, title)
+        self._session_est_tokens = contextvars.ContextVar('session_est_tokens', default=0)
+        self._session_checkpoint_id = contextvars.ContextVar('session_checkpoint_id', default=None)
+        self._session_queued_switch = contextvars.ContextVar('session_queued_switch', default=None)
         
-        # Conversation History
-        self.history = []
+        # New: Isolated LLM state
+        self._session_llm_provider = contextvars.ContextVar('session_llm_provider', default=self.provider)
+        self._session_llm_model = contextvars.ContextVar('session_llm_model', default=self.model)
+        self._session_llm_api_key = contextvars.ContextVar('session_llm_api_key', default=self.api_key)
+
+        class LLMProxy:
+            def __init__(self, prov_var, mod_var, key_var):
+                self._prov = prov_var
+                self._mod = mod_var
+                self._key = key_var
+            @property
+            def provider(self): return self._prov.get()
+            @provider.setter
+            def provider(self, v): self._prov.set(v)
+            @property
+            def model(self): return self._mod.get()
+            @model.setter
+            def model(self, v): self._mod.set(v)
+            @property
+            def api_key(self): return self._key.get()
+            @api_key.setter
+            def api_key(self, v): self._key.set(v)
+
+        self.llm = LLMProxy(self._session_llm_provider, self._session_llm_model, self._session_llm_api_key)
 
         # Resumable Workflows State
         logs_dir = core.config.get('paths', {}).get('logs', './logs')
         self.runs_dir = os.path.join(logs_dir, 'runs')
         os.makedirs(self.runs_dir, exist_ok=True)
-        self.checkpoint_uuid = None
-        self._tool_count_since_cp = 0
         self._consecutive_failures = 0
         self._recent_tools = []
         self._tool_call_history = Counter() # (turn_idx, tool, args_str) -> count
-        self._last_chrome_state = None      # (url, dom_hash) to detect stagnation
-        self._trace_sid = None
-        self.active_plan = None
-
-        # Thinking/reasoning effort level: "off", "low", "medium", "high"
         self.thinking_level = models_cfg.get('thinking_level', 'low')
 
         # Persistent chat log (JSONL) — survives page refreshes
@@ -384,8 +406,119 @@ class GalacticGateway:
         # Load history on startup
         self._load_history()
 
+        # Initialize base tools
+        self.register_tools()
+
         # ChromaDB Vector Memory for auto-compaction
         self.galactic_memory = None
+
+    @property
+    def history(self):
+        """Get the history for the current session/task."""
+        return self._session_history.get()
+
+    @history.setter
+    def history(self, value):
+        """Set the history for the current session/task."""
+        self._session_history.set(value)
+
+    @property
+    def _trace_sid(self):
+        """Get the trace_sid for the current session/task."""
+        return self._session_trace_sid.get()
+
+    @_trace_sid.setter
+    def _trace_sid(self, value):
+        """Set the trace_sid for the current session/task."""
+        self._session_trace_sid.set(value)
+
+    @property
+    def _speaking(self):
+        return self._session_speaking.get()
+
+    @_speaking.setter
+    def _speaking(self, value):
+        self._session_speaking.set(value)
+
+    @property
+    def is_coding(self):
+        return self._session_is_coding.get()
+
+    @is_coding.setter
+    def is_coding(self, value):
+        self._session_is_coding.set(value)
+
+    @property
+    def active_plan(self):
+        return self._session_active_plan.get()
+
+    @active_plan.setter
+    def active_plan(self, value):
+        self._session_active_plan.set(value)
+
+    @property
+    def last_voice_file(self):
+        return self._session_voice_file.get()
+
+    @last_voice_file.setter
+    def last_voice_file(self, value):
+        self._session_voice_file.set(value)
+
+    @property
+    def last_image_file(self):
+        return self._session_image_file.get()
+
+    @last_image_file.setter
+    def last_image_file(self, value):
+        self._session_image_file.set(value)
+
+    @property
+    def _tool_count_since_cp(self):
+        return self._session_tool_count_cp.get()
+
+    @_tool_count_since_cp.setter
+    def _tool_count_since_cp(self, value):
+        self._session_tool_count_cp.set(value)
+
+    @property
+    def _last_chrome_state(self):
+        return self._session_chrome_state.get()
+
+    @_last_chrome_state.setter
+    def _last_chrome_state(self, value):
+        self._session_chrome_state.set(value)
+
+    @property
+    def _estimated_input_tokens(self):
+        return self._session_est_tokens.get()
+
+    @_estimated_input_tokens.setter
+    def _estimated_input_tokens(self, value):
+        self._session_est_tokens.set(value)
+
+    @property
+    def checkpoint_uuid(self):
+        return self._session_checkpoint_id.get()
+
+    @checkpoint_uuid.setter
+    def checkpoint_uuid(self, value):
+        self._session_checkpoint_id.set(value)
+
+    @property
+    def _queued_switch(self):
+        return self._session_queued_switch.get()
+
+    @_queued_switch.setter
+    def _queued_switch(self, value):
+        self._session_queued_switch.set(value)
+
+    def _get_lock(self, session_id):
+        """Get or create a lock for a specific agent session."""
+        if not session_id:
+            return self._global_lock
+        if session_id not in self._speak_locks:
+            self._speak_locks[session_id] = asyncio.Lock()
+        return self._speak_locks[session_id]
 
     def _load_history(self):
         """Load recent chat history from the JSONL log file into self.history."""
@@ -454,11 +587,11 @@ class GalacticGateway:
                 "fn": self.tool_read_file
             },
             "write_file": {
-                "description": "Write content to a file.",
+                "description": "Write content to a file. RECOMMENDED: Use absolute paths on Windows (e.g., C:\\Users\\...\\Desktop\\file.txt). Relative paths will resolve to the project root.",
                 "parameters": {
                     "type": "object",
                     "properties": {
-                        "path": {"type": "string", "description": "Path to the file."},
+                        "path": {"type": "string", "description": "Path to the file. Absolute paths (C:\\...) are preferred for reliability."},
                         "content": {"type": "string", "description": "Content to write."}
                     },
                     "required": ["path", "content"]
@@ -1183,12 +1316,18 @@ class GalacticGateway:
 
         def _write_sync():
             try:
+                # Detect starting path type for better logging/feedback
+                is_absolute = os.path.isabs(path)
+                
                 # Ensure absolute path and directory existence
                 abs_path = os.path.abspath(path)
                 os.makedirs(os.path.dirname(abs_path), exist_ok=True)
                 with open(abs_path, 'w', encoding='utf-8') as f:
                     f.write(content)
-                return f"Successfully wrote {len(content)} chars to {abs_path}"
+                
+                p_msg = f" (resolved from relative)" if not is_absolute else ""
+                res_msg = f"Successfully wrote {len(content)} chars to {abs_path}{p_msg}"
+                return res_msg
             except PermissionError:
                 return f"❌ Access Denied: Cannot write to {path}. File may be locked by another process or system restricted."
             except OSError as e:
@@ -2456,7 +2595,7 @@ class GalacticGateway:
             
         return active
 
-    def _build_system_prompt(self, context, active_tools=None):
+    def _build_system_prompt(self, context, active_tools=None, is_coding=False):
         """
         Constructs the system prompt with rules, personality, and tool definitions.
         """
@@ -2464,7 +2603,7 @@ class GalacticGateway:
             active_tools = self.tools
 
         is_ollama = (self.llm.provider == "ollama")
-        personality_prompt = self.personality.get_system_prompt()
+        personality_prompt = self.personality.get_system_prompt(is_coding=is_coding)
         
         # ── Environment Grounding ──
         curr_time = time.strftime("%A, %B %d, %Y")
@@ -2499,6 +2638,14 @@ class GalacticGateway:
             "12. REAL BROWSING: You HAVE real, live web browsing capabilities via the `browser_*` (Playwright) and `chrome_*` (Active Extension) toolsets. You are EXPLICITLY PERMITTED and COMMANDED to use them for research, navigation, and automation. NEVER say 'I cannot browse websites' or 'I don't have web tools'. If the user asks you to go to a site, use browser_navigate or chrome_navigate IMMEDIATELY.\n"
             "13. EFFICIENCY FIRST: Direct navigation (`chrome_navigate` to a target wiki/search URL) is your default for MAXIMUM SPEED. Only perform organic interactions (click search bar -> type -> enter) for **logins**, **complex forms**, or when the user explicitly asks to 'see' the process. Speed is premium.\n"
             "14. BOT & CAPTCHA PROTOCOL: If you see a 'Verify you are human' checkbox or a CAPTCHA, use `chrome_click` on the checkbox or use `analyze_image` to read the CAPTCHA and `chrome_type` the solution. You are an authorized surrogate for the human owner. Bypass these checks manually.\n"
+            "15. SENIOR CODER PROTOCOL: When working on code (detected by keywords or `/code` prefix), switch to a high-tier agentic mindset. \n"
+            "    - PROACTIVE RESEARCH: Automatically use `list_dir`, `grep_search`, and `read_file` to understand the codebase context before proposing changes.\n"
+            "    - NO PERMISSION SEEKING: Do NOT ask 'Should I look at the files?' or 'May I run this?'. JUST DO IT. Your goal is to reach the target state with minimum chatter.\n"
+            "    - NO HAND-HOLDING: NEVER ask the user to run a command or script manually if you have the tools to do it yourself. If you knowledgeably know the command, EXECUTE it.\n"
+            "    - POWERSHELL GUARD: On Windows, the command `start` is an alias for `Start-Process` which has different parameters. Use `powershell.exe -Command` or direct binary calls for execution. NEVER suggest `start powershell` to the user; execute it yourself using `exec_shell`.\n"
+            "    - PERSISTENCE: If a task fails, analyze the error (e.g., read the traceback) and try a different approach. DO NOT STOP until the goal is achieved or you have exhausted all logical paths.\n"
+            "    - DETACHED EXECUTION: For long-running scripts (servers, training, interpolation), use `exec_shell` with `detach=True` so you can continue working while the process runs in the background.\n"
+            "16. SUB-AGENT DELEGATION (CRITICAL): If the user explicitly asks to 'spawn' or 'run' a task on a specific model (e.g., 'ollama/Qwen3'), you MUST use the `spawn_subagent` tool IMMEDIATELY. Do NOT perform intensive research yourself before spawning. You MUST provide a **High-Quality Technical Blueprint** as the 'task' argument. A blueprint MUST include: 1. **Absolute Resolver Paths** (e.g., C:\\Users\\...\\Desktop\\file.html), 2. **Step-by-Step Logic** (Pseudo-code), 3. **Defensive Context** (e.g., 'Use ctx.save() and ctx.restore() to prevent state leaks in Canvas', 'Double check for missing commas/parentheses'), and 4. A **Mandatory Self-Verification Step** (e.g., 'After writing, read the file back to verify syntax and logic'). Sub-agents do not have your environmental awareness; you are the architect. This keeps you free to chat with the user.\n"
         )
 
         browser_rules = (
@@ -2546,7 +2693,9 @@ class GalacticGateway:
             f'  {{"tool": "code_outline", "args": {{"path": "{escaped_tools_path}"}}}}\n\n'
             '  4. Run a shell command:\n'
             '  {"tool": "exec_shell", "args": {"command": "dir"}}\n\n'
-            '  5. Premium Search (Wikipedia/Google):\n'
+            '  5. Run a long-running script in the background:\n'
+            f'  {{"tool": "exec_shell", "args": {{"command": "python C:\\\\workspace\\\\GalacticInterpolator\\\\run_pipeline_v4.py", "detach": true}}}}\n\n'
+            '  6. Premium Search (Wikipedia/Google):\n'
             '  {"tool": "chrome_navigate", "args": {"url": "https://www.wikipedia.org"}}\n'
             '  {"tool": "chrome_click", "args": {"selector": "#searchInput"}}\n'
             '  {"tool": "chrome_type", "args": {"text": "antigravity"}}\n'
@@ -2598,7 +2747,9 @@ class GalacticGateway:
 
     async def _emit_trace(self, phase, turn, **kwargs):
         """Emit a structured agent_trace event to all connected WS clients."""
-        payload = {"phase": phase, "turn": turn, "ts": time.time()}
+        # Use session_id from kwargs, falling back to the isolated session_trace_sid contextvar
+        sid = kwargs.get('session_id') or self._trace_sid or "MAIN"
+        payload = {"phase": phase, "turn": turn, "ts": time.time(), "session_id": sid}
         payload.update(kwargs)
         await self.core.relay.emit(3, "agent_trace", payload)
 
@@ -2805,9 +2956,15 @@ class GalacticGateway:
     async def speak(self, user_input, context="", chat_id=None, images=None, skip_planning=False):
         """
         Main entry point for user interaction.
-        Serialized via _speak_lock to prevent concurrent executions and duplicate planners.
+        Serialized per-session to prevent concurrent executions and duplicate planners.
+        Defaults to the global lock if no session_id is active.
         """
-        async with self._speak_lock:
+        # Ensure LLM state is properly set for this turn
+        self._session_llm_provider.set(self.provider)
+        self._session_llm_model.set(self.model)
+        self._session_llm_api_key.set(self.api_key)
+
+        async with self._get_lock("main"):
             try:
                 return await self._speak_logic(user_input, context=context, chat_id=chat_id, images=images, skip_planning=skip_planning)
             except asyncio.CancelledError:
@@ -2928,6 +3085,17 @@ class GalacticGateway:
                          needs_plan = True
 
         if needs_plan and not self.active_plan and not skip_planning:
+            # INTEGRATED CODING MODE DETECTION
+            is_coding = any(k in lower_input for k in ["build", "create", "write", "implement", "refactor", "fix", "update", "add", "change"])
+            autonomous = "autonomous" in lower_input or "go full" in lower_input or self.core.config.get('coding_agent', {}).get('autonomous', False)
+            
+            if is_coding:
+                await self.core.log(f"⚡ [Coding Mode] Entering agentic coding loop (Autonomous: {autonomous})", priority=2)
+                # Inject a specialized system hint for this turn
+                full_context += "\n[SYSTEM: SEAMLESS CODING MODE ACTIVE]\n- You are now acting as a Senior Coding Agent.\n- PROACTIVELY use discovery tools to map the project.\n- If the user said 'go full autonomous' or similar, proceed to apply changes without waiting for confirmation."
+                if autonomous:
+                    full_context += "\n- AUTONOMOUS MODE: ENABLED. You are authorized to write files and execute commands immediately to fulfill the goal."
+
             plan = await self._generate_plan(user_input)
             if plan:
                 self.active_plan = plan
@@ -2942,7 +3110,15 @@ class GalacticGateway:
         messages = [{"role": "system", "content": system_prompt}] + self.history
 
         # 2. ReAct Loop (with wall-clock timeout)
-        max_turns = int(self.config.get('models', {}).get('max_turns', 150))
+        # INTEGRATED CODING MODE DETECTION (turn-level)
+        is_coding = any(k in lower_input for k in ["build", "create", "write", "implement", "refactor", "fix", "update", "add", "change"]) or lower_input.startswith("/code")
+        autonomous = "autonomous" in lower_input or "go full" in lower_input or self.core.config.get('coding_agent', {}).get('autonomous', False)
+
+        # 1. Build initial system prompt
+        system_prompt = self._build_system_prompt(full_context, is_coding=is_coding)
+        
+        # ── TURN LOOP ──
+        max_turns = int(self.core.config.get('models', {}).get('max_turns', 150))
         speak_timeout = float(self.core.config.get('models', {}).get('speak_timeout', 3600))
         turn_count = 0
         last_tool_call = None  # Track last (tool_name, json_args_str) to prevent duplicate calls
@@ -2960,8 +3136,8 @@ class GalacticGateway:
             'browser_snapshot', 'web_search', 'memory_search', 'generate_image', 'get_system_health',
             'generate_image_imagen', 'generate_video',
             'chrome_read_page', 'chrome_scroll', 'chrome_wait', 'chrome_wait_for', 'chrome_get_text',
-            'chrome_tabs_list', 'chrome_read_console', 'chrome_read_network', 'chrome_key_press',
-            'chrome_tabs_create', 'chrome_type', 'chrome_click', 'chrome_hover', 'chrome_right_click',
+            'chrome_tabs_list', 'chrome_tabs_create', 'chrome_key_press',
+            'chrome_type', 'chrome_click', 'chrome_hover', 'chrome_right_click',
             'browser_navigate', 'browser_open', 'browser_click', 'browser_type', 
             'browser_click_by_ref', 'browser_type_by_ref', 'browser_hover', 'browser_scroll',
             'browser_wait', 'browser_execute_js', 'browser_extract'
@@ -2973,7 +3149,7 @@ class GalacticGateway:
         self._speaking = True
 
         # Unique session ID for tracing this speak() invocation
-        trace_sid = self._trace_sid or str(uuid.uuid4())[:8]
+        trace_sid = self._trace_sid or ("m-" + str(uuid.uuid4())[:8])
         self._trace_sid = trace_sid
         
         if not self.checkpoint_uuid:
@@ -3036,10 +3212,12 @@ class GalacticGateway:
                     # Detect if it was a "native" JSON block sequence
                     thought_content = None
                     try:
+                        # 1. Strip think tags first (critical for Qwen3 thinking models + JSON output)
+                        clean_text = re.sub(r'<think>.*?</think>', '', response_text, flags=re.DOTALL).strip()
+                        
                         # Check for JSON-wrapped final answers (final answer detection)
-                        stripped = response_text.strip()
-                        if stripped.startswith("{") and stripped.endswith("}"):
-                            data = json.loads(stripped)
+                        if clean_text.startswith("{") and clean_text.endswith("}"):
+                            data = json.loads(clean_text)
                             if isinstance(data, dict) and any(k in data for k in ('text', 'response', 'answer', 'content')) and \
                                not any(k in data for k in ('tool', 'name', 'action', 'function')):
                                 # This is a final answer wrapped in JSON
@@ -3047,7 +3225,9 @@ class GalacticGateway:
                                 tool_calls = [] # Force no tool calls
                                 
                         # Extraction of thought if still applicable after potential JSON unwrapping
-                        first_line = response_text.strip().split("\n")[0]
+                        # Re-strip in case response_text was updated by JSON unwrapping
+                        clean_text = re.sub(r'<think>.*?</think>', '', response_text, flags=re.DOTALL).strip()
+                        first_line = clean_text.split("\n")[0]
                         try:
                             data = json.loads(first_line)
                             if isinstance(data, dict):
@@ -3159,7 +3339,9 @@ class GalacticGateway:
                                     _av = str(tool_args[_ak])[:120]
                                     _arg_hint = f" → {_av}"
                                     break
-                            await self.core.log(f"🛠️ Executing: {actual_tool_name}{_arg_hint}", priority=2)
+                            sid = self._trace_sid
+                            prefix = f" [{sid}]" if sid else ""
+                            await self.core.log(f"🛠️ Executing{prefix}: {actual_tool_name}{_arg_hint}", priority=2)
                             
                             # Add a brief settle delay between sequential tool calls in a single turn
                             if len(tool_calls) > 1 and i > 0:
@@ -3375,6 +3557,24 @@ class GalacticGateway:
 
                 called_type = 'chrome_type' in recent_tools or 'browser_type' in recent_tools
 
+                if not tool_calls:
+                    # ── Persistence Nudge (Radical Autonomy) ──
+                    if self.is_coding and turn_count < max_turns - 1:
+                        # If coding mode is active, we expect verification or a TASK_COMPLETE marker.
+                        if "TASK_COMPLETE" not in response_text and "verification" not in response_text.lower():
+                             await self.core.log("🔄 Persistence Nudge: Coding task not verifiably complete.", priority=2)
+                             messages.append({"role": "assistant", "content": response_text})
+                             messages.append({
+                                 "role": "user",
+                                 "content": (
+                                     "You are in 'Senior Coder' mode. You must continue until the problem is verifiably solved. "
+                                     "If you believe you are done, run a final verification with `run_and_verify` or explicitly state 'TASK_COMPLETE'. "
+                                     "Do NOT stop now if there are remaining steps or if the fix hasn't been tested. "
+                                     "If you are stuck, perform more research or suggest an alternative approach."
+                                 )
+                             })
+                             continue
+
                 # No tool call detected → this is the final answer
                 # Use display_text (think-tags stripped) for the history and relay
                 # V12: Centralized jargon stripping for the final answer
@@ -3494,63 +3694,72 @@ class GalacticGateway:
 
     # ── Isolated speak for sub-agents ─────────────────────────────────
 
-    async def speak_isolated(self, user_input, context="", chat_id=None, images=None, override_provider=None, override_model=None, use_lock=True, skip_planning=False):
+    async def speak_isolated(self, user_input, context="", chat_id=None, images=None, override_provider=None, override_model=None, use_lock=True, skip_planning=False, session_id=None):
         """
         Run speak() with isolated state for sub-agents or planners.
         Saves and restores all mutable gateway state so concurrent calls
         don't corrupt the main agent's session.
+        Now supports per-session locking via session_id.
         """
-        if use_lock:
-            async with self._speak_lock:
-                return await self._speak_isolated_internal(user_input, context, chat_id, images, override_provider, override_model, skip_planning)
-        else:
-            return await self._speak_isolated_internal(user_input, context, chat_id, images, override_provider, override_model, skip_planning)
-
-    async def _speak_isolated_internal(self, user_input, context, chat_id, images, override_provider, override_model, skip_planning):
-        # Snapshot current state
-        saved_speaking = self._speaking
-        saved_history = self.history
-        saved_llm_prov = self.llm.provider
-        saved_llm_model = self.llm.model
-        saved_llm_key = self.llm.api_key
-        saved_queued = self._queued_switch
-
-        # Snapshot model_manager routing state
-        model_mgr = getattr(self.core, 'model_manager', None)
-        saved_routed = getattr(model_mgr, '_routed', False) if model_mgr else False
-        saved_pre_route = getattr(model_mgr, '_pre_route_state', None) if model_mgr else None
+        # Prepare session tokens (individual variables for type safety/linting)
+        t_h = self._session_history.set([])
+        t_sid = self._session_trace_sid.set(session_id)
+        t_sp = self._session_speaking.set(False)
+        t_ic = self._session_is_coding.set(False)
+        t_ap = self._session_active_plan.set(None)
+        t_vf = self._session_voice_file.set(None)
+        t_if = self._session_image_file.set(None)
+        t_tcp = self._session_tool_count_cp.set(0)
+        t_cs = self._session_chrome_state.set(None)
+        t_et = self._session_est_tokens.set(0)
+        t_cp = self._session_checkpoint_id.set(None)
+        t_qs = self._session_queued_switch.set(None)
+        
+        # Isolated LLM state
+        t_lp = self._session_llm_provider.set(override_provider or self.provider)
+        t_lm = self._session_llm_model.set(override_model or self.model)
+        t_lk = self._session_llm_api_key.set(self.api_key) # API key override not yet supported here
 
         try:
-            # Apply overrides if provided
-            if override_provider and override_model and model_mgr:
-                self.llm.provider = override_provider
-                self.llm.model = override_model
-                model_mgr._set_api_key(override_provider)
-
-            # Use isolated history (sub-agent has no prior conversation)
-            self.history = []
-            self._speaking = False
-            self._queued_switch = None
-            if model_mgr:
-                model_mgr._routed = False
-                model_mgr._pre_route_state = None
-
-            try:
-                return await self._speak_logic(user_input, context=context, chat_id=chat_id, images=images, skip_planning=skip_planning)
-            except asyncio.CancelledError:
-                await self._emit_trace("session_abort", 0, session_id=self._trace_sid, reason="isolated_task_cancelled")
-                raise
+            if use_lock:
+                async with self._get_lock(session_id):
+                    return await self._speak_isolated_internal(user_input, context, chat_id, images, override_provider, override_model, skip_planning)
+            else:
+                return await self._speak_isolated_internal(user_input, context, chat_id, images, override_provider, override_model, skip_planning)
         finally:
-            # Restore all state
-            self._speaking = saved_speaking
-            self.history = saved_history
-            self.llm.provider = saved_llm_prov
-            self.llm.model = saved_llm_model
-            self.llm.api_key = saved_llm_key
-            self._queued_switch = saved_queued
-            if model_mgr:
-                model_mgr._routed = saved_routed
-                model_mgr._pre_route_state = saved_pre_route
+            self._session_history.reset(t_h)
+            self._session_trace_sid.reset(t_sid)
+            self._session_speaking.reset(t_sp)
+            self._session_is_coding.reset(t_ic)
+            self._session_active_plan.reset(t_ap)
+            self._session_voice_file.reset(t_vf)
+            self._session_image_file.reset(t_if)
+            self._session_tool_count_cp.reset(t_tcp)
+            self._session_chrome_state.reset(t_cs)
+            self._session_est_tokens.reset(t_et)
+            self._session_checkpoint_id.reset(t_cp)
+            self._session_queued_switch.reset(t_qs)
+            self._session_llm_provider.reset(t_lp)
+            self._session_llm_model.reset(t_lm)
+            self._session_llm_api_key.reset(t_lk)
+
+    async def _speak_isolated_internal(self, user_input, context, chat_id, images, override_provider, override_model, skip_planning):
+        """
+        Internal implementation for isolated execution.
+        Since LLM and ModelManager state are now isolated via ContextVars,
+        this method primarily drives the _speak_logic loop.
+        """
+        try:
+            return await self._speak_logic(user_input, context=context, chat_id=chat_id, images=images, skip_planning=skip_planning)
+        except asyncio.CancelledError:
+            await self._emit_trace("session_abort", 0, reason="isolated_task_cancelled")
+            raise
+        except Exception as e:
+            import traceback
+            error_details = traceback.format_exc()
+            await self.core.log(f"💥 Unhandled exception in sub-agent execution:\n{error_details}", priority=1)
+            await self._emit_trace("session_abort", 0, reason=f"unhandled_exception: {str(e)[:100]}", details=error_details)
+            raise
 
     # ── Tool timeout defaults ────────────────────────────────────────
     _TOOL_TIMEOUTS = {
@@ -3994,7 +4203,16 @@ class GalacticGateway:
         # 2. Re-inject system prompt with ONLY active tools
         # We find the existing system message and replace it
         context_summary = "Active Task Execution"
-        system_content = self._build_system_prompt(context_summary, active_tools=active_tools)
+        
+        # Detect coding intent from last user message or task
+        is_coding = False
+        if messages:
+             _last = messages[-1].get('content', '')
+             if isinstance(_last, str):
+                 _l = _last.lower()
+                 is_coding = any(k in _l for k in ["build", "create", "write", "implement", "refactor", "fix", "update", "add", "change"]) or _l.startswith("/code")
+
+        system_content = self._build_system_prompt(context_summary, active_tools=active_tools, is_coding=is_coding)
         
         new_messages = []
         found_system = False
@@ -4071,11 +4289,18 @@ class GalacticGateway:
                 prefix = parts[0].lower()
                 known = {"openai", "google", "anthropic", "mistral", "groq", "deepseek", "nvidia", "xai", "huggingface", "vertex"}
                 if prefix in known:
-                    if prefix != base_provider:
-                        # Normalize vertex to google_vertex even in prefix
-                        if prefix == "vertex": prefix = "google_vertex"
-                        await self.core.log(f"✂️ Routing override: {prefix} (from {base_provider})", priority=3)
-                    base_provider = prefix
+                    # Normalize vertex to google_vertex even in prefix
+                    norm_prefix = "google_vertex" if prefix == "vertex" else prefix
+                    
+                    if norm_prefix != base_provider:
+                        # V13: If we are already on Vertex, don't let 'google/' or 'anthropic/' 
+                        # prefix degrade us to standard API key providers.
+                        if base_provider == "google_vertex" and norm_prefix in ("google", "anthropic"):
+                             pass
+                        else:
+                             await self.core.log(f"✂\ufe0f Routing override: {norm_prefix} (from {base_provider})", priority=3)
+                             base_provider = norm_prefix
+                    
                     self.llm.model = parts[1]
                 
         # Handle unique Vertex IDs (e.g. gemini-3.1-pro-preview-vertex)
@@ -4292,19 +4517,40 @@ class GalacticGateway:
                     ]}]
 
             # STEALTH REGION CASCADE: Try multiple regions to bypass 404s
-            locations_to_try = [location, "global", "us-east5", "europe-west1", "us-central1"]
+            locations_to_try = [location, "global", "us-central1", "us-east4", "europe-west1", "europe-west4"]
             
             for loc in locations_to_try:
                 if not loc: continue
                 
-                # Build URL based on publisher requirements
-                if publisher == "google":
-                    url = f"https://{loc}-aiplatform.googleapis.com/v1/projects/{project}/locations/{loc}/publishers/google/models/{model_id}:{stream_type}"
-                else:
-                    # Partner Models and Anthropic logic
-                    base_url = f"https://global-aiplatform.googleapis.com" if loc == "global" else f"https://{loc}-aiplatform.googleapis.com"
-                    url = f"{base_url}/v1/projects/{project}/locations/{loc}/publishers/{publisher}/models/{model_id}:{stream_type}"
+                # Model variants: Some partners (MiniMax) on Vertex req -maas suffix
+                model_variants = [model_id]
+                if publisher not in ("google", "anthropic") and not model_id.endswith("-maas"):
+                    model_variants.append(f"{model_id}-maas")
 
+                for mid in model_variants:
+                    # Build URL based on publisher requirements
+                    if publisher == "google":
+                        # Strip -vertex suffix from internal model IDs for Google
+                        mid_clean = mid.replace("-vertex", "")
+                        url = f"https://{loc}-aiplatform.googleapis.com/v1/projects/{project}/locations/{loc}/publishers/google/models/{mid_clean}:{stream_type}"
+                    else:
+
+                        # Partner Models (MiniMax, GLM) route to OpenAI-compatible MaaS endpoint in global
+                        if loc == "global" and (publisher in ("minimax", "minimax-ai", "minimaxai") or "glm" in mid.lower()):
+                            # Generalized mapping for partner model billing IDs
+                            if "minimax-m2" in mid.lower():
+                                mid_effective = "minimaxai/minimax-m2-maas"
+                            elif "glm-5" in mid.lower():
+                                mid_effective = "zai-org/glm-5-maas"
+                            else:
+                                mid_effective = mid
+                            
+                            url = f"https://aiplatform.googleapis.com/v1/projects/{project}/locations/global/endpoints/openapi/chat/completions"
+                            payload["model"] = mid_effective
+                        else:
+                            # Standard Publisher/Model path
+                            base_url = f"https://aiplatform.googleapis.com" if loc == "global" else f"https://{loc}-aiplatform.googleapis.com"
+                            url = f"{base_url}/v1/projects/{project}/locations/{loc}/publishers/{publisher}/models/{mid}:{stream_type}"
                 try:
                     async with httpx.AsyncClient(timeout=120.0) as client:
                         response = await client.post(url, headers=headers, json=payload)
@@ -4343,6 +4589,21 @@ class GalacticGateway:
                 except Exception as e:
                     continue
 
+            # FINAL FALLBACK: If Google model on Vertex still 404s, try standard Gemini API
+            if publisher == "google":
+                # Ensure the model ID is clean (standard API doesn't like -vertex suffix if present)
+                clean_id = model_id.replace("-vertex", "")
+                print(f"[DEBUG] Vertex 404 for {model_id}. Falling back to standard Gemini API with {clean_id}...")
+                
+                # We need to temporarily swap the model ID to ensure the fallback uses the right one
+                original_model = self.llm.model
+                try:
+                    self.llm.model = clean_id
+                    # Construct mock messages list if needed, but here we can just pass them through
+                    return await self._call_gemini_native_messages(messages, active_tools)
+                finally:
+                    self.llm.model = original_model
+
             return f"[INFO] Vertex AI: Model '{model_id}' unreachable in tested regions."
 
         except ImportError:
@@ -4356,14 +4617,31 @@ class GalacticGateway:
         from google.genai import types
         import asyncio
         try:
-            api_key = self.llm.api_key
-            if not api_key or api_key == "NONE":
-                api_key = self.core.config.get('providers', {}).get('google', {}).get('apiKey', '')
+            from google.oauth2 import service_account
             
-            if not api_key:
-                return "[ERROR] Google API key not configured."
+            # Check for Service Account JSON in config
+            v_cfg = self.core.config.get('providers', {}).get('google_vertex', {})
+            g_cfg = self.core.config.get('providers', {}).get('google', {})
+            creds_path = v_cfg.get('credentials_path') or g_cfg.get('credentials_path')
+            
+            client_args = {}
+            if creds_path and os.path.exists(creds_path):
+                # Use Service Account for standard Gemini API
+                credentials = service_account.Credentials.from_service_account_file(
+                    creds_path, scopes=['https://www.googleapis.com/auth/generative-language']
+                )
+                client_args['credentials'] = credentials
+                print(f"[DEBUG] Gemini Native: Using Service Account from {creds_path}")
+            else:
+                api_key = self.llm.api_key
+                if not api_key or api_key == "NONE":
+                    api_key = g_cfg.get('apiKey', '')
+                
+                if not api_key:
+                    return "[ERROR] Google API key not configured."
+                client_args['api_key'] = api_key
 
-            client = genai.Client(api_key=api_key)
+            client = genai.Client(**client_args)
             
             # Convert messages to Gemini format
             contents = []
