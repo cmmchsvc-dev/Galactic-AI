@@ -1,0 +1,418 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Galactic Drifter</title>
+    <style>
+        body,
+        html {
+            margin: 0;
+            padding: 0;
+            width: 100%;
+            height: 100%;
+            overflow: hidden;
+            background-color: #000000;
+            font-family: 'Courier New', monospace;
+        }
+
+        canvas {
+            display: block;
+        }
+
+        #gameContainer {
+            position: relative;
+            width: 100vw;
+            height: 100vh;
+        }
+
+        #hud {
+            position: absolute;
+            top: 10px;
+            left: 10px;
+            color: #00ffff;
+            font-size: 18px;
+            text-shadow: 0 0 5px #00ffff;
+        }
+    </style>
+</head>
+
+<body>
+    <div id="gameContainer">
+        <canvas id="gameCanvas"></canvas>
+        <div id="hud">
+            <div>Score: <span id="score">0</span></div>
+            <div>Speed: <span id="speed">0</span></div>
+        </div>
+    </div>
+
+    <script>
+        // Game variables
+        const canvas = document.getElementById('gameCanvas');
+        const ctx = canvas.getContext('2d');
+        const hudScore = document.getElementById('score');
+        const hudSpeed = document.getElementById('speed');
+
+        // Set canvas to full window size
+        canvas.width = window.innerWidth;
+        canvas.height = window.innerHeight;
+
+        // Game state
+        let score = 0;
+        let speed = 0;
+        let gameRunning = true;
+
+        // Player object
+        const player = {
+            x: 100,
+            y: canvas.height / 2,
+            width: 60,
+            height: 30,
+            color: '#00ffff',
+            boostActive: false,
+            boostCooldown: 0
+        };
+
+        // Key states
+        const keys = {
+            ArrowUp: false,
+            ArrowDown: false,
+            w: false,
+            s: false,
+            ' ': false // Spacebar
+        };
+
+        // Starfield layers
+        const layers = [
+            { stars: [], speed: 0.5 },
+            { stars: [], speed: 1 },
+            { stars: [], speed: 2 }
+        ];
+
+        // Enemies array
+        let enemies = [];
+
+        // Trail particles for boost effect
+        let trails = [];
+
+        // Initialize starfield
+        function initStarfield() {
+            for (let i = 0; i < 200; i++) {
+                layers[0].stars.push({
+                    x: Math.random() * canvas.width,
+                    y: Math.random() * canvas.height,
+                    size: Math.random() * 1 + 0.5
+                });
+            }
+
+            for (let i = 0; i < 150; i++) {
+                layers[1].stars.push({
+                    x: Math.random() * canvas.width,
+                    y: Math.random() * canvas.height,
+                    size: Math.random() * 2 + 1
+                });
+            }
+
+            for (let i = 0; i < 100; i++) {
+                layers[2].stars.push({
+                    x: Math.random() * canvas.width,
+                    y: Math.random() * canvas.height,
+                    size: Math.random() * 3 + 2
+                });
+            }
+        }
+
+        // Create a simple truck shape
+        function drawTruck(x, y, width, height, color) {
+            ctx.save();
+            ctx.fillStyle = color;
+
+            // Truck body
+            ctx.beginPath();
+            ctx.moveTo(x, y + height);
+            ctx.lineTo(x + width, y + height);
+            ctx.lineTo(x + width - 10, y);
+            ctx.lineTo(x + 10, y);
+            ctx.closePath();
+            ctx.fill();
+
+            // Truck cabin
+            ctx.beginPath();
+            ctx.moveTo(x + 15, y);
+            ctx.lineTo(x + width - 20, y);
+            ctx.lineTo(x + width - 10, y + 15);
+            ctx.lineTo(x + 20, y + 15);
+            ctx.closePath();
+            ctx.fill();
+
+            // Wheels
+            ctx.beginPath();
+            ctx.arc(x + 15, y + height, 8, 0, Math.PI * 2);
+            ctx.fill();
+
+            ctx.beginPath();
+            ctx.arc(x + width - 15, y + height, 8, 0, Math.PI * 2);
+            ctx.fill();
+
+            // Glasspack exhaust effect
+            if (player.boostActive) {
+                ctx.beginPath();
+                ctx.moveTo(x + width - 10, y + height);
+                ctx.lineTo(x + width + 20, y + height + 15);
+                ctx.strokeStyle = '#ff00ff';
+                ctx.lineWidth = 3;
+                ctx.stroke();
+            }
+
+            ctx.restore();
+        }
+
+        // Draw a simple asteroid
+        function drawAsteroid(x, y, size, color) {
+            ctx.save();
+            ctx.fillStyle = color;
+
+            // Simple irregular shape
+            ctx.beginPath();
+            ctx.arc(x, y, size, 0, Math.PI * 2);
+            ctx.fill();
+
+            ctx.restore();
+        }
+
+        // Draw a geometric hazard
+        function drawHazard(x, y, size, color) {
+            ctx.save();
+            ctx.fillStyle = color;
+
+            // Hexagon shape
+            ctx.beginPath();
+            for (let i = 0; i < 6; i++) {
+                const angle = (i * Math.PI / 3);
+                const px = x + size * Math.cos(angle);
+                const py = y + size * Math.sin(angle);
+                if (i === 0) {
+                    ctx.moveTo(px, py);
+                } else {
+                    ctx.lineTo(px, py);
+                }
+            }
+            ctx.closePath();
+            ctx.fill();
+
+            ctx.restore();
+        }
+
+        // Draw a star
+        function drawStar(x, y, size, color) {
+            ctx.save();
+            ctx.fillStyle = color;
+
+            ctx.beginPath();
+            ctx.arc(x, y, size, 0, Math.PI * 2);
+            ctx.fill();
+
+            ctx.restore();
+        }
+
+        // Update starfield
+        function updateStarfield() {
+            for (let i = 0; i < layers.length; i++) {
+                const layer = layers[i];
+                for (let j = 0; j < layer.stars.length; j++) {
+                    const star = layer.stars[j];
+                    star.x -= layer.speed;
+
+                    // Reset stars that go off screen
+                    if (star.x < -10) {
+                        star.x = canvas.width + 10;
+                        star.y = Math.random() * canvas.height;
+                    }
+                }
+            }
+        }
+
+        // Update player position
+        function updatePlayer() {
+            // Handle vertical movement
+            if (keys.ArrowUp || keys.w) {
+                player.y -= 5;
+            }
+            if (keys.ArrowDown || keys.s) {
+                player.y += 5;
+            }
+
+            // Keep player on screen
+            if (player.y < 0) player.y = 0;
+            if (player.y > canvas.height - player.height) player.y = canvas.height - player.height;
+
+            // Handle boost
+            if (keys[' ']) {
+                if (player.boostCooldown <= 0) {
+                    player.boostActive = true;
+                    player.boostCooldown = 30; // Cooldown period
+                }
+            } else {
+                player.boostActive = false;
+            }
+
+            // Update boost cooldown
+            if (player.boostCooldown > 0) {
+                player.boostCooldown--;
+            }
+        }
+
+        // Create a new enemy
+        function createEnemy() {
+            const type = Math.random();
+            let enemy = {};
+
+            if (type < 0.5) {
+                // Asteroid
+                enemy.type = 'asteroid';
+                enemy.x = canvas.width + 20;
+                enemy.y = Math.random() * canvas.height;
+                enemy.size = Math.random() * 15 + 10;
+                enemy.speed = Math.random() * 2 + 1;
+                enemy.color = '#888888';
+            } else {
+                // Geometric hazard
+                enemy.type = 'hazard';
+                enemy.x = canvas.width + 20;
+                enemy.y = Math.random() * canvas.height;
+                enemy.size = Math.random() * 15 + 10;
+                enemy.speed = Math.random() * 2 + 1;
+                enemy.color = '#ffff00';
+            }
+
+            enemies.push(enemy);
+        }
+
+        // Update enemies
+        function updateEnemies() {
+            for (let i = enemies.length - 1; i >= 0; i--) {
+                const enemy = enemies[i];
+
+                // Move enemy to the left
+                enemy.x -= enemy.speed;
+
+                // Remove enemies that go off screen
+                if (enemy.x < -50) {
+                    enemies.splice(i, 1);
+                    score += 10;
+                }
+            }
+        }
+
+        // Create trail particles for boost effect
+        function createTrail() {
+            if (!player.boostActive) return;
+
+            const trail = {
+                x: player.x + player.width - 10,
+                y: player.y + player.height / 2,
+                size: Math.random() * 5 + 2,
+                color: '#ff00ff'
+            };
+
+            trails.push(trail);
+        }
+
+        // Update trail particles
+        function updateTrails() {
+            for (let i = trails.length - 1; i >= 0; i--) {
+                const trail = trails[i];
+                trail.x -= 5;
+                trail.size *= 0.95;
+
+                if (trail.size < 0.5) {
+                    trails.splice(i, 1);
+                }
+            }
+        }
+
+        // Draw everything
+        function draw() {
+            // Clear canvas with dark space background
+            ctx.fillStyle = '#000000';
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+            // Draw starfield
+            for (let i = 0; i < layers.length; i++) {
+                const layer = layers[i];
+                for (let j = 0; j < layer.stars.length; j++) {
+                    const star = layer.stars[j];
+                    drawStar(star.x, star.y, star.size, '#ffffff');
+                }
+            }
+
+            // Draw player truck
+            drawTruck(player.x, player.y, player.width, player.height, player.color);
+
+            // Draw enemies
+            for (let i = 0; i < enemies.length; i++) {
+                const enemy = enemies[i];
+                if (enemy.type === 'asteroid') {
+                    drawAsteroid(enemy.x, enemy.y, enemy.size, enemy.color);
+                } else {
+                    drawHazard(enemy.x, enemy.y, enemy.size, enemy.color);
+                }
+            }
+
+            // Draw trail particles
+            for (let i = 0; i < trails.length; i++) {
+                const trail = trails[i];
+                drawStar(trail.x, trail.y, trail.size, trail.color);
+            }
+
+            // Update HUD
+            hudScore.textContent = score;
+            hudSpeed.textContent = Math.floor(speed);
+        }
+
+        // Game loop
+        function gameLoop() {
+            if (!gameRunning) return;
+
+            updateStarfield();
+            updatePlayer();
+            updateEnemies();
+            updateTrails();
+            createTrail();
+            draw();
+
+            // Create new enemies
+            if (Math.random() < 0.02) {
+                createEnemy();
+            }
+
+            requestAnimationFrame(gameLoop);
+        }
+
+        // Handle key events
+        window.addEventListener('keydown', function (e) {
+            if (keys.hasOwnProperty(e.key)) {
+                keys[e.key] = true;
+            }
+        });
+
+        window.addEventListener('keyup', function (e) {
+            if (keys.hasOwnProperty(e.key)) {
+                keys[e.key] = false;
+            }
+        });
+
+        // Handle window resize
+        window.addEventListener('resize', function () {
+            canvas.width = window.innerWidth;
+            canvas.height = window.innerHeight;
+        });
+
+        // Initialize and start game
+        initStarfield();
+        gameLoop();
+    </script>
+</body>
+
+</html>
