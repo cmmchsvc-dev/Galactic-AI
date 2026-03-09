@@ -1,0 +1,375 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Cosmic Drift - Major Upgrade</title>
+    <style>
+        body {
+            margin: 0;
+            padding: 0;
+            overflow: hidden;
+            background-color: #000;
+            font-family: 'Courier New', monospace;
+            user-select: none;
+        }
+
+        canvas {
+            display: block;
+            width: 100vw;
+            height: 100vh;
+        }
+
+        #ui-overlay {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            background: rgba(0, 0, 0, 0.8);
+            color: #ff3333;
+            z-index: 100;
+            cursor: pointer;
+        }
+
+        #ui-overlay h1 {
+            font-size: 3em;
+            text-shadow: 0 0 10px #f00;
+        }
+    </style>
+</head>
+
+<body>
+    <div id="ui-overlay">
+        <h1>CLICK TO ENGAGE</h1>
+    </div>
+    <canvas id="gameCanvas"></canvas>
+
+    <script>
+        let canvas, ctx, dpr = 1;
+        let audioCtx;
+
+        function initCanvas() {
+            canvas = document.getElementById('gameCanvas');
+            ctx = canvas.getContext('2d');
+            dpr = window.devicePixelRatio || 1;
+            canvas.width = window.innerWidth * dpr;
+            canvas.height = window.innerHeight * dpr;
+            if (vessel.x === 0 && vessel.y === 0) {
+                vessel.x = window.innerWidth / 2;
+                vessel.y = window.innerHeight / 2;
+            }
+        }
+
+        const vessel = {
+            x: 0, y: 0,
+            radius: 15,
+            rotation: 0,
+            thrust: false,
+            velocity: { x: 0, y: 0 },
+            drag: 0.98,
+            shield: 100,
+            color: '#00F0FF',
+            lastShot: 0,
+            shootDelay: 150
+        };
+
+        const stars = [];
+        const particles = []; // Particle Engine
+        const bullets = [];
+        const enemies = [];
+        const mouse = { x: 0, y: 0, down: false };
+        const keysDown = {};
+        let score = 0;
+        let gameActive = false;
+
+        // --- Audio Engine ---
+        function playLaser() {
+            if (!audioCtx) return;
+            const osc = audioCtx.createOscillator();
+            const gain = audioCtx.createGain();
+            osc.type = 'square';
+            osc.frequency.setValueAtTime(880, audioCtx.currentTime);
+            osc.frequency.exponentialRampToValueAtTime(100, audioCtx.currentTime + 0.1);
+            gain.gain.setValueAtTime(0.1, audioCtx.currentTime);
+            gain.gain.exponentialRampToValueAtTime(0.01, audioCtx.currentTime + 0.1);
+            osc.connect(gain);
+            gain.connect(audioCtx.destination);
+            osc.start();
+            osc.stop(audioCtx.currentTime + 0.1);
+        }
+
+        function playExplosion() {
+            if (!audioCtx) return;
+            const bufferSize = audioCtx.sampleRate * 0.2;
+            const buffer = audioCtx.createBuffer(1, bufferSize, audioCtx.sampleRate);
+            const data = buffer.getChannelData(0);
+            for (let i = 0; i < bufferSize; i++) data[i] = Math.random() * 2 - 1;
+            const noise = audioCtx.createBufferSource();
+            noise.buffer = buffer;
+            const filter = audioCtx.createBiquadFilter();
+            filter.type = 'lowpass';
+            filter.frequency.setValueAtTime(1000, audioCtx.currentTime);
+            filter.frequency.exponentialRampToValueAtTime(100, audioCtx.currentTime + 0.2);
+            const gain = audioCtx.createGain();
+            gain.gain.setValueAtTime(0.3, audioCtx.currentTime);
+            gain.gain.exponentialRampToValueAtTime(0.01, audioCtx.currentTime + 0.2);
+            noise.connect(filter);
+            filter.connect(gain);
+            gain.connect(audioCtx.destination);
+            noise.start();
+        }
+
+        let thrustOsc, thrustGain;
+        function updateThrusterSound() {
+            if (!audioCtx) return;
+            if (vessel.thrust && !thrustOsc) {
+                thrustOsc = audioCtx.createOscillator();
+                thrustGain = audioCtx.createGain();
+                thrustOsc.type = 'sine';
+                thrustOsc.frequency.setValueAtTime(55, audioCtx.currentTime);
+                thrustGain.gain.setValueAtTime(0, audioCtx.currentTime);
+                thrustGain.gain.linearRampToValueAtTime(0.1, audioCtx.currentTime + 0.1);
+                thrustOsc.connect(thrustGain);
+                thrustGain.connect(audioCtx.destination);
+                thrustOsc.start();
+            } else if (!vessel.thrust && thrustOsc) {
+                thrustGain.gain.linearRampToValueAtTime(0, audioCtx.currentTime + 0.1);
+                thrustOsc.stop(audioCtx.currentTime + 0.2);
+                thrustOsc = null;
+            }
+        }
+
+        function initStars() {
+            for (let i = 0; i < 300; i++) {
+                stars.push({
+                    x: Math.random() * window.innerWidth,
+                    y: Math.random() * window.innerHeight,
+                    size: Math.random() * 2,
+                    speed: 0.1 + Math.random() * 0.4, // Parallax layers
+                    layer: Math.random() > 0.7 ? 2 : (Math.random() > 0.4 ? 1 : 0)
+                });
+            }
+        }
+
+        function update() {
+            if (!gameActive) return;
+
+            vessel.rotation = Math.atan2(mouse.y - vessel.y, mouse.x - vessel.x);
+
+            if (keysDown['w'] || keysDown['W'] || keysDown['ArrowUp']) {
+                vessel.thrust = true;
+                vessel.velocity.x += Math.cos(vessel.rotation) * 0.3;
+                vessel.velocity.y += Math.sin(vessel.rotation) * 0.3;
+
+                // Spawn particles behind ship
+                particles.push({
+                    x: vessel.x - Math.cos(vessel.rotation) * 15,
+                    y: vessel.y - Math.sin(vessel.rotation) * 15,
+                    vx: -Math.cos(vessel.rotation) * 2 + (Math.random() - 0.5),
+                    vy: -Math.sin(vessel.rotation) * 2 + (Math.random() - 0.5),
+                    life: 20,
+                    size: Math.random() * 4 + 2,
+                    color: '#FF6600'
+                });
+            } else { vessel.thrust = false; }
+
+            // Update Particles
+            for (let i = particles.length - 1; i >= 0; i--) {
+                const p = particles[i];
+                p.x += p.vx;
+                p.y += p.vy;
+                p.life--;
+                p.size *= 0.95;
+                if (p.life <= 0) particles.splice(i, 1);
+            }
+
+            updateThrusterSound();
+            if (mouse.down) fireBullet();
+
+            vessel.velocity.x *= vessel.drag;
+            vessel.velocity.y *= vessel.drag;
+            vessel.x += vessel.velocity.x;
+            vessel.y += vessel.velocity.y;
+
+            if (vessel.x < 0) vessel.x = window.innerWidth;
+            if (vessel.x > window.innerWidth) vessel.x = 0;
+            if (vessel.y < 0) vessel.y = window.innerHeight;
+            if (vessel.y > window.innerHeight) vessel.y = 0;
+
+            stars.forEach(s => {
+                s.y += s.speed * (s.layer + 1);
+                if (s.y > window.innerHeight) s.y = 0;
+            });
+
+            for (let i = bullets.length - 1; i >= 0; i--) {
+                const b = bullets[i];
+                b.x += b.vx;
+                b.y += b.vy;
+                b.life--;
+                if (b.life <= 0) bullets.splice(i, 1);
+            }
+
+            for (let i = enemies.length - 1; i >= 0; i--) {
+                const e = enemies[i];
+                const angle = Math.atan2(vessel.y - e.y, vessel.x - e.x);
+                e.x += Math.cos(angle) * e.speed;
+                e.y += Math.sin(angle) * e.speed;
+
+                for (let bi = bullets.length - 1; bi >= 0; bi--) {
+                    const b = bullets[bi];
+                    if (Math.hypot(e.x - b.x, e.y - b.y) < e.radius) {
+                        e.health--;
+                        bullets.splice(bi, 1);
+                        if (e.health <= 0) {
+                            enemies.splice(i, 1);
+                            score += 100;
+                            playExplosion();
+                            break; // Enemy gone, stop checking bullets for it
+                        }
+                    }
+                }
+
+                // Only check collision if enemy still exists
+                if (e.health > 0 && Math.hypot(e.x - vessel.x, e.y - vessel.y) < vessel.radius + e.radius) {
+                    vessel.shield -= 0.5;
+                    if (vessel.shield <= 0) {
+                        gameActive = false;
+                        alert("SHIP DESTROYED. SCORE: " + score);
+                        location.reload();
+                    }
+                }
+            }
+
+            if (Math.random() < 0.02) spawnEnemy();
+        }
+
+        function fireBullet() {
+            if (Date.now() - vessel.lastShot < vessel.shootDelay) return;
+            vessel.lastShot = Date.now();
+            bullets.push({
+                x: vessel.x + Math.cos(vessel.rotation) * 15,
+                y: vessel.y + Math.sin(vessel.rotation) * 15,
+                vx: Math.cos(vessel.rotation) * 10,
+                vy: Math.sin(vessel.rotation) * 10,
+                life: 60
+            });
+            playLaser();
+        }
+
+        function spawnEnemy() {
+            enemies.push({
+                x: Math.random() < 0.5 ? -20 : window.innerWidth + 20,
+                y: Math.random() * window.innerHeight,
+                speed: 1 + Math.random() * 2,
+                radius: 10,
+                health: 1,
+                color: '#FF3333'
+            });
+        }
+
+        function draw() {
+            ctx.save();
+            ctx.scale(dpr, dpr);
+            ctx.fillStyle = '#000';
+            ctx.fillRect(0, 0, window.innerWidth, window.innerHeight);
+
+            // Draw Stars (Layered)
+            stars.forEach(s => {
+                ctx.fillStyle = `rgba(255, 255, 255, ${0.3 + s.layer * 0.3})`;
+                ctx.fillRect(s.x, s.y, s.size, s.size);
+            });
+
+            // Draw Particles
+            particles.forEach(p => {
+                ctx.fillStyle = p.color;
+                ctx.beginPath();
+                ctx.arc(p.x, p.y, p.size, 0, Math.PI * 2);
+                ctx.fill();
+            });
+
+            bullets.forEach(b => {
+                ctx.fillStyle = '#0FF';
+                ctx.beginPath();
+                ctx.arc(b.x, b.y, 2, 0, Math.PI * 2);
+                ctx.fill();
+            });
+
+            enemies.forEach(e => {
+                ctx.save();
+                ctx.translate(e.x, e.y);
+                ctx.rotate(Math.atan2(vessel.y - e.y, vessel.x - e.x));
+                ctx.fillStyle = e.color;
+                ctx.beginPath(); ctx.moveTo(20, 0); ctx.lineTo(-10, -10); ctx.lineTo(-10, 10); ctx.closePath(); ctx.fill();
+                ctx.restore();
+            });
+
+            // Draw Upgraded Ship
+            ctx.save();
+            ctx.translate(vessel.x, vessel.y);
+            ctx.rotate(vessel.rotation + Math.PI / 2);
+
+            // Ship Hull (Better geometry)
+            ctx.fillStyle = '#1a1a1a';
+            ctx.strokeStyle = '#00F0FF';
+            ctx.lineWidth = 3;
+            ctx.beginPath();
+            ctx.moveTo(0, -25);
+            ctx.lineTo(-20, 15);
+            ctx.lineTo(0, 5);
+            ctx.lineTo(20, 15);
+            ctx.closePath();
+            ctx.fill();
+            ctx.stroke();
+
+            // Cockpit
+            ctx.fillStyle = '#00FFFF';
+            ctx.beginPath();
+            ctx.moveTo(0, -15);
+            ctx.lineTo(-7, 5);
+            ctx.lineTo(7, 5);
+            ctx.closePath();
+            ctx.fill();
+
+            // Shield
+            if (vessel.shield > 0) {
+                ctx.strokeStyle = `rgba(0, 255, 255, ${vessel.shield / 100})`;
+                ctx.shadowBlur = 10;
+                ctx.shadowColor = '#00FFFF';
+                ctx.beginPath(); ctx.arc(0, 0, vessel.radius + 12, 0, Math.PI * 2); ctx.stroke();
+                ctx.shadowBlur = 0;
+            }
+            ctx.restore();
+
+            // UI
+            ctx.fillStyle = '#FFF'; ctx.font = '16px Courier New';
+            ctx.fillText(`SCORE: ${score}`, 20, 40);
+            ctx.fillText(`SHIELD: ${Math.floor(vessel.shield)}%`, 20, 65);
+            ctx.restore();
+        }
+
+        function gameLoop() { update(); draw(); requestAnimationFrame(gameLoop); }
+
+        window.addEventListener('keydown', e => keysDown[e.key] = true);
+        window.addEventListener('keyup', e => keysDown[e.key] = false);
+        window.addEventListener('mousemove', e => {
+            const rect = canvas.getBoundingClientRect(); mouse.x = e.clientX - rect.left; mouse.y = e.clientY - rect.top;
+        });
+        window.addEventListener('mousedown', () => mouse.down = true);
+        window.addEventListener('mouseup', () => mouse.down = false);
+        window.addEventListener('resize', initCanvas);
+        document.getElementById('ui-overlay').addEventListener('click', () => {
+            audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+            gameActive = true;
+            document.getElementById('ui-overlay').style.display = 'none';
+        });
+
+        initCanvas(); initStars(); gameLoop();
+    </script>
+</body>
+
+</html>
