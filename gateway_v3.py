@@ -27,6 +27,13 @@ from model_manager import (TRANSIENT_ERRORS, PERMANENT_ERRORS,
                            ERROR_RATE_LIMIT, ERROR_TIMEOUT, ERROR_AUTH)
 from spinner import spinner
 
+# ── Dedicated Temporary Folder ─────────────────────────────────────────────────
+# ALL temporary scripts, snippets, and scratch files MUST go here.
+# This keeps the project root clean and allows safe automated cleanup.
+_GATEWAY_DIR = os.path.dirname(os.path.abspath(__file__))
+GALACTIC_TEMP_DIR = os.path.join(_GATEWAY_DIR, "tmp")
+os.makedirs(GALACTIC_TEMP_DIR, exist_ok=True)
+
 # Configure logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
 logger = logging.getLogger("GalacticGateway")
@@ -395,6 +402,12 @@ class GalacticGateway:
         logs_dir = core.config.get('paths', {}).get('logs', './logs')
         self.runs_dir = os.path.join(logs_dir, 'runs')
         os.makedirs(self.runs_dir, exist_ok=True)
+
+        # ── Temp folder management ──────────────────────────────────────────
+        # GALACTIC_TEMP_DIR is module-level so tools can import it directly.
+        # On every gateway start, purge files older than 7 days to prevent growth.
+        self._temp_dir = GALACTIC_TEMP_DIR
+        self._purge_old_temp_files(max_age_days=7)
         self._consecutive_failures = 0
         self._recent_tools = []
         self._tool_call_history = Counter() # (turn_idx, tool, args_str) -> count
@@ -410,6 +423,25 @@ class GalacticGateway:
 
         # Initialize base tools
         self.register_tools()
+
+    def _purge_old_temp_files(self, max_age_days: int = 7):
+        """Delete files in GALACTIC_TEMP_DIR older than max_age_days."""
+        now = time.time()
+        cutoff = now - (max_age_days * 86400)
+        purged = 0
+        try:
+            for fname in os.listdir(self._temp_dir):
+                fpath = os.path.join(self._temp_dir, fname)
+                if os.path.isfile(fpath) and os.path.getmtime(fpath) < cutoff:
+                    try:
+                        os.remove(fpath)
+                        purged += 1
+                    except OSError:
+                        pass
+            if purged:
+                logger.info(f"[TempDir] Purged {purged} file(s) older than {max_age_days}d from {self._temp_dir}")
+        except Exception as e:
+            logger.warning(f"[TempDir] Cleanup error: {e}")
 
         # ChromaDB Vector Memory for auto-compaction
         self.galactic_memory = None
@@ -2753,6 +2785,7 @@ class GalacticGateway:
             "    - PERSISTENCE: If a task fails, analyze the error (e.g., read the traceback) and try a different approach. DO NOT STOP until the goal is achieved or you have exhausted all logical paths.\n"
             "    - DETACHED EXECUTION: For long-running scripts (servers, training, interpolation), use `exec_shell` with `detach=True` so you can continue working while the process runs in the background.\n"
             "16. SUB-AGENT DELEGATION (CRITICAL): If the user explicitly asks to 'spawn' or 'run' a task on a specific model (e.g., 'ollama/Qwen3'), you MUST use the `spawn_subagent` tool IMMEDIATELY. Do NOT perform intensive research yourself before spawning. You MUST provide a **High-Quality Technical Blueprint** as the 'task' argument. A blueprint MUST include: 1. **Absolute Resolver Paths** (e.g., C:\\Users\\...\\Desktop\\file.html), 2. **Step-by-Step Logic** (Pseudo-code), 3. **Defensive Context** (e.g., 'Use ctx.save() and ctx.restore() to prevent state leaks in Canvas', 'Double check for missing commas/parentheses'), and 4. A **Mandatory Self-Verification Step** (e.g., 'After writing, read the file back to verify syntax and logic'). Sub-agents do not have your environmental awareness; you are the architect. This keeps you free to chat with the user.\n"
+            f"17. TEMP FILES — MANDATORY: ALL temporary scripts, scratch files, test snippets, and one-off files MUST be written to the dedicated temp folder: {GALACTIC_TEMP_DIR}\\  — NEVER write junk files to the project root (C:\\Users\\Chesley\\Galactic AI\\). If you need a temporary Python script, PowerShell script, or any ephemeral file, the path MUST start with {GALACTIC_TEMP_DIR}\\. For example: write_file(path='{GALACTIC_TEMP_DIR}\\test_script.py', ...). Files in this folder are auto-purged after 7 days. There is no excuse to pollute the project root.\n"
         )
 
         if is_ollama:
