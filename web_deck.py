@@ -404,6 +404,9 @@ body{background:var(--bg);color:var(--text);font-family:var(--font);height:100vh
 .model-btn{padding:11px 14px;background:var(--bg3);border:1px solid var(--border);border-radius:9px;color:var(--text);font-size:0.85rem;cursor:pointer;text-align:left;transition:all .2s;line-height:1.35}
 .model-btn:hover{border-color:var(--cyan);color:var(--cyan);background:rgba(0,243,255,0.06);transform:translateY(-1px)}
 .model-btn.active{border-color:var(--green);color:var(--green);background:rgba(0,255,136,0.09);box-shadow:0 0 12px rgba(0,255,136,0.15)}
+.sort-btn{padding:5px 12px;background:var(--bg);border:1px solid var(--border);border-radius:18px;color:var(--dim);font-size:0.75em;cursor:pointer;transition:all .2s;font-weight:600}
+.sort-btn:hover{border-color:var(--cyan);color:var(--cyan)}
+.sort-btn.active{background:var(--cyan);color:#000;border-color:var(--cyan);box-shadow:0 0 10px rgba(0,243,255,0.3)}
 #ollama-section .model-btn{border-color:rgba(255,136,0,0.32)}
 #ollama-section .model-btn.active{border-color:var(--orange);color:var(--orange)}
 #ollama-health-row{display:flex;align-items:center;gap:9px;margin-bottom:14px;padding:9px 14px;background:var(--bg3);border-radius:9px;border:1px solid var(--border);font-size:0.87rem}
@@ -571,7 +574,7 @@ body.glow-max .status-dot{box-shadow:0 0 14px var(--green),0 0 28px rgba(0,255,1
   <div class="login-box">
     <div style="font-size:2em;margin-bottom:8px">⬡</div>
     <h2>GALACTIC AI</h2>
-    <p>AUTOMATION SUITE v1.5.2</p>
+    <p>AUTOMATION SUITE v1.6.9</p>
     <input id="pw-input" type="password" placeholder="Enter passphrase" autocomplete="off">
     <button id="login-btn" onclick="doLogin()">ACCESS</button>
     <div id="login-err" style="display:none;color:var(--red);font-size:0.8em;margin-top:8px">Invalid passphrase</div>
@@ -1260,7 +1263,7 @@ body.glow-max .status-dot{box-shadow:0 0 14px var(--green),0 0 28px rgba(0,255,1
           <div class="stat-card"><div class="val" id="st-mode">--</div><div class="lbl">Mode</div></div>
           <div class="stat-card"><div class="val" id="st-ctx-used">--</div><div class="lbl">Context Used</div></div>
           <div class="stat-card"><div class="val" id="st-ctx-max">--</div><div class="lbl">Context Limit</div></div>
-          <div class="stat-card"><div class="val" id="st-auto-fb">--</div><div class="lbl">Auto-Fallback</div></div>
+
         </div>
         <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:12px">
           <div class="stat-card" style="text-align:left;padding:14px 18px">
@@ -1273,9 +1276,7 @@ body.glow-max .status-dot{box-shadow:0 0 14px var(--green),0 0 28px rgba(0,255,1
           </div>
         </div>
 
-        <!-- Fallback Chain -->
-        <div style="font-size:0.72rem;letter-spacing:2px;color:var(--dim);margin:18px 0 8px;text-transform:uppercase">Fallback Chain</div>
-        <div id="st-fallback-chain" style="margin-bottom:12px"></div>
+
 
         <!-- Section 3: Connections -->
         <div style="font-size:0.72rem;letter-spacing:2px;color:var(--dim);margin:18px 0 8px;text-transform:uppercase">Connections</div>
@@ -1356,16 +1357,6 @@ body.glow-max .status-dot{box-shadow:0 0 14px var(--green),0 0 28px rgba(0,255,1
             </div>
           </div>
           <div style="display:flex;gap:18px;flex-wrap:wrap;margin-top:14px">
-            <label style="display:flex;align-items:center;gap:8px;cursor:pointer;font-size:0.88em">
-              <input type="checkbox" id="set-auto-fallback" checked style="accent-color:var(--cyan);width:18px;height:18px;cursor:pointer">
-              <span>Auto-Fallback</span>
-              <span style="font-size:0.72em;color:var(--dim)">(automatically switch models on API errors)</span>
-            </label>
-            <label style="display:flex;align-items:center;gap:8px;cursor:pointer;font-size:0.88em">
-              <input type="checkbox" id="set-smart-routing" style="accent-color:var(--cyan);width:18px;height:18px;cursor:pointer">
-              <span>Smart Routing</span>
-              <span style="font-size:0.72em;color:var(--dim)">(route tasks to best model by type)</span>
-            </label>
             <label style="display:flex;align-items:center;gap:8px;cursor:pointer;font-size:0.88em">
               <input type="checkbox" id="set-streaming" checked style="accent-color:var(--cyan);width:18px;height:18px;cursor:pointer">
               <span>Streaming</span>
@@ -2816,10 +2807,45 @@ async function refreshOllama() {
   if (d.models) renderOllamaModels(d.models);
 }
 
+let currentSortMode = 'default';
+
+function getModelMetrics(modelId, provider) {
+  const m = String(modelId || '').toLowerCase();
+  const p = String(provider || '').toLowerCase();
+  let price = 2, power = 2, speed = 2;
+  if (m.includes('opus') || m.includes('405b') || m.includes('o1') || m.includes('3.1-pro') || m.includes('reasoner') || m.includes('gpt-5.4') || m.includes('gpt-5.3') || m.includes('gpt-4.5')) price = 3;
+  if (m.includes('haiku') || m.includes('8b') || m.includes('flash-lite') || m.includes('small') || m.includes('free') || p.includes('ollama')) price = 1;
+  if (m.includes('opus') || m.includes('405b') || m.includes('o1') || m.includes('3.1-pro') || m.includes('480b') || m.includes('r1') || m.includes('gpt-5.4') || m.includes('gpt-5.3')) power = 3;
+  if (m.includes('haiku') || m.includes('8b') || m.includes('flash-lite') || m.includes('small') || m.includes('distill')) power = 1;
+  if (m.includes('flash') || m.includes('haiku') || m.includes('small') || m.includes('8b') || m.includes('nitro') || m.includes('lightning') || m.includes('turbo') || m.includes('lite')) speed = 3;
+  if (m.includes('pro') || m.includes('opus') || m.includes('405b') || m.includes('reasoner') || m.includes('o1') || m.includes('gpt-5.4') || m.includes('gpt-5.3')) speed = 1;
+  return { price, power, speed };
+}
+
+function setSortMode(mode, btn) {
+  currentSortMode = mode;
+  document.querySelectorAll('.sort-btn').forEach(b => b.classList.remove('active'));
+  if (btn) btn.classList.add('active');
+  renderModelGrid();
+}
+
 function renderModelGrid() {
   const root = document.getElementById('model-grid-root');
   if (!root) return;
   root.innerHTML = '';
+
+  // ── Sorting Controls ─────────────────────────────────────────────────────
+  const sortRow = document.createElement('div');
+  sortRow.style = 'display:flex;gap:8px;margin-bottom:16px;padding:8px;background:var(--bg3);border:1px solid var(--border);border-radius:10px;align-items:center';
+  sortRow.innerHTML = `
+    <div style="font-size:0.75em;color:var(--dim);font-weight:600;margin-right:4px">SORT BY:</div>
+    <button class="sort-btn ${currentSortMode==='default'?'active':''}" onclick="setSortMode('default', this)">Default</button>
+    <button class="sort-btn ${currentSortMode==='price'?'active':''}" onclick="setSortMode('price', this)">Price</button>
+    <button class="sort-btn ${currentSortMode==='power'?'active':''}" onclick="setSortMode('power', this)">Power</button>
+    <button class="sort-btn ${currentSortMode==='speed'?'active':''}" onclick="setSortMode('speed', this)">Speed</button>
+  `;
+  root.appendChild(sortRow);
+
 
   // ── Aliases category (separate) ──────────────────────────────────────────
   if (typeof ALIASES !== 'undefined' && Array.isArray(ALIASES) && ALIASES.length) {
@@ -2839,6 +2865,11 @@ function renderModelGrid() {
     const allGrid = sec.querySelector('#aliases-all');
 
     const items = [...ALIASES].sort((a,b) => {
+      if (currentSortMode !== 'default') {
+        const ma = getModelMetrics(a.model || a.id || a.target, a.provider);
+        const mb = getModelMetrics(b.model || b.id || b.target, b.provider);
+        return mb[currentSortMode] - ma[currentSortMode];
+      }
       const an = (a.is_nitro ? 0 : 1);
       const bn = (b.is_nitro ? 0 : 1);
       if (an !== bn) return an - bn;
@@ -2906,7 +2937,13 @@ function renderModelGrid() {
     if (!models.length) {
       grid.innerHTML = `<div style="color:var(--dim);font-size:0.8em;padding:4px">No models discovered</div>`;
     } else {
-      models.forEach(m => {
+      const sortedModels = [...models].sort((a,b) => {
+        if (currentSortMode === 'default') return 0;
+        const ma = getModelMetrics(a.id, a.provider);
+        const mb = getModelMetrics(b.id, b.provider);
+        return mb[currentSortMode] - ma[currentSortMode];
+      });
+      sortedModels.forEach(m => {
         const nitroOnly = document.getElementById('nitro-only-toggle')?.checked;
         let displayName = m.name;
         let modelId = m.id;
@@ -3172,8 +3209,6 @@ async function refreshStatus() {
     el('st-mode').style.color = mode === 'primary' ? 'var(--green)' : 'var(--yellow)';
     if (el('st-ctx-used')) el('st-ctx-used').textContent = d.model?.context_used != null ? Number(d.model.context_used).toLocaleString() : '--';
     if (el('st-ctx-max')) el('st-ctx-max').textContent = d.model?.context_max ? Number(d.model.context_max).toLocaleString() : 'Auto';
-    el('st-auto-fb').textContent = d.auto_fallback ? 'ON' : 'OFF';
-    el('st-auto-fb').style.color = d.auto_fallback ? 'var(--green)' : 'var(--dim)';
 
     // Populate token settings UI
     const mt = document.getElementById('cfg-max-tokens');
@@ -3210,20 +3245,7 @@ async function refreshStatus() {
     el('model-badge').textContent = modelName.substring(0, 24) || 'No model';
     if (d.version) el('version-badge').textContent = 'v' + d.version;
 
-    // Fallback Chain
-    const fcEl = el('st-fallback-chain');
-    if (fcEl && d.fallback_chain) {
-      if (d.fallback_chain.length === 0) {
-        fcEl.innerHTML = '<div style="color:var(--dim);font-size:0.83em;padding:8px 12px;background:var(--bg3);border-radius:8px">No fallback chain configured (add provider API keys to enable)</div>';
-      } else {
-        fcEl.innerHTML = d.fallback_chain.map((e,i) => {
-          const dot = e.available ? '🟢' : (e.failures > 0 ? '🔴' : '🟡');
-          const tier = 'T'+e.tier;
-          const fails = e.failures > 0 ? ` <span style="color:var(--red);font-size:0.75em">(${e.failures} fails)</span>` : '';
-          return `<div style="display:flex;align-items:center;gap:10px;padding:7px 12px;background:var(--bg3);border-radius:8px;margin-bottom:4px;font-size:0.83em;font-family:var(--mono)"><span>${dot}</span><span style="color:var(--dim);font-size:0.8em;min-width:22px">${tier}</span><span style="color:var(--text)">${e.provider}/<span style="color:var(--cyan)">${(e.model||'auto').split('/').pop()}</span></span>${fails}</div>`;
-        }).join('');
-      }
-    }
+
 
     // Section 3: Connections
     const connEl = el('st-connections');
@@ -3529,8 +3551,6 @@ async function loadSettingsValues() {
 
     // Toggles
     const el = id => document.getElementById(id);
-    if (el('set-auto-fallback')) el('set-auto-fallback').checked = d.auto_fallback !== false;
-    if (el('set-smart-routing')) el('set-smart-routing').checked = !!d.smart_routing;
     if (el('set-streaming')) el('set-streaming').checked = d.streaming !== false;
     if (el('set-nitro-only')) el('set-nitro-only').checked = !!d.nitro_only;
 
@@ -3566,8 +3586,6 @@ async function saveModelSettings() {
         fallback_provider: fbProv, fallback_model: fbModel,
         planner_provider: plProv, planner_model: plModel,
         planner_fallback_provider: plfProv, planner_fallback_model: plfModel,
-        auto_fallback: document.getElementById('set-auto-fallback').checked,
-        smart_routing: document.getElementById('set-smart-routing').checked,
         streaming: document.getElementById('set-streaming').checked,
         nitro_only: document.getElementById('set-nitro-only')?.checked || false,
       })
@@ -5158,7 +5176,10 @@ try {
                 self.core.model_manager.primary_provider = provider
                 self.core.model_manager.primary_model = model
                 self.core.model_manager.current_mode = 'primary'
-                await self.core.model_manager._save_config()
+                try:
+                    await self.core.model_manager._save_config()
+                except Exception:
+                    pass  # Prevent file lock recursion loops
             # Security Guard: If system is already configured, require valid JWT
             is_setup = True
             try:
@@ -5190,7 +5211,7 @@ try {
                     return web.json_response({"status": "error", "message": "Invalid session."}, status=401)
             # Check if API key is actually configured
             current_key = getattr(self.core.gateway.llm, 'api_key', '')
-            if provider not in ('ollama', 'vertex') and (not current_key or current_key == 'NONE'):
+            if provider not in ('ollama',) and (not current_key or current_key == 'NONE'):
                 return web.json_response({'ok': False, 'needs_key': True, 'provider': provider, 'model': model})
             await self.core.log(f"Shifted Model via Web Deck: {model}", priority=2)
             return web.json_response({'ok': True, 'provider': provider, 'model': model})
@@ -6174,14 +6195,33 @@ try {
                     elif payload.get('type') == 'switch_model':
                         prov = payload['provider']
                         mod = payload['model']
-                        self.core.gateway.llm.provider = prov
-                        self.core.gateway.llm.model = mod
+                        
+                        # Use ModelManager for resolution and persistent selection
+                        model_mgr = getattr(self.core, 'model_manager', None)
+                        if model_mgr:
+                            resolved_id = model_mgr.resolve_model_id(mod)
+                            # If resolved ID includes a provider (provider/model), split it
+                            if '/' in resolved_id:
+                                parts = resolved_id.split('/')
+                                if parts[0] in ['google', 'nvidia', 'groq', 'cerebras', 'ollama', 'openrouter']:
+                                    prov, mod = parts[0], "/".join(parts[1:])
+                                else:
+                                    mod = resolved_id
+                            else:
+                                mod = resolved_id
+                            
+                            await model_mgr.set_primary(prov, mod)
+                        else:
+                            # Fallback if model_manager is missing
+                            self.core.gateway.llm.provider = prov
+                            self.core.gateway.llm.model = mod
+                        
                         if prov == 'google': self.core.gateway.llm.api_key = self.core.config['providers']['google']['apiKey']
                         elif prov == 'nvidia':
                             keys = self.core.config['providers']['nvidia']['keys']
                             if "deepseek" in mod: self.core.gateway.llm.api_key = keys['deepseek']
                             elif "qwen" in mod: self.core.gateway.llm.api_key = keys['qwen']
-                        await self.core.log(f"Shifted Model via Web Deck: {mod}", priority=1)
+                        await self.core.log(f"Shifted Model via Web Deck: {mod} ({prov})", priority=1)
                     elif payload.get('type') == 'toggle_plugin':
                         name = payload['name']
                         state = payload['state']

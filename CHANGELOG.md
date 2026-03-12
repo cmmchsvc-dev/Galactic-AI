@@ -1,17 +1,19 @@
-- 🚀 **Phase 31: Arcade Expansion (Neon Horizon)**: Integrated two new high-fidelity arcade games—**Cosmic Cruiser** (futuristic truck racing) and **Neon Horizon V4** (hoverboard platformer)—directly into the landing page.
-- 🚀 **Phase 29: Progress Bars & UI**: Implemented real-time progress bars in both the terminal (ASCII) and the Control Deck (CSS) for main and sub-agents.
-- 🎮 **Asteroids v9 Integration**: Upgraded the internal arcade system to Asteroids v9 (asteroid9.html).
-- 🛡️ **Repo Security Audit**: Performed a manual security sweep and git history purge to remove accidentally exposed API keys.
-- 🔄 **Version Restoration**: Globally restored and standardized the project version to **v1.6.8** across all configuration, documentation, and core files after the history purge.
-- 🌐 **Hive Mind UI Sync**: Fixed real-time visibility of sub-agents in the Control Deck. Reindexed session IDs and added newline delimiters for stable streaming.
-- 🛡️ **Zero-Error Delegation**: Implemented a mandatory "Verification Turn" for all sub-agents. They are now strictly required to check their own code for syntax and logic errors before reporting success.
-- 📍 **Absolute Path Enforcement**: Sub-agents are now injected with environmental context to ensure they always use absolute paths (e.g., your OneDrive Desktop) instead of guessing relative locations.
-- 🌐 **Persistent Browser Update**: Added support for persistent data directories in Browser Pro. The browser now maintains cookies, cache, and localStorage across restarts without manual saving.
-- 🛠️ **Defensive Blueprinting**: Updated Rule 16 to mandate "Defensive Context" in all sub-agent tasks, warning them about common coding pitfalls (like Canvas state leaks).
+- 🚀 **Phase 32: AI Loop & Reasoning Defense**:
+  - 🛠️ **Large File Chunking**: Modified `tool_read_file` to default to 300-line chunks for large files. Includes a navigational header to prevent AI infinite loops when reading large codebases.
+  - 🛑 **Ollama Reasoning Stop Tokens**: Implemented auto-injection of stop tokens (`</think>`, `<|im_end|>`, etc.) for reasoning-oriented Ollama models (DeepSeek-R1, Qwen3, etc.) to prevent infinite thinking loops.
+- 🚀 **Standardization**: Updated version to **v1.6.9** across all core files, documentation, and the arcade landing page.
 
 ---
 
-## v1.6.0 — The Gateway v3 Update (2026-03-07)
+## v1.6.9 — The Loop Defense Update (2026-03-11)
+
+- 🛠️ **Large File Defense**: `tool_read_file` now enforces 300-line chunking on large files with clear navigational instructions for the LLM.
+- 🛑 **Ollama Stop Tokens**: Auto-detects reasoning model families and injects necessary stop sequences to end the "thinking" process correctly.
+- 🔄 **Version Sync**: Full repository synchronization to v1.6.9.
+
+---
+
+## v1.6.8 — The Loop Reset & UI Update (2026-03-08)
 
 - 🚀 **Gateway v3 Full Release**: Massive architectural overhaul for maximum reliability and speed. Unified provider handling and streamlined ReAct loop.
 - 🔁 **Loop Reset on User Input**: Internal tool repetition history now clears every time the user sends a message, preventing "stuck" loops after manual state changes.
