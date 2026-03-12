@@ -1263,29 +1263,40 @@ class GalacticGateway:
             lines = await loop.run_in_executor(None, _read_sync)
             
             total_lines = len(lines)
-            
-            # Default values
+
+            # Default to a 300-line chunk to prevent overwhelming the model
+            # on large files (which causes re-read loops and hallucinations).
+            CHUNK = 300
             s = int(start_line) if start_line is not None else 1
-            e = int(end_line) if end_line is not None else total_lines
-            
+            e = int(end_line) if end_line is not None else min(s + CHUNK - 1, total_lines)
+
             # Bounds check
             s = max(1, min(s, total_lines))
             e = max(s, min(e, total_lines))
-            
+
             selected_lines = lines[s-1:e]
-            
+
             output = []
             for i, line in enumerate(selected_lines, start=s):
                 output.append(f"{i:4} | {line}")
-            
+
             result = "".join(output)
-            
-            header = f"--- Reading {path} (Lines {s}-{e} of {total_lines}) ---\n"
-            if total_lines > e:
-                footer = f"\n--- (Truncated. Total lines: {total_lines}) ---"
+
+            if total_lines > CHUNK:
+                next_s = e + 1
+                next_e = min(e + CHUNK, total_lines)
+                header = (
+                    f"--- {path} | Lines {s}-{e} of {total_lines} ---\n"
+                    f"LARGE FILE ({total_lines} lines total). Showing {CHUNK}-line chunk. "
+                    f"Use start_line/end_line to navigate. "
+                    f"Next chunk: start_line={next_s}, end_line={next_e}\n"
+                    f"---\n"
+                )
             else:
-                footer = ""
-                
+                header = f"--- Reading {path} (Lines {s}-{e} of {total_lines}) ---\n"
+
+            footer = "" if e >= total_lines else f"\n--- (More content below. Next: start_line={e+1}) ---"
+
             return header + result + footer
         except Exception as e:
             return f"Error reading file: {e}"
@@ -2594,10 +2605,14 @@ class GalacticGateway:
         # 2. Provider-based defaults
         provider = self.llm.provider.lower()
         model = self.llm.model.lower()
-        if provider in ("openai", "anthropic", "google", "xai", "nvidia", "groq", "mistral", "cerebras", "huggingface", "kimi", "minimax", "ollama"):
+        
+        # Protocol Fallback: Force ALL Gemini models to use JSON-in-text ONLY when using the native Google provider.
+        # Google has started enforcing thought_signature wrapping, which breaks the native SDK tool mapper.
+        if provider == "google" and "gemini" in model:
+            return False
+
+        if provider in ("openai", "anthropic", "google", "xai", "nvidia", "groq", "mistral", "cerebras", "huggingface", "kimi", "minimax", "ollama", "openrouter"):
             return True
-        if provider == "openrouter":
-                return True
         return False
 
     def _get_active_tools(self):
@@ -2680,8 +2695,6 @@ class GalacticGateway:
         if is_ollama:
             behavioral_rules += (
                 "17. LOCAL MODEL TOOL DIRECTIVE (CRITICAL): You are running locally via Ollama. You MUST use native tool calling. Do NOT output raw JSON blocks in your text response. Do NOT output markdown code blocks containing HTML, Python, or JS if you are supposed to be saving a file — you MUST use the `write_file` tool directly. If you output code in the chat instead of writing it to disk, the task will fail.\n"
-                "18. QWEN/CODER PROTOCOL: If you are a Qwen2.5-Coder model, you MUST ensure tool arguments are valid JSON. Check your conversation history to see if you have already called a tool with certain arguments. If the result is already in the history, do NOT call it again.\n"
-                "19. DISCOVERY TOOL LIMITATION: Discovery tools (`list_tasks`, `list_superpowers`, `list_skills`, `list_dir`, `grep_search`) are for gathering context. If you find yourself repeatedly calling the same discovery tool with the same arguments, STOP. The information is already in your conversation history. Redundant research is a waste of resources.\n"
             )
 
         browser_rules = (
@@ -3185,7 +3198,7 @@ class GalacticGateway:
             'browser_click_by_ref', 'browser_type_by_ref', 'browser_hover', 'browser_scroll',
             'browser_wait', 'browser_execute_js', 'browser_extract'
         }
-        _DISCOVERY_TOOLS = {'list_dir', 'read_file', 'find_files', 'grep_search', 'glob', 'system_info', 'process_status', 'list_tasks', 'list_superpowers', 'list_skills'}
+        _DISCOVERY_TOOLS = {'list_dir', 'read_file', 'find_files', 'grep_search', 'glob', 'system_info', 'process_status'}
         _ACTION_TOOLS = {'edit_file', 'write_file', 'exec_shell', 'process_start', 'git_commit', 'save_memory', 'post_to_social'}
 
         # Mark that the gateway is actively processing (prevents model switching mid-task)
@@ -3774,7 +3787,10 @@ class GalacticGateway:
                     self.llm.provider = q_provider
                     self.llm.model = q_model
                     model_mgr._set_api_key(q_provider)
-                    await model_mgr._save_config()
+                    try:
+                        await model_mgr._save_config()
+                    except Exception:
+                        pass  # Guard against config.yaml lock loops
                     await self.core.log(
                         f"🔄 Queued model switch applied: {q_provider}/{q_model}",
                         priority=2
@@ -4071,10 +4087,7 @@ class GalacticGateway:
                         last_error = result
 
                 except Exception as e:
-                    import traceback
-                    tb = traceback.format_exc()
-                    last_error = f"[ERROR] Fallback {provider} CRASHED: {type(e).__name__}: {e}"
-                    await self.core.log(f"🚨 Fallback {provider} internal error:\n{tb}", priority=1)
+                    last_error = f"[ERROR] Fallback {provider}: {e}"
                     model_mgr._record_provider_failure(provider, "UNKNOWN")
 
             # All exhausted — restore and return failure
@@ -4262,27 +4275,17 @@ class GalacticGateway:
         # The system prompt (with tool schemas) is a fixed overhead; counting
         # it against the budget causes aggressive compaction on every turn.
         total_chars = sum(len(str(m.get('content', ''))) for m in messages if m.get('role') != 'system')
-        
-        # V14: Respect 'disable_compaction' and use a threshold buffer (e.g. 150%) to prevent
-        # compaction from triggering on every single turn when near the limit.
-        gateway_cfg = self.core.config.get('gateway', {})
-        disable_compact = gateway_cfg.get('disable_compaction', False)
-        # Default to 150% threshold to give much more breathing room before summarization kicks in
-        threshold_pct = max(100, int(gateway_cfg.get('compaction_threshold_percent', 150)))
-        effective_limit = int(char_limit * (threshold_pct / 100))
-
         attempts = 0
-        if not disable_compact:
-            while total_chars > effective_limit and len(messages) > 4 and attempts < 3:
-                before_chars = total_chars
-                messages = await self._compact_history(messages, char_limit)
-                total_chars = sum(len(str(m.get('content', ''))) for m in messages if m.get('role') != 'system')
-                attempts += 1
-                
-                # Reduction check: if we aren't making meaningful progress (>5%), break to failsafe
-                if (before_chars - total_chars) / max(1, before_chars) < 0.05:
-                    # await self.core.log(f"[Memory] Compaction stalling (reduction < 5%). Falling back to hard truncation.", priority=2)
-                    break
+        while total_chars > char_limit and len(messages) > 4 and attempts < 3:
+            before_chars = total_chars
+            messages = await self._compact_history(messages, char_limit)
+            total_chars = sum(len(str(m.get('content', ''))) for m in messages if m.get('role') != 'system')
+            attempts += 1
+            
+            # Reduction check: if we aren't making meaningful progress (>5%), break to failsafe
+            if (before_chars - total_chars) / max(1, before_chars) < 0.05:
+                # await self.core.log(f"[Memory] Compaction stalling (reduction < 5%). Falling back to hard truncation.", priority=2)
+                break
         
         # 5. HARD TRUNCATION FAILSAFE
         # If we are STILL over limit or attempts exhausted, pop from front
@@ -4364,22 +4367,37 @@ class GalacticGateway:
         elif base_provider.startswith("ollama"):
             base_provider = "ollama"
 
-        if "/" in str(orig_model):
+        # ── Robust Model ID Sanitization ──────────────────────────────────
+        current_model = str(orig_model)
+        if "/" in current_model:
+            parts = current_model.split("/", 1)
+            prefix = parts[0].lower()
+            model_suffix = parts[1]
+            
+            # Known provider prefixes that should be stripped if they match the base_provider
+            # or if they indicate a routing override.
+            known = {"openai", "google", "anthropic", "mistral", "groq", "deepseek", "nvidia", "xai", "huggingface"}
+            
             if base_provider == "ollama":
-                if str(orig_model).startswith("ollama/"):
-                    self.llm.model = str(orig_model).split("/", 1)[1]
-                elif str(orig_model).startswith("hf.co/"):
-                    self.llm.model = str(orig_model)
-            elif base_provider not in ("openrouter", "ollama"):
-                parts = str(orig_model).split("/", 1)
-                prefix = parts[0].lower()
-                known = {"openai", "google", "anthropic", "mistral", "groq", "deepseek", "nvidia", "xai", "huggingface"}
-                if prefix in known:
-                    if prefix != base_provider:
-                        await self.core.log(f"✂\ufe0f Routing override: {prefix} (from {base_provider})", priority=3)
-                        base_provider = prefix
-                    self.llm.model = parts[1]
-
+                if prefix == "ollama":
+                    self.llm.model = model_suffix
+                else:
+                    self.llm.model = current_model # Keep hf.co/ etc. as is
+            elif prefix in known and base_provider not in ("openrouter", "ollama"):
+                if prefix == "nvidia" and base_provider == "nvidia":
+                     # Strip nvidia/ prefix for direct NVIDIA NIM calls
+                     self.llm.model = model_suffix
+                elif prefix != base_provider:
+                    await self.core.log(f"✂\ufe0f Routing override: {prefix} (from {base_provider})", priority=3)
+                    base_provider = prefix
+                    self.llm.model = model_suffix
+                else:
+                    self.llm.model = model_suffix
+            elif base_provider == "openrouter" and prefix in ("google", "openai", "anthropic", "meta", "mistral"):
+                # OpenRouter models often use provider/model format; keep it but ensure prefix is correct
+                pass 
+        
+        # Specific fix for "google/gemini-..." when provider is already "google"
         if base_provider == "google" and str(self.llm.model).startswith("google/"):
             self.llm.model = str(self.llm.model).split("/", 1)[1]
 
@@ -4494,40 +4512,30 @@ class GalacticGateway:
 
                 # 2. Handle Tool Calls (Assistant Message -> Model Role)
                 if role == 'assistant' and m.get('tool_calls'):
-                    for tc in m['tool_calls']:
-                        f = tc.get('function', {})
-                        try:
-                            args = json.loads(f.get('arguments', '{}'))
-                            fc_kwargs = {'name': tc['function']['name'], 'args': args}
-                            
-                            # V15: Restore thought_signature if available (required for Gemini 3)
-                            # Native calls store it in 'thought_signature', fallback/other roles in 'signature'
-                            # We check both to be resilient to different storage patterns in history
-                            sig = tc.get('thought_signature') or tc.get('signature')
-                            if sig:
-                                fc_kwargs['thought_signature'] = sig
-                                
-                            parts.append(types.Part(function_call=types.FunctionCall(**fc_kwargs)))
-                        except: pass
+                    if self.supports_native_tools:
+                        for tc in m['tool_calls']:
+                            f = tc.get('function', {})
+                            try:
+                                args = json.loads(f.get('arguments', '{}'))
+                                parts.append(types.Part(function_call=types.FunctionCall(name=tc['function']['name'], args=args)))
+                            except: pass
+                    else:
+                        # Flatten to text if native tools are disabled for this model
+                        for tc in m['tool_calls']:
+                            fn = tc.get('function', {})
+                            parts.append(types.Part(text=f"Thought: Calling tool {fn.get('name')} with {fn.get('arguments')}"))
                 
                 # 3. Handle Tool Results (Tool Role -> User Role with Response)
                 if role == 'tool':
-                    res_content = m.get('content')
-                    # V15: Critical fix for 'TypeError: Object of type bytes is not JSON serializable'
-                    # Gemini Native SDK expects the response dict to be JSON serializable.
-                    if isinstance(res_content, bytes):
-                        try:
-                            res_content = res_content.decode('utf-8', errors='replace')
-                        except:
-                            import base64 as _b64
-                            res_content = f"[BINARY DATA]: {_b64.b64encode(res_content).decode('ascii')}"
-                    elif not isinstance(res_content, (str, int, float, bool, list, dict, type(None))):
-                        res_content = str(res_content)
-
-                    parts.append(types.Part(function_response=types.FunctionResponse(
-                        name=m.get('name') or m.get('tool_name'),
-                        response={'result': res_content}
-                    )))
+                    if self.supports_native_tools:
+                        parts.append(types.Part(function_response=types.FunctionResponse(
+                            name=m.get('name') or m.get('tool_name'),
+                            response={'result': m.get('content')}
+                        )))
+                    else:
+                        # Flatten to text if native tools are disabled
+                        t_name = m.get('name') or m.get('tool_name')
+                        parts.append(types.Part(text=f"Tool Result ({t_name}): {m.get('content')}"))
 
                 if parts:
                     # Role mapping: tool results MUST be 'user' in Gemini native SDK
@@ -4562,21 +4570,11 @@ class GalacticGateway:
             for part in parts:
                 if part.text: text_content += part.text
                 if part.function_call:
-                    tc_item = {
+                    tool_calls.append({
                         "tool": part.function_call.name,
                         "args": dict(part.function_call.args or {}),
                         "thought": text_content.strip() if not tool_calls else None
-                    }
-                    # Capture thought_signature for next turn (Required for Gemini 3)
-                    if hasattr(part, 'thought_signature') and part.thought_signature:
-                        sig = part.thought_signature
-                        if isinstance(sig, bytes):
-                            # Usually it's base64 ascii, but decode to safe str for JSON history
-                            try: sig = sig.decode('utf-8')
-                            except: pass
-                        tc_item['thought_signature'] = sig
-                    
-                    tool_calls.append(tc_item)
+                    })
 
             if tool_calls: return "\n".join(json.dumps(tc) for tc in tool_calls)
             
@@ -5113,14 +5111,22 @@ class GalacticGateway:
         ctx_window = self._get_context_window_for_model()
         if ctx_window and int(ctx_window) > 0:
             ollama_opts["num_ctx"] = int(ctx_window)
-            await self.core.log(f"🔧 Ollama num_ctx={int(ctx_window)}", priority=1)
+        elif self.core.config.get('models', {}).get('context_window'):
+            ollama_opts["num_ctx"] = int(self.core.config['models']['context_window'])
             
-        think_lvl = self._get_model_override('thinking_level', getattr(self, 'thinking_level', 'low'))
-        if think_lvl and think_lvl != 'off':
+        if ollama_opts.get("num_ctx"):
+            await self.core.log(f"🔧 Ollama num_ctx={ollama_opts['num_ctx']}", priority=1)
+            
+        think_lvl = self._get_model_override('thinking_level')
+        if not think_lvl:
+             think_lvl = getattr(self, 'thinking_level', 'low')
+        
+        if think_lvl and str(think_lvl).lower() != 'off':
             ollama_opts["think"] = True
-            if think_lvl == 'high':
+            lvl = str(think_lvl).lower()
+            if lvl == 'high':
                 ollama_opts["think_effort"] = "high"
-            elif think_lvl == 'medium':
+            elif lvl == 'medium':
                 ollama_opts["think_effort"] = "medium"
             else:
                 ollama_opts["think_effort"] = "low"
@@ -5129,6 +5135,27 @@ class GalacticGateway:
         stops = self._get_model_override('stop')
         if stops:
             ollama_opts["stop"] = stops if isinstance(stops, list) else [stops]
+        else:
+            # Auto-inject stop tokens for reasoning/distilled model families.
+            # These models enter a <think> block and spin forever without stop sequences.
+            model_lower = str(self.llm.model).lower()
+            REASONING_KEYWORDS = (
+                'qwen3', 'deepseek-r1', 'r1-', 'qwq', 'reasoning',
+                '-think', 'distill', 'abliterat'
+            )
+            if any(kw in model_lower for kw in REASONING_KEYWORDS):
+                stop_tokens = [
+                    "<" + "/think>",
+                    "<|im_end|>",
+                    "<|eot_id|>",
+                    "<|end_of_text|>",
+                    "<|EOT|>",
+                ]
+                ollama_opts["stop"] = stop_tokens
+                await self.core.log(
+                    f"\U0001f6d1 Ollama: auto-injected reasoning stop tokens for {self.llm.model}",
+                    priority=1
+                )
 
         # ── Format messages ──
         formatted_messages = []
@@ -5180,7 +5207,6 @@ class GalacticGateway:
                         except:
                             args = {}
                     native_tcs.append({
-                        "id": tc.get("id"),
                         "function": {
                             "name": fn.get("name", ""),
                             "arguments": args
@@ -5194,15 +5220,6 @@ class GalacticGateway:
             # Ensure 'content' is ALWAYS a string (Go server requirement)
             if fm.get("content") is None:
                 fm["content"] = ""
-            
-            # Ollama Native tool result mapping
-            if fm.get("role") == "tool":
-                # Ensure tool_call_id is present for correlation
-                if "tool_call_id" not in fm and "id" in fm:
-                    fm["tool_call_id"] = fm.pop("id")
-                # Ollama native API sometimes prefers 'name' to match the tool definition
-                if "name" not in fm and "tool_name" in fm:
-                    fm["name"] = fm["tool_name"]
 
             formatted_messages.append(fm)
 
@@ -5261,7 +5278,6 @@ class GalacticGateway:
                             try: args = json.loads(args)
                             except: args = {}
                         native_tcs.append({
-                            "id": tc.get("id"),
                             "function": {"name": fn.get("name", ""), "arguments": args}
                         })
                     fm["tool_calls"] = native_tcs
@@ -5500,12 +5516,16 @@ class GalacticGateway:
         use_flattening = is_google or provider == "ollama"
         
         import copy
-        for m in messages:
+        for i, m in enumerate(messages):
             fm = copy.deepcopy(m)
             role = fm.get("role")
+            content = fm.get("content")
+            
+            # Ensure content is never truly None for picky providers
+            if content is None:
+                content = ""
             
             if role == "assistant":
-                content = fm.get("content") or ""
                 tcs = fm.get("tool_calls")
                 
                 if use_flattening and tcs:
@@ -5514,7 +5534,7 @@ class GalacticGateway:
                     for tc in tcs:
                         fn = tc.get("function", {})
                         call_summaries.append(f"Thought: Calling tool {fn.get('name')} with {fn.get('arguments')}")
-                    fm["content"] = f"{content}\n\n" + "\n".join(call_summaries) if content else "\n".join(call_summaries)
+                    fm["content"] = (f"{content}\n\n" if content else "") + "\n".join(call_summaries)
                     fm.pop("tool_calls", None)
                 elif content and tcs and not is_google:
                     # Reasoning model logic (o1/o3/DeepSeek)
@@ -5537,8 +5557,6 @@ class GalacticGateway:
             
             elif role == "user" and use_flattening and m is not messages[-1]:
                 # Flatten complex multimodal user history into text for picky models
-                # to avoid 400 errors, but keep the CURRENT turn as-is for vision.
-                content = fm.get("content")
                 if isinstance(content, list):
                     text_parts = []
                     for part in content:
@@ -5547,15 +5565,17 @@ class GalacticGateway:
                         elif part.get("type") == "image_url":
                             text_parts.append("[Image Context]")
                     fm["content"] = "\n".join(text_parts)
-                # Ensure no 'images' field remains in history for local/picky providers
                 fm.pop("images", None)
 
+            # Ensure 'content' is explicitly typed as string if it was merged or cleaned
+            if not isinstance(fm.get("content"), (str, list)):
+                fm["content"] = str(fm.get("content") or "")
+
             # ── Strictly alternating roles for Gemini/Google models ────────
-            # If flattening is enabled, we merge consecutive same-role messages
             if use_flattening and formatted_messages and fm.get("role") == formatted_messages[-1].get("role"):
                 prev_content = formatted_messages[-1].get("content") or ""
                 new_content = fm.get("content") or ""
-                # Force both to string for merging if for Gemini/picky models
+                
                 def _to_str(c):
                     if isinstance(c, str): return c
                     if isinstance(c, list): 
@@ -5563,31 +5583,34 @@ class GalacticGateway:
                     return str(c)
                 
                 merged = f"{_to_str(prev_content)}\n\n{_to_str(new_content)}".strip()
-                if not merged: merged = "[Empty Message]" # Avoid 400 for empty tokens
+                if not merged: merged = "[Empty Message]"
                 formatted_messages[-1]["content"] = merged
             else:
-                # Ensure we don't have consecutive assistant messages even if content is empty
-                # (Some models crash on role repetition)
                 formatted_messages.append(fm)
 
-        # FINAL PASS: Ensure strictly alternating roles for Google/Gemini
+        # FINAL PASS: Absolute enforcement of alternating roles for Google/Gemini
         if is_google:
             final_messages = []
             for m in formatted_messages:
+                # 1. Merge same-role consecutive blocks
                 if final_messages and m['role'] == final_messages[-1]['role']:
-                    # Merge content
                     p_content = final_messages[-1].get('content') or ""
                     n_content = m.get('content') or ""
                     final_messages[-1]['content'] = f"{p_content}\n\n{n_content}".strip() or "[Empty]"
                 else:
+                    # 2. Add placeholder user message if we are about to have 2 assistants (rare)
+                    # or if the first message is an assistant.
+                    if final_messages and final_messages[-1]['role'] == 'assistant' and m['role'] == 'assistant':
+                         final_messages.append({"role": "user", "content": "Continue."})
+                    
                     final_messages.append(m)
             
-            # Must start with 'user' or 'system' (Google requirement)
+            # 3. Google requires starting with 'user' or 'system'
             if final_messages and final_messages[0]['role'] == 'assistant':
-                final_messages.insert(0, {"role": "user", "content": "Continue."})
+                final_messages.insert(0, {"role": "user", "content": "Please continue your previous thought."})
             
-            # Must end with 'user' for some providers if tools are present
-            # But normally Gemini supports assistant as last message for streaming.
+            # 4. Google context often benefits from ending with 'user' if it's the model's turn
+            # But we leave it to the provider's specific API behavior usually.
             formatted_messages = final_messages
 
         if use_streaming:
@@ -5623,9 +5646,11 @@ class GalacticGateway:
                     payload.update(extra)
             if max_tokens:
                 payload["max_tokens"] = max_tokens
-            # Inject reasoning_effort for providers that support it (Google, OpenAI, OpenRouter)
-            if provider not in ('ollama', 'nvidia') and hasattr(self, 'thinking_level') and self.thinking_level and self.thinking_level != 'off':
+            # Inject reasoning_effort for providers that support it (OpenAI, some OpenRouter)
+            if provider == 'openai' and hasattr(self, 'thinking_level') and self.thinking_level and self.thinking_level != 'off':
                 payload["reasoning_effort"] = self.thinking_level
+            elif provider == 'openrouter' and 'o1' in model_id.lower() and hasattr(self, 'thinking_level') and self.thinking_level and self.thinking_level != 'off':
+                 payload["reasoning_effort"] = self.thinking_level
 
             # Inject native tools for OpenAI format
             if self.supports_native_tools and active_tools:
@@ -5829,8 +5854,10 @@ class GalacticGateway:
         if max_tokens:
             payload["max_tokens"] = max_tokens
         # Inject reasoning_effort if thinking level is set (only for providers that support it)
-        if provider not in ('ollama', 'nvidia') and hasattr(self, 'thinking_level') and self.thinking_level and self.thinking_level != 'off':
+        if provider == 'openai' and hasattr(self, 'thinking_level') and self.thinking_level and self.thinking_level != 'off':
             payload["reasoning_effort"] = self.thinking_level
+        elif provider == 'openrouter' and 'o1' in model_id.lower() and hasattr(self, 'thinking_level') and self.thinking_level and self.thinking_level != 'off':
+             payload["reasoning_effort"] = self.thinking_level
 
         # Inject native tools for OpenAI format (Non-streaming path)
         if self.supports_native_tools and getattr(self, "tools", None):
