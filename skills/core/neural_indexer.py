@@ -24,20 +24,65 @@ class NeuralIndexer(GalacticSkill):
         self.indexed_files = {} # path -> md5
         self.progress = 0 # 0-100 percentage
         self.is_scanning = False
+        self._mtime_snapshot = {} # path -> mtime, for cheap change detection
+
+    def _get_workspace_mtimes(self, workspace):
+        """Quick pass to collect mtimes of all tracked files."""
+        snapshot = {}
+        skip_dirs = {'.git', '__pycache__', 'venv', 'node_modules', 'chroma_data', 'releases'}
+        for root, dirs, files in os.walk(workspace):
+            dirs[:] = [d for d in dirs if d not in skip_dirs and not d.startswith('.')]
+            for file in files:
+                if file.endswith(('.py', '.js', '.md', '.txt', '.yaml', '.json')):
+                    path = os.path.join(root, file)
+                    try:
+                        snapshot[path] = os.path.getmtime(path)
+                    except OSError:
+                        pass
+        return snapshot
+
+    def _has_changes(self, workspace):
+        """Returns True if any tracked file was added, removed, or modified."""
+        current = self._get_workspace_mtimes(workspace)
+        if set(current.keys()) != set(self._mtime_snapshot.keys()):
+            return True
+        for path, mtime in current.items():
+            if self._mtime_snapshot.get(path) != mtime:
+                return True
+        return False
 
     async def run(self):
-        await self.core.log("🧠 Neural Indexer initialized. Stealth Mode active.", priority=3)
+        await self.core.log("🧠 Neural Indexer initialized — change-detection mode active.", priority=3)
+        workspace = self.core.config.get('system', {}).get('workspace_root', os.getcwd())
+
+        # Run an initial index on startup
+        try:
+            self.is_scanning = True
+            await self.scan_and_index()
+            self.is_scanning = False
+            self.progress = 100
+            self._mtime_snapshot = self._get_workspace_mtimes(workspace)
+        except Exception as e:
+            self.is_scanning = False
+            await self.core.log(f"⚠️ Indexer startup failed: {e}", priority=1)
+
         while True:
             try:
+                await asyncio.sleep(30)  # Poll every 30 seconds (cheap mtime check only)
+                if not self._has_changes(workspace):
+                    continue  # Nothing changed — go back to sleep immediately
+
+                # Changes detected — run a targeted scan
                 self.is_scanning = True
                 await self.scan_and_index()
                 self.is_scanning = False
                 self.progress = 100
-                await asyncio.sleep(300) # Scan every 5 mins
+                self._mtime_snapshot = self._get_workspace_mtimes(workspace)
             except Exception as e:
                 self.is_scanning = False
                 await self.core.log(f"⚠️ Indexer failed: {e}", priority=1)
                 await asyncio.sleep(60)
+
 
     async def _count_files(self, workspace):
         """Pre-scan to get total file count for progress bar."""
