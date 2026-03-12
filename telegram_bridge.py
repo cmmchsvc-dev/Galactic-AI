@@ -41,7 +41,7 @@ class TelegramBridge:
         self.bot_token = self.config.get('bot_token')
         self.api_url = f"https://api.telegram.org/bot{self.bot_token}"
         self.offset = 0
-        self.client = httpx.AsyncClient(timeout=60.0)
+        self.client = httpx.AsyncClient(timeout=120.0)
         self.start_time = time.time()
         # Sync thinking_level from gateway/config on startup
         gw = getattr(core, 'gateway', None)
@@ -1405,66 +1405,94 @@ class TelegramBridge:
     async def listen_loop(self):
         await self._log("Telegram Bridge: Listening...", priority=1)
         await self.set_commands()
+        processed_updates = set() # Simple in-memory deduplication
         while self.core.running:
             try:
                 updates = await self.get_updates()
                 for update in updates:
-                    self.offset = update["update_id"] + 1
+                    update_id = update["update_id"]
+                    if update_id in processed_updates:
+                        continue
+                    processed_updates.add(update_id)
+                    # Keep buffer size manageable
+                    if len(processed_updates) > 1000:
+                        processed_updates.remove(min(processed_updates))
+
+                    self.offset = update_id + 1
                     if "callback_query" in update:
-                        await self.process_callback(update["callback_query"]["message"]["chat"]["id"], update["callback_query"])
+                        self._track_task(asyncio.create_task(self._safe_process_callback(update["callback_query"])))
                     elif "message" in update:
-                        msg = update["message"]
-                        chat_id = msg["chat"]["id"]
-                        text = msg.get("text", "")
-
-                        # Public Command Alias: /id and /start should always work to help setup
-                        if text and text.split()[0] in ('/id', '/start'):
-                            await self.process_command(chat_id, text)
-                            continue
-
-                        # --- Strict Admin-only security check ---
-                        if not self._is_authorized(chat_id):
-                            await self._log(f"Unauthorized interaction from {chat_id}. Access Denied.", priority=2)
-                            await self.send_message(chat_id, "🚫 **Access Denied.**\nThis bot is locked to the administrator.\n\nUse `/id` to see your ID if you are the owner.")
-                            continue
-                        text = msg.get("text", "")
-                        if "document" in msg and hasattr(self.core, 'gateway'):
-                            await self.send_typing(chat_id)
-                            self._track_task(asyncio.create_task(self._handle_document(chat_id, msg)))
-                            continue
-                        if "photo" in msg and hasattr(self.core, 'gateway'):
-                            await self.send_typing(chat_id)
-                            self._track_task(asyncio.create_task(self._handle_photo(chat_id, msg)))
-                            continue
-                        if ("voice" in msg or "audio" in msg) and hasattr(self.core, 'gateway'):
-                            await self.send_typing(chat_id)
-                            self._track_task(asyncio.create_task(self._handle_audio(chat_id, msg)))
-                            continue
-                        if chat_id in self.pending_api_key and text and not text.startswith('/'):
-                            pending = self.pending_api_key.pop(chat_id)
-                            api_key = text.strip()
-                            await self._save_provider_key(pending["provider"], api_key)
-                            self.core.gateway.llm.api_key = api_key
-                            self.core.gateway.llm.provider = pending["provider"]
-                            self.core.gateway.llm.model = pending["model"]
-                            await self.send_message(chat_id, f"✅ API key saved for **{pending['provider'].capitalize()}**! Switched to: `{pending['model']}`")
-                            continue
-                        if text.startswith('/'):
-                            await self.process_command(chat_id, text)
-                            continue
-                        if text.strip().lower() == 'stop':
-                            await self.process_command(chat_id, '/stop')
-                            continue
-                        await self.send_typing(chat_id)
-                        if hasattr(self.core, 'gateway'):
-                            self._track_task(asyncio.create_task(self.process_and_respond(chat_id, text)))
+                        self._track_task(asyncio.create_task(self._safe_process_message(update["message"])))
             except Exception as e:
                 await self._log(f"Bridge Loop Error: {e}", priority=1)
-            await asyncio.sleep(0.5)
+            await asyncio.sleep(0.1)
+
+    async def _safe_process_callback(self, callback_query):
+        """Isolated handler for callback queries to prevent one crash killing the loop."""
+        try:
+            chat_id = callback_query["message"]["chat"]["id"]
+            await self.process_callback(chat_id, callback_query)
+        except Exception as e:
+            await self._log(f"Callback Process Error (Chat: {chat_id}): {e}", priority=1)
+
+    async def _safe_process_message(self, msg):
+        """Isolated handler for messages to prevent one crash killing the loop."""
+        chat_id = msg["chat"]["id"]
+        try:
+            text = msg.get("text", "")
+
+            # Public Command Alias: /id and /start should always work to help setup
+            if text and text.split()[0] in ('/id', '/start'):
+                await self.process_command(chat_id, text)
+                return
+
+            # --- Strict Admin-only security check ---
+            if not self._is_authorized(chat_id):
+                await self._log(f"Unauthorized interaction from {chat_id}. Access Denied.", priority=2)
+                await self.send_message(chat_id, "🚫 **Access Denied.**\nThis bot is locked to the administrator.\n\nUse `/id` to see your ID if you are the owner.")
+                return
+
+            if "document" in msg and hasattr(self.core, 'gateway'):
+                await self.send_typing(chat_id)
+                await self._handle_document(chat_id, msg)
+                return
+            if "photo" in msg and hasattr(self.core, 'gateway'):
+                await self.send_typing(chat_id)
+                await self._handle_photo(chat_id, msg)
+                return
+            if ("voice" in msg or "audio" in msg) and hasattr(self.core, 'gateway'):
+                await self.send_typing(chat_id)
+                await self._handle_audio(chat_id, msg)
+                return
+            if chat_id in self.pending_api_key and text and not text.startswith('/'):
+                pending = self.pending_api_key.pop(chat_id)
+                api_key = text.strip()
+                await self._save_provider_key(pending["provider"], api_key)
+                self.core.gateway.llm.api_key = api_key
+                self.core.gateway.llm.provider = pending["provider"]
+                self.core.gateway.llm.model = pending["model"]
+                await self.send_message(chat_id, f"✅ API key saved for **{pending['provider'].capitalize()}**! Switched to: `{pending['model']}`")
+                return
+            if text.startswith('/'):
+                await self.process_command(chat_id, text)
+                return
+            if text.strip().lower() == 'stop':
+                await self.process_command(chat_id, '/stop')
+                return
+            
+            await self.send_typing(chat_id)
+            if hasattr(self.core, 'gateway'):
+                await self.process_and_respond(chat_id, text)
+        except Exception as e:
+            await self._log(f"Message Process Error (Chat: {chat_id}): {e}", priority=1)
+            try:
+                await self.send_message(chat_id, f"⚠️ **Processing Error:** `{str(e)[:100]}`")
+            except: pass
 
     async def get_updates(self):
         try:
-            r = await self.client.get(f"{self.api_url}/getUpdates", params={"offset": self.offset, "timeout": 30})
+            # Increased timeout to 60s for more efficient long-polling
+            r = await self.client.get(f"{self.api_url}/getUpdates", params={"offset": self.offset, "timeout": 60})
             return r.json().get("result", []) if r.json().get("ok") else []
         except Exception:
             return []
