@@ -3297,13 +3297,9 @@ class GalacticGateway:
                                 response_text = data.get('text') or data.get('response') or data.get('answer') or data.get('content')
                                 tool_calls = [] # Force no tool calls
                                 
-                        # Extraction of thought if still applicable after potential JSON unwrapping
-                        # Re-strip in case response_text was updated by JSON unwrapping
-                        clean_text = re.sub(r'<think>.*?</think>', '', response_text, flags=re.DOTALL).strip()
-                        
-                        # V14: Use robust balanced-block extraction for thoughts as well
+                        # V14.1: Robust balanced-block extraction for thoughts
                         _stack = []
-                        _thought_cand = None
+                        thought_candidates = []
                         for i, char in enumerate(clean_text):
                             if char == '{': _stack.append(i)
                             elif char == '}':
@@ -3311,28 +3307,23 @@ class GalacticGateway:
                                     start = _stack.pop()
                                     if not _stack:
                                         blk = clean_text[start:i+1]
-                                        try:
-                                            # Clean markdown fences if model wrapped the JSON
-                                            blk_clean = re.sub(r'^```(?:json)?\s*', '', blk.strip())
-                                            blk_clean = re.sub(r'\s*```$', '', blk_clean)
-                                            data = json.loads(blk_clean)
-                                            if isinstance(data, dict) and 'thought' in data:
-                                                thought_content = data.get('thought')
-                                                break # Found it
-                                        except: pass
+                                        # Clean markdown fences if model wrapped the JSON
+                                        blk_clean = re.sub(r'^```(?:json)?\s*', '', blk.strip())
+                                        blk_clean = re.sub(r'\s*```$', '', blk_clean)
+                                        thought_candidates.append(blk_clean)
                         
-                        # Fallback for older models that don't output a JSON block for thought
-                        if not thought_content:
-                            first_line = clean_text.split("\n")[0]
+                        # Try parsing each candidate for a 'thought' key
+                        for blk_clean in thought_candidates:
                             try:
-                                data = json.loads(first_line)
-                                if isinstance(data, dict):
+                                data = json.loads(blk_clean)
+                                if isinstance(data, dict) and 'thought' in data:
                                     thought_content = data.get('thought')
-                            except:
-                                pass
+                                    break
+                            except: continue
                         
-                        # V12: Centralized jargon stripping for the UI thought bubble
-                        thought_content = self._strip_jargon(response_text)
+                        # Fallback: Centralized jargon stripping for the UI thought bubble
+                        if not thought_content:
+                            thought_content = self._strip_jargon(response_text)
 
                     except Exception as e:
                         await self.core.log(f"⚠️ Error parsing tool thought: {e}", priority=2)
