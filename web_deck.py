@@ -100,6 +100,7 @@ class GalacticWebDeck:
         self.app.router.add_post('/api/resume/{uuid}', self.handle_resume)
         # Cancellation
         self.app.router.add_post('/api/cancel_task', self.handle_cancel_task)
+        self.app.router.add_post('/api/stop_agent', self.handle_stop_agent)
         # Subagent Hive Mind API
         self.app.router.add_get('/api/subagents', self.handle_subagents)
         self.app.router.add_delete('/api/subagents/{session_id}', self.handle_cancel_subagent)
@@ -170,6 +171,25 @@ class GalacticWebDeck:
             await self.core.log(f"🚫 User clicked CANCEL in Control Deck. Aborting {count} task(s)...", priority=2)
             return web.json_response({'ok': True, 'message': f'Cancellation requested for {count} task(s)'})
         return web.json_response({'ok': False, 'message': 'No active task to cancel'})
+
+    async def handle_stop_agent(self, request):
+        """POST /api/stop_agent - Sets the stop flag so the ReAct loop exits cleanly at the next turn.
+        Unlike cancel_task (which abruptly cancels async tasks), this asks the agent to stop gracefully."""
+        gateway = self.core.gateway
+        # Set the stop flag on every gateway that might be running
+        gateways = [gateway]
+        # Also try to stop any isolated subagent gateways if accessible
+        mgr = self._get_subagent_mgr()
+        if mgr and hasattr(mgr, 'get_all_sessions'):
+            for session in mgr.get_all_sessions().values():
+                gw = session.get('gateway')
+                if gw and hasattr(gw, '_stop_requested'):
+                    gw._stop_requested = True
+        for gw in gateways:
+            if hasattr(gw, '_stop_requested'):
+                gw._stop_requested = True
+        await self.core.log("🛑 STOP signal sent to agent loop.", priority=1)
+        return web.json_response({'ok': True, 'message': '🛑 Stop signal sent. The agent will halt at the next turn.'})
 
     # ── Subagent Hive Mind API ───────────────────────────────────────────────
 
@@ -1028,6 +1048,7 @@ body.glow-max .status-dot{box-shadow:0 0 14px var(--green),0 0 28px rgba(0,255,1
             <button id="live-call-btn" onclick="toggleLiveCall()" title="Live Call Mode (auto-TTS & interruption)" style="padding:10px 12px;background:var(--bg3);border:1px solid var(--border);border-radius:10px;color:var(--dim);cursor:pointer;font-size:1.1em;transition:border .2s,color .2s,background .2s" onmouseover="if(!this.classList.contains('active'))this.style.borderColor='var(--green)',this.style.color='var(--green)'" onmouseout="if(!this.classList.contains('active'))this.style.borderColor='var(--border)',this.style.color='var(--dim)'">📞</button>
             <button id="voice-btn" onclick="toggleVoiceInput()" title="Voice input (hold or click to record)" style="padding:10px 12px;background:var(--bg3);border:1px solid var(--border);border-radius:10px;color:var(--dim);cursor:pointer;font-size:1.1em;transition:border .2s,color .2s,background .2s" onmouseover="if(!this.classList.contains('recording'))this.style.borderColor='var(--cyan)',this.style.color='var(--cyan)'" onmouseout="if(!this.classList.contains('recording'))this.style.borderColor='var(--border)',this.style.color='var(--dim)'">🎤</button>
             <button id="send-btn-main" onclick="sendChatMain()" style="padding:10px 22px;background:linear-gradient(135deg,var(--cyan),var(--pink));border:none;border-radius:10px;color:#000;font-weight:700;cursor:pointer;font-size:0.9em">Send ▶</button>
+            <button id="stop-btn" onclick="stopAgent()" title="Stop the agent mid-task (graceful)" style="padding:10px 14px;background:linear-gradient(135deg,#ff4444,#cc0000);border:none;border-radius:10px;color:#fff;font-weight:700;cursor:pointer;font-size:0.9em;letter-spacing:0.5px;transition:opacity .2s" onmouseover="this.style.opacity='.8'" onmouseout="this.style.opacity='1'">🛑 STOP</button>
           </div>
         </div>
         <div id="chat-tools-sidebar">
@@ -2432,6 +2453,20 @@ function renderAttachBar() {
     }
   });
 })();
+
+async function stopAgent() {
+  const btn = document.getElementById('stop-btn');
+  if (btn) { btn.textContent = '⏳ Stopping...'; btn.disabled = true; }
+  try {
+    const r = await fetch('/api/stop_agent', { method: 'POST' });
+    const d = await r.json();
+    appendBotMsg('🛑 ' + (d.message || 'Stop signal sent.'));
+  } catch(e) {
+    appendBotMsg('⚠️ Failed to send stop signal: ' + e.message);
+  } finally {
+    if (btn) { btn.textContent = '🛑 STOP'; btn.disabled = false; }
+  }
+}
 
 async function sendChatMain() {
   const inp = document.getElementById('chat-input-main');

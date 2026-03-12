@@ -399,6 +399,7 @@ class GalacticGateway:
         self._recent_tools = []
         self._tool_call_history = Counter() # (turn_idx, tool, args_str) -> count
         self.thinking_level = models_cfg.get('thinking_level', 'low')
+        self._stop_requested = False  # Set by /api/stop_agent to abort the current loop
 
         # Persistent chat log (JSONL) — survives page refreshes
         self.history_file = os.path.join(logs_dir, 'chat_history.jsonl')
@@ -3186,7 +3187,12 @@ class GalacticGateway:
         recent_tools = []          # Rolling window of last 6 tool names
         _nudge_half_sent = False   # Track whether 50% nudge was sent
         _nudge_80_sent = False     # Track whether 80% nudge was sent
-        
+        _text_only_action_turns = 0  # Consecutive turns where model claimed an action but called no tools
+        _recent_response_fingerprints = []  # Rolling hashes of recent responses for text-loop detection
+
+        # Clear any pending stop request at the start of a new speak() call
+        self._stop_requested = False
+
         # Tools allowed to be repeated with same args (snapshots, searches, images, health)
         _DUPLICATE_EXEMPT = {
             'browser_snapshot', 'web_search', 'memory_search', 'generate_image', 'get_system_health',
@@ -3218,8 +3224,15 @@ class GalacticGateway:
         async def _react_loop():
             nonlocal turn_count, last_tool_call, messages, duplicate_count, stagnation_count
             nonlocal consecutive_failures, recent_tools, _nudge_half_sent, _nudge_80_sent
+            nonlocal _text_only_action_turns, _recent_response_fingerprints
 
             for _ in range(max_turns):
+                # ── STOP FLAG CHECK (user pressed STOP or /api/stop_agent was called) ──
+                if self._stop_requested:
+                    self._stop_requested = False
+                    await self.core.log("🛑 Agent loop stopped by user request.", priority=1)
+                    return "🛑 Task stopped by user."
+
                 # HEARTBEAT: Update watchdog so it knows we are still making progress
                 watchdog = next((s for s in self.core.skills if getattr(s, 'skill_name', '') == 'watchdog'), None)
                 if watchdog: watchdog.heartbeat()
@@ -3617,19 +3630,29 @@ class GalacticGateway:
 
                 # ── Browser task completion validator (Hallucination Guard) ──
                 # Catch hallucinations: model claims it performed an action but never called the tool
-                # V13: Expanded to catch "I have clicked", "I searched for", etc.
-                used_browser = any(t.startswith('chrome_') or t.startswith('browser_') for t in recent_tools)
-                claimed_action = any(kw in response_text.lower() for kw in [
+                # ── TEXT-LOOP FINGERPRINT DETECTION ──
+                # If the model produces near-identical responses multiple turns in a row, it's stuck.
+                _fp = hash(response_text[:300])
+                if _fp in _recent_response_fingerprints:
+                    await self.core.log("🔁 Text-loop detected: identical response fingerprint seen before. Breaking loop.", priority=1)
+                    return "⚠️ I detected that I was repeating myself in a loop. I've stopped to avoid making phantom changes. Please re-state your request so I can start fresh."
+                _recent_response_fingerprints.append(_fp)
+                if len(_recent_response_fingerprints) > 6:
+                    _recent_response_fingerprints.pop(0)
+
+                # ── BROAD HALLUCINATION DETECTOR (browser + file actions) ──
+                # V14: Extended from browser-only to cover file write/edit/delete claims
+                _rt_lower = response_text.lower()
+                claimed_browser_action = any(kw in _rt_lower for kw in [
                     "clicked", "clicking", "typed", "typing", "searched", "searching",
                     "submitted", "entered", "finding the", "found the"
                 ])
-                actual_action = any(t in recent_tools for t in [
+                actual_browser_action = any(t in recent_tools for t in [
                     'chrome_click', 'chrome_type', 'browser_click', 'browser_type',
                     'browser_click_by_ref', 'browser_type_by_ref'
                 ])
-                
-                if claimed_action and not actual_action and turn_count < max_turns - 2:
-                    await self.core.log("🚫 Hallucination caught: model claimed action but never called tools", priority=1)
+                if claimed_browser_action and not actual_browser_action and turn_count < max_turns - 2:
+                    await self.core.log("🚫 Hallucination caught: model claimed browser action but never called tools", priority=1)
                     messages.append({"role": "assistant", "content": response_text})
                     messages.append({
                         "role": "user",
@@ -3641,6 +3664,46 @@ class GalacticGateway:
                         )
                     })
                     continue
+
+                # ── FILE-WRITE HALLUCINATION DETECTOR ──
+                # Catch "I've written X to file.md", "Done. I've updated SOUL.md", "I have saved...", etc.
+                claimed_file_action = any(kw in _rt_lower for kw in [
+                    "i've written", "i have written", "i've saved", "i have saved",
+                    "i've updated", "i have updated", "i've added", "i have added",
+                    "i've created", "i have created", "i'll add", "i will add",
+                    "done. i\'ve", "done. i have", "i've appended", "i've patched",
+                    "i've deleted", "i have deleted", "i've moved", "i have moved",
+                    "successfully written", "successfully saved", "successfully updated",
+                    "file has been updated", "file has been written", "file has been created"
+                ])
+                actual_file_action = any(t in recent_tools for t in [
+                    'write_file', 'edit_file', 'delete_file', 'move_file', 'copy_file',
+                    'save_memory', 'memory_imprint', 'exec_shell', 'execute_python'
+                ])
+                if claimed_file_action and not actual_file_action and not tool_calls:
+                    _text_only_action_turns += 1
+                    await self.core.log(f"🚫 File hallucination detected (turn {_text_only_action_turns}/2): model claimed file action but never called write tool", priority=1)
+                    if _text_only_action_turns >= 2:
+                        # Hard stop after 2 consecutive hallucination turns
+                        await self.core.log("🛑 Repeated file hallucination. Aborting to prevent damage.", priority=1)
+                        return (
+                            "⚠️ STOPPING: I detected that I was claiming to write/update files without actually calling "
+                            "any tools — this is a hallucination. I have NOT made any changes to disk. "
+                            "Please re-issue your request and I will use the actual write_file/edit_file tools this time."
+                        )
+                    messages.append({"role": "assistant", "content": response_text})
+                    messages.append({
+                        "role": "user",
+                        "content": (
+                            "⚠️ HALLUCINATION DETECTED. You claimed to write/update/save a file but you DID NOT call "
+                            "write_file, edit_file, or any other tool. Nothing has been written to disk. "
+                            "You MUST call the appropriate file tool RIGHT NOW to actually perform the action. "
+                            "Do NOT describe what you plan to do — DO IT using a tool call."
+                        )
+                    })
+                    continue
+                else:
+                    _text_only_action_turns = 0  # Reset on a clean turn
 
                 called_type = 'chrome_type' in recent_tools or 'browser_type' in recent_tools
 
