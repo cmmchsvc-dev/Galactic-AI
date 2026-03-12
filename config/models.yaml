@@ -116,7 +116,19 @@ providers:
       provider: "openrouter"
       enabled: true
     - id: "openrouter/hunter-alpha"
-      name: "Hunter Alpha (Agentic 1M) 🏹"
+      name: "Hunter Alpha (Agentic 1M)🏹: Frontier intelligence for long-horizon planning and complex multi-step reasoning."
+      provider: "openrouter"
+      enabled: true
+    - id: "openrouter/healer-alpha"
+      name: "Healer Alpha (Omni 262K)🩺: Frontier omni-modal model with native vision, audio, and reasoning capabilities."
+      provider: "openrouter"
+      enabled: true
+    - id: "openrouter/aurora-alpha"
+      name: "Aurora Alpha (Fast Reasoning 128K)🌅: High-speed reasoning model with exposed thinking steps; ideal for coding."
+      provider: "openrouter"
+      enabled: true
+    - id: "openrouter/pony-alpha"
+      name: "Pony Alpha (Agentic 200K)🐎: Foundation model excelling in coding, agentic workflows, and roleplay."
       provider: "openrouter"
       enabled: true
     - id: "qwen/qwen3.5-flash"
