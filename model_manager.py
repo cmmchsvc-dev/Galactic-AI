@@ -47,31 +47,6 @@ class ModelManager:
         self.core = core
         self.config_path = core.config_path
         
-        # Initialize PROVIDER_TIERS with safe defaults
-        self.provider_tiers = {
-            'google':      (1, 'gemini-2.5-flash'),
-            'openai':      (1, 'gpt-4o'),
-            'deepseek':    (2, 'deepseek-chat'),
-            'mistral':     (2, 'mistral-large-latest'),
-            'openrouter':  (3, 'google/gemini-2.5-flash'),
-            'ollama':      (9, None),
-        }
-        
-        # Mapping: task_type -> (provider, model_or_None)
-        # model=None means "use best available discovered Ollama model"
-        self.smart_routing_table = {
-            "coding":    ("deepseek",  "deepseek-chat"),
-            "reasoning": ("deepseek",  "deepseek-reasoner"),
-            "creative":  ("openai",    "gpt-4.1"),
-            "local":     ("ollama",    None),
-            "quick":     ("google",    "gemini-2.5-flash"),
-            "vision":    ("google",    "gemini-2.5-flash"),
-            "math":      ("openai",    "o3-mini"),
-            "chat":      ("google",    "gemini-2.5-flash"),
-        }
-        
-        self._load_fallback_policy_from_yaml()
-
         # Load model config
         model_config = self.core.config.get('models', {})
 
@@ -104,79 +79,18 @@ class ModelManager:
         self.error_threshold = model_config.get('error_threshold', 3)
         self.recovery_time = model_config.get('recovery_time_seconds', 300)
 
-        # ── Resilient fallback chain ──────────────────────────────────
+        # ── Resilient manual fallback ──────────────────────────────────
         self._provider_health = {}     # {provider: {failures, last_failure, cooldown_until}}
         self._fallback_lock = asyncio.Lock()
         self._last_successful_fallback = None  # (provider, model, timestamp)
         self.cooldown_config = model_config.get('fallback_cooldowns', {})
-        self.fallback_chain = self._load_fallback_chain(model_config)
+        self.fallback_chain = [] # DISABLED
 
-        # ── Smart routing state (restored after each speak() call) ──
-        self._routed = False           # True if auto_route() switched the model
-        self._pre_route_state = None   # {'provider', 'model', 'api_key'} before routing
+        # ── Smart routing state (Disabled) ──
+        self._routed = False
+        self._pre_route_state = None
 
-        self.smart_routing_keywords = {
-            "coding": ["write code", "debug", "python", "javascript", "typescript", "script",
-                       "function", "class", "implement", "fix this code", "refactor", "compile"],
-            "reasoning": ["analyze", "reason through", "step by step", "think about", "evaluate",
-                          "compare", "pros and cons", "should i", "logical", "explain"],
-            "creative": ["write a story", "poem", "creative", "fiction", "imagine", "brainstorm",
-                         "generate ideas", "song lyrics", "story", "tell me"],
-            "local": ["local", "offline", "private", "no cloud", "on-device", "ollama"],
-            "quick": ["quick", "fast", "briefly", "short answer", "tldr", "summarize in one",
-                      "one sentence", "brief"],
-            "vision": ["image", "screenshot", "picture", "photo", "analyze this image", "what do you see",
-                        "look at", "describe this", "read this image", "what's in", "ocr", "scan this",
-                        "identify", "vision", "phi", "what is shown", "visual"],
-            "math": ["solve", "equation", "integral", "derivative", "calculate", "math", "formula",
-                     "probability", "statistics", "calculus", "algebra"],
-        }
-
-    def _load_fallback_policy_from_yaml(self):
-        """Load fallback tiers and smart routing from config/models.yaml if available."""
-        models_yaml_path = os.path.join(os.path.dirname(self.config_path), 'config', 'models.yaml')
-        if not os.path.exists(models_yaml_path):
-            return
-            
-        try:
-            with open(models_yaml_path, 'r', encoding='utf-8') as f:
-                models_data = yaml.safe_load(f)
-                
-            # 1. Load Fallback Tiers
-            policy = models_data.get('fallback_policy', {})
-            tiers_config = policy.get('tiers', {})
-            
-            if tiers_config:
-                new_tiers = {}
-                for provider, cfg in tiers_config.items():
-                    if isinstance(cfg, dict):
-                        new_tiers[provider] = (cfg.get('tier', 3), cfg.get('default_model'))
-                    elif isinstance(cfg, (list, tuple)) and len(cfg) == 2:
-                        new_tiers[provider] = tuple(cfg)
-                
-                if new_tiers:
-                    self.provider_tiers = new_tiers
-                    import logging
-                    logging.info(f"Loaded {len(new_tiers)} provider tiers from models.yaml")
-                    
-            # 2. Load Smart Routing Table
-            smart_cfg = models_data.get('smart_routing', {})
-            if smart_cfg:
-                new_routing = {}
-                for task, cfg in smart_cfg.items():
-                    if isinstance(cfg, dict):
-                        new_routing[task] = (cfg.get('provider'), cfg.get('model'))
-                    elif isinstance(cfg, (list, tuple)) and len(cfg) == 2:
-                        new_routing[task] = tuple(cfg)
-                
-                if new_routing:
-                    self.smart_routing_table = new_routing
-                    import logging
-                    logging.info(f"Loaded {len(new_routing)} smart routing entries from models.yaml")
-                    
-        except Exception as e:
-            import logging
-            logging.error(f"Error loading policy from models.yaml: {e}")
+    # Policy loading removed (Auto Fallback simplification)
 
     # ─────────────────────────────────────────────────────────────────
     # Error Classification
@@ -196,6 +110,16 @@ class ModelManager:
         if any(k in low for k in ("500", "502", "503", "server error", "service unavailable",
                                    "overloaded", "internal error", "bad gateway")):
             return ERROR_SERVER
+
+        # V14: Better classification for Ollama native errors
+        if "ollama" in low:
+            # Treat 404 (model not found) as transient for Ollama because it usually means
+            # the model is being pulled or the manager is still loading it.
+            if "404" in low or "not found" in low:
+                return ERROR_NETWORK # Network/Transient
+            # 503 or "overloaded" is common during GPU memory swaps
+            if "503" in low or "overloaded" in low or "busy" in low:
+                return ERROR_SERVER
 
         # Timeouts
         if any(k in low for k in ("timed out", "timeout", "timeoutexception", "readtimeout",
@@ -222,74 +146,22 @@ class ModelManager:
                                    "empty result", "no candidates", "generated no")):
             return ERROR_EMPTY
 
+        # Client errors (400) - Fallback if it looks like an API/Model limitation
+        if any(k in low for k in ("400", "invalid_argument", "invalid argument", "bad request",
+                                   "missing a thought_signature", "thought_signature")):
+            return ERROR_SERVER # Treat as transient to trigger fallback
+
         return ERROR_UNKNOWN
 
     # ─────────────────────────────────────────────────────────────────
     # Fallback Chain — Auto-Generation
     # ─────────────────────────────────────────────────────────────────
 
-    def _load_fallback_chain(self, model_config):
-        """
-        Load fallback chain from config, or auto-generate from configured providers.
-        Manual override: set models.fallback_chain in config.yaml.
-        """
-        explicit = model_config.get('fallback_chain')
-        if explicit and isinstance(explicit, list) and len(explicit) > 0:
-            return explicit
-        return self._build_fallback_chain()
-
-    def _build_fallback_chain(self):
-        """
-        Auto-generate a fallback chain based on which providers have API keys.
-        Orders by capability tier (cloud-first, most capable first, local last).
-        Excludes the primary and configured fallback models (they're tried before the chain).
-        """
-        providers_cfg = self.core.config.get('providers', {})
-        chain = []
-
-        for provider, (tier, default_model) in sorted(self.provider_tiers.items(), key=lambda x: x[1][0]):
-            # Skip primary and configured fallback — they're handled before the chain
-            if provider == self.primary_provider:
-                continue
-            if provider == self.fallback_provider:
-                continue
-
-            # Check if provider has an API key configured
-            if provider == 'ollama':
-                # Ollama doesn't need an API key — check if it's available
-                ollama_mgr = getattr(self.core, 'ollama_manager', None)
-                if ollama_mgr and ollama_mgr.discovered_models:
-                    # Use the first discovered model
-                    chain.append({
-                        'provider': 'ollama',
-                        'model': ollama_mgr.discovered_models[0],
-                        'tier': tier,
-                    })
-                continue
-
-            prov_cfg = providers_cfg.get(provider, {})
-            api_key = (prov_cfg.get('apiKey', '') or prov_cfg.get('api_key', '')
-                       or prov_cfg.get('apikey', ''))
-
-            # NVIDIA: also check unified key or sub-keys
-            if provider == 'nvidia' and not api_key:
-                sub_keys = prov_cfg.get('keys', {})
-                if sub_keys and any(v for v in sub_keys.values()):
-                    api_key = next((v for v in sub_keys.values() if v), '')
-
-            if api_key and api_key not in ('', 'NONE'):
-                chain.append({
-                    'provider': provider,
-                    'model': default_model,
-                    'tier': tier,
-                })
-
-        return chain
+    # Fallback chain auto-generation removed as per user request
 
     def rebuild_fallback_chain(self):
-        """Rebuild the chain (called after model switch or config change)."""
-        model_config = self.core.config.get('models', {})
-        self.fallback_chain = self._load_fallback_chain(model_config)
+        """No-op: All auto-fallback lists removed."""
+        self.fallback_chain = []
 
     # ─────────────────────────────────────────────────────────────────
     # Provider Health Tracking
@@ -371,22 +243,12 @@ class ModelManager:
                 await self.switch_to_primary()
 
     def get_fallback_status(self):
-        """Return fallback chain + provider health for API/UI consumption."""
+        """Return provider health for API/UI consumption."""
         status = {
             'chain': [],
             'provider_health': {},
         }
-        for entry in self.fallback_chain:
-            p = entry['provider']
-            available = self._is_provider_available(p)
-            health = self._provider_health.get(p, {})
-            status['chain'].append({
-                'provider': p,
-                'model': entry['model'],
-                'tier': entry.get('tier', 9),
-                'available': available,
-                'failures': health.get('failures', 0),
-            })
+        # Chain is now empty/deprecated in this simplified model.
         for p, h in self._provider_health.items():
             status['provider_health'][p] = {
                 'failures': h.get('failures', 0),
@@ -460,12 +322,9 @@ class ModelManager:
         return primary
 
     async def handle_api_error(self, error_msg):
-        """Handle API error - may trigger fallback."""
+        """Handle API error - will trigger manual fallback if configured."""
         self.error_count += 1
         self.last_error_time = datetime.now()
-
-        if not self.auto_fallback_enabled:
-            return
 
         # Check if should fallback
         if self.current_mode == 'primary' and self.error_count >= self.error_threshold:
@@ -497,7 +356,13 @@ class ModelManager:
         )
 
     async def _save_config(self):
-        """Save model config to config.yaml."""
+        """Save model config to config.yaml with throttle to prevent loops."""
+        now = datetime.now()
+        if getattr(self, '_last_save_time', None):
+            if (now - self._last_save_time).total_seconds() < 5:
+                await self.core.log("Skipping rapid config write, on cooldown...", priority=1)
+                return
+        self._last_save_time = now
         try:
             # Read current config
             with open(self.config_path, 'r', encoding='utf-8') as f:
@@ -543,59 +408,11 @@ class ModelManager:
         except Exception as e:
             await self.core.log(f"Error saving model config: {e}", priority=1)
 
-    # ─────────────────────────────────────────────────────────────────
-    # Smart Model Routing (Galactic Exclusive)
-    # ─────────────────────────────────────────────────────────────────
-
-    def classify_task(self, user_input: str) -> str:
-        """Classify a user message into a task type for smart routing."""
-        # Clean input: strip code blocks and file-like patterns to focus on user intent
-        clean_input = re.sub(r'```[\s\S]*?```', '', user_input)
-        # Also strip common file header patterns (e.g. "File: ...")
-        clean_input = re.sub(r'File:.*?\n', '', clean_input)
-        
-        lower = clean_input.lower()
-        for task_type, keywords in self.smart_routing_keywords.items():
-            if any(kw in lower for kw in keywords):
-                return task_type
-        return "default"
+    # Smart routing logic removed
 
     async def auto_route(self, user_input: str):
-        """
-        Classify the task type for informational logging.
-        Only active when config.models.smart_routing = true.
-        
-        IMPORTANT: This does NOT override the primary model.
-        The user's selected primary and fallback models are always respected.
-        Smart routing only logs a suggestion for debugging purposes.
-        """
-        if not self.core.config.get('models', {}).get('smart_routing', False):
-            return  # Feature is opt-in
-
-        task_type = self.classify_task(user_input)
-        routing = self.smart_routing_table.get(task_type)
-        if not routing or task_type == "default":
-            return
-
-        provider, model = routing
-        
-        # Only log the hint if the provider is actually available/configured
-        if not self._is_provider_available(provider):
-             return
-             
-        providers_cfg = self.core.config.get('providers', {})
-        prov_cfg = providers_cfg.get(provider, {})
-        api_key = (prov_cfg.get('apiKey', '') or prov_cfg.get('api_key', '')
-                   or prov_cfg.get('apikey', ''))
-        
-        if provider != 'ollama' and (not api_key or api_key in ('', 'NONE')):
-             return
-
-        # Log the suggestion but DO NOT switch the model
-        await self.core.log(
-            f"🎯 Smart routing hint: {provider}/{model} (task: {task_type}) — using primary model",
-            priority=4
-        )
+        """No-op: Smart routing removed."""
+        return
 
     def get_status_report(self):
         """Get formatted status report."""
@@ -605,14 +422,6 @@ class ModelManager:
         report += f"**Primary:** {self.primary_provider}/{self.primary_model}\n"
         report += f"**Fallback:** {self.fallback_provider}/{self.fallback_model}\n"
         report += f"**Auto-Fallback:** {'Enabled' if self.auto_fallback_enabled else 'Disabled'}\n"
-        smart = self.core.config.get('models', {}).get('smart_routing', False)
-        report += f"**Smart Routing:** {'Enabled' if smart else 'Disabled'}\n"
-
-        if self.fallback_chain:
-            report += f"**Fallback Chain:** {len(self.fallback_chain)} models\n"
-            for i, entry in enumerate(self.fallback_chain, 1):
-                avail = "🟢" if self._is_provider_available(entry['provider']) else "🔴"
-                report += f"  {i}. {avail} {entry['provider']}/{entry['model']}\n"
 
         if self.current_mode == 'fallback':
             report += f"**Error Count:** {self.error_count}\n"
@@ -698,6 +507,18 @@ class ModelManager:
         all_models = self.get_all_models()
         query_l = query.lower().strip()
         
+        # 0. Handle hf.co (Ollama) specific routing
+        if query_l.startswith('hf.co/'):
+            # Try to find an ollama model that has this ID or contains it
+            for m in all_models:
+                mid_l = m['id'].lower()
+                if mid_l == f"ollama/{query_l}":
+                    return m['id']
+                if query_l in mid_l and m['provider'] == 'ollama':
+                    return m['id']
+            # If not found in all_models, but looks like a full HF path, assume Ollama
+            return f"ollama/{query}"
+
         # 1. Exact ID match (case-insensitive)
         for m in all_models:
             mid = m['id'].lower()

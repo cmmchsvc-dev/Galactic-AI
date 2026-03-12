@@ -77,7 +77,7 @@ class SubAgentSkill(GalacticSkill):
     """The Hive Mind: spawns and manages isolated sub-agent tasks and chains."""
 
     skill_name  = "subagent_manager"
-    version     = "1.6.8"
+    version     = "1.6.9"
     author      = "Galactic AI"
     description = "Multi-agent task orchestration with live monitoring and chains."
     category    = "system"
@@ -217,17 +217,30 @@ class SubAgentSkill(GalacticSkill):
     async def spawn(self, task, agent_id="researcher", model=None,
                     chain_id=None, chain_step=None) -> str:
         """Spawn a new sub-agent task. Returns session ID."""
-        if not model:
-            # 1. config.yaml subagents.default_model
-            model = self.core.config.get("subagents", {}).get("default_model")
+        source = "explicit_request"
         
-        if not model:
-            # 2. active model from ModelManager
+        # 1. Handle Auto-Resolve / null / placeholder strings
+        if not model or str(model).lower() in ("null", "auto-resolve", "same", "same as main agent"):
+            # A) Check the active gateway model (The model currently speaking)
+            # This ensures we match the parent agent even if they've been routed or manually switched.
+            gateway_model = getattr(self.core.gateway.llm, "model", None)
+            if gateway_model:
+                model = gateway_model
+                source = "inherit_main_agent"
+            else:
+                # B) Fallback to config.yaml subagents.default_model
+                model = self.core.config.get("subagents", {}).get("default_model")
+                source = "config_default"
+        
+        if not model or str(model).lower() in ("null", "auto-resolve", "same"):
+            # C) Fallback to active model from ModelManager
             model_mgr = getattr(self.core, "model_manager", None)
             if model_mgr:
                 model = model_mgr.get_current_model().get("model", "gemini-2.5-flash")
+                source = "model_manager_current"
             else:
                 model = self.core.config.get("gateway", {}).get("model", "gemini-2.5-flash")
+                source = "gateway_config_fallback"
 
         # ── Smart Model Resolution ──
         model_mgr = getattr(self.core, "model_manager", None)
@@ -235,11 +248,12 @@ class SubAgentSkill(GalacticSkill):
             resolved = model_mgr.resolve_model_id(model)
             if resolved != model:
                 model = resolved
+                source += " (resolved)"
 
         session = SubAgentSession(agent_id, task, model, chain_id=chain_id, chain_step=chain_step)
         self.active_sessions[session.id] = session
 
-        await self.core.log(f"SubAgent Spawned [{session.id}]: {agent_id} (Model: {model}) → {task[:60]}...", priority=2)
+        await self.core.log(f"SubAgent Spawned [{session.id}]: {agent_id} (Model: {model} [Source: {source}]) → {task[:60]}...", priority=2)
         await self._broadcast_update(session, f"Agent spawned — starting task...")
         await self._chat_notify(f"🤖 Sub-agent spawned: **{agent_id}** · Model: `{model}` · Session: `{session.id}`")
 
@@ -334,6 +348,8 @@ class SubAgentSkill(GalacticSkill):
                 "--- ZERO HALLUCINATION & VERIFICATION POLICY ---\n"
                 "- If you are writing code, you MUST use the `read_file` tool AFTER `write_file` to verify syntax and logic.\n"
                 "- MANDATORY: Before declaring victory, you MUST perform a 'Verification Turn' where you re-read your output and confirm it is error-free.\n"
+                "- If you do NOT see a 'Tool Result (...)' message after your action, your action did NOT happen. You MUST retry or use a different tool.\n"
+                "- If this model does not support native tools, use raw JSON blocks: {\"tool\": \"name\", \"args\": {...}}\n"
                 "- In your final answer, you MUST explicitly state: 'Verification performed on [filename]. Syntax and logic checked.'\n"
                 "- If you find an error during your self-check, FIX IT IMMEDIATELY before notifying the user.\n\n"
                 f"--- DETAILED BLUEPRINT ---\n{session.task}"

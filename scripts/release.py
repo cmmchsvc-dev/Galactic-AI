@@ -178,7 +178,7 @@ def scrub_config():
 
         # Recursive function to clear sensitive keys
         def _scrub_dict(d):
-            sensitive_keywords = ['apikey', 'api_key', 'token', 'secret', 'hash', 'password', 'consumer_key', 'admin_chat_id', 'admin_user_id', 'client_id', 'phone_number_id']
+            sensitive_keywords = ['apikey', 'api_key', 'token', 'secret', 'hash', 'password', 'consumer_key', 'admin_chat_id', 'admin_user_id', 'client_id', 'phone_number_id', 'email']
             for k, v in d.items():
                 if isinstance(v, dict):
                     # Hardcoded clear for NVIDIA model-specific keys
