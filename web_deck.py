@@ -5492,7 +5492,7 @@ try {
         except Exception:
             force = False
 
-        self.core.gateway.log(f"🚀 Update triggered via Web Deck (force={force})", priority=1)
+        self.core.log(f"🚀 Update triggered via Web Deck (force={force})", priority=1)
 
         try:
             # On Windows, we use Popen with DETACHED_PROCESS to ensure update.ps1 survives
@@ -5515,7 +5515,7 @@ try {
                 
             return web.json_response({'ok': True, 'message': 'Update script launched.'})
         except Exception as e:
-            self.core.gateway.log(f"❌ Error launching update script: {e}", priority=1)
+            self.core.log(f"❌ Error launching update script: {e}", priority=1)
             return web.json_response({'ok': False, 'error': str(e)})
 
     async def handle_browser_cmd(self, request):
