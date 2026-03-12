@@ -14,7 +14,7 @@ import httpx
 import webbrowser
 
 from datetime import datetime
-from collections import defaultdict, Counter
+from collections import defaultdict, Counter, deque
 from personality import GalacticPersonality
 from skills.util.monologue_formatter import MonologueFormatter
 
@@ -2563,31 +2563,9 @@ class GalacticGateway:
             except:
                 continue
         
-        # 4. Fallback Extraction: Catch "Hallucinated" or Roleplayed tool calls in text
-        # Format: "Thought: Calling tool chrome_read_page with {"filter": "interactive"}"
-        if not calls:
-            # V14: Improved regex to catch more diverse tool-calling patterns used by local models
-            # Supports "Action: <name>", "Calling tool <name>", "Executing tool <name>" with various separators
-            patterns = [
-                r'(?:Calling tool|Executing tool|Action:?|Tool:?)\s*[`*]*([a-zA-Z0-9_]+)[`*]*\s*(?:with|args:?|input:?|params:?)\s*[`]*({.*?})[`]*',
-                r'[`]*([a-zA-Z0-9_]+)[`]*\s*(?:\()({.*?})(?:\))', # func(args) style
-            ]
-            
-            for p in patterns:
-                matches = re.finditer(p, text, re.DOTALL | re.IGNORECASE)
-                for m in matches:
-                    name = m.group(1).strip()
-                    args_str = m.group(2).strip()
-                    try:
-                        # Attempt to fix common JSON errors from small models (missing braces, trailing commas)
-                        clean_args = args_str.strip().rstrip(',')
-                        if not clean_args.endswith('}'): clean_args += '}'
-                        args = json.loads(clean_args)
-                        calls.append((name, args, None))
-                    except:
-                        continue
-                if calls: break # Stop at first successful pattern match
-                
+        # V17: REMOVED fallback regex parser — it was the #1 cause of phantom tool execution.
+        # Models that narrate "Thought: Calling tool X with {...}" no longer trigger real calls.
+        # Only structured JSON blocks are parsed as tool calls.
         return calls
 
     def _strip_jargon(self, text):
@@ -3270,20 +3248,23 @@ class GalacticGateway:
         system_prompt = self._build_system_prompt(full_context, is_coding=is_coding)
         
         # ── TURN LOOP ──
-        max_turns = self._get_model_override('max_turns', int(self.core.config.get('models', {}).get('max_turns', 150)))
+        max_turns = self._get_model_override('max_turns', int(self.core.config.get('models', {}).get('max_turns', 40)))
         speak_timeout = float(self.core.config.get('models', {}).get('speak_timeout', 3600))
         turn_count = 0
         last_tool_call = None  # Track last (tool_name, json_args_str) to prevent duplicate calls
         duplicate_count = 0    # Track repeated identical calls
         
-        # ── Anti-spin guardrails ──
+        # ── Anti-spin guardrails (V17: hardened) ──
         consecutive_failures = 0   # Consecutive tool errors/timeouts
         stagnation_count = 0       # Discovery loops without action
-        recent_tools = []          # Rolling window of last 6 tool names
+        recent_tools = deque(maxlen=30)  # V17: Rolling window, NOT cleared per turn
         _nudge_half_sent = False   # Track whether 50% nudge was sent
         _nudge_80_sent = False     # Track whether 80% nudge was sent
         _text_only_action_turns = 0  # Consecutive turns where model claimed an action but called no tools
         _recent_response_fingerprints = []  # Rolling hashes of recent responses for text-loop detection
+        _discovery_budget = 20     # V17: Max total discovery calls per speak()
+        _discovery_calls_used = 0  # V17: Running counter
+        _tool_name_counts = Counter()  # V17: Fuzzy per-tool-name counter (ignores args)
 
         # Clear any pending stop request at the start of a new speak() call
         self._stop_requested = False
@@ -3320,6 +3301,7 @@ class GalacticGateway:
             nonlocal turn_count, last_tool_call, messages, duplicate_count, stagnation_count
             nonlocal consecutive_failures, recent_tools, _nudge_half_sent, _nudge_80_sent
             nonlocal _text_only_action_turns, _recent_response_fingerprints
+            nonlocal _discovery_calls_used, _tool_name_counts  # V17
 
             for _ in range(max_turns):
                 # ── STOP FLAG CHECK (user pressed STOP or /api/stop_agent was called) ──
@@ -3459,10 +3441,11 @@ class GalacticGateway:
                         is_browser_tool = tool_name.startswith('chrome_') or tool_name.startswith('browser_')
                         
                         # Block if the SAME tool+args is called too many times across ALL turns
-                        # Relaxed for browser/discovery tools to allow retries in complex environments
                         _loop_limit = 3
-                        if is_browser_tool or tool_name in _DISCOVERY_TOOLS:
-                            _loop_limit = 12 # V13: Allow even more retries for browsing
+                        if is_browser_tool:
+                            _loop_limit = 12 # V13: Allow retries for browsing
+                        elif tool_name in _DISCOVERY_TOOLS:
+                            _loop_limit = 5  # V17: Tighter limit for discovery tools
                         
                         if repetition_count > _loop_limit:
                             await self.core.log(f"🛑 Multi-turn loop blocked: {tool_name} (x{repetition_count})", priority=1)
@@ -3558,6 +3541,28 @@ class GalacticGateway:
                                 result = f"[Tool Error] {actual_tool_name} raised: {e}"
                                 await self._emit_trace("tool_result", turn_count, session_id=trace_sid,
                                                        tool=actual_tool_name, result=str(result)[:3000], success=False)
+
+                        # V17: Discovery budget tracking
+                        if actual_tool_name in _DISCOVERY_TOOLS:
+                            _discovery_calls_used += 1
+                            if _discovery_calls_used >= _discovery_budget:
+                                messages.append({
+                                    "role": "user",
+                                    "content": (
+                                        "⚠️ RESEARCH BUDGET EXHAUSTED. You have used all 20 discovery tool calls. "
+                                        "You MUST now either: (1) perform the action using write_file/edit_file/exec_shell, "
+                                        "or (2) provide your final answer. No more read_file/grep_search/list_dir/find_files calls."
+                                    )
+                                })
+
+                        # V17: Fuzzy per-tool-name counter (catches same tool, different args)
+                        _tool_name_counts[actual_tool_name] += 1
+                        if actual_tool_name not in _DUPLICATE_EXEMPT and _tool_name_counts[actual_tool_name] > 8:
+                            await self.core.log(f"🔄 Tool overuse guard: {actual_tool_name} called {_tool_name_counts[actual_tool_name]} times total", priority=1)
+                            messages.append({
+                                "role": "user",
+                                "content": f"⚠️ You have called {actual_tool_name} {_tool_name_counts[actual_tool_name]} times with different arguments. You are over-researching. Provide your answer or take action NOW."
+                            })
                         
                         # ── Browser Stagnation Guard ──
                         if is_browser_tool and actual_tool_name in ('chrome_click', 'chrome_type', 'chrome_key_press', 'browser_click', 'browser_type', 'browser_press', 'browser_click_by_ref'):
@@ -3695,25 +3700,26 @@ class GalacticGateway:
                                     "Use chrome_type NOW."
                                 ).format(consecutive_scrolls)
                             })
-                            recent_tools.clear()
+                            recent_tools.clear()  # Only clear for scroll correction
                         elif consecutive_scrolls >= 5:
                             await self.core.log(f"🛑 Excessive scrolling ({consecutive_scrolls}x). Breaking loop.", priority=1)
                             messages.append({
                                 "role": "user",
                                 "content": f"⚠️ You have scrolled {consecutive_scrolls} times. The page may not have more content. Try a different approach or provide your final answer."
                             })
-                            recent_tools.clear()
+                            recent_tools.clear()  # Only clear for excessive scroll correction
 
+                    # V17: Rolling window repetition guard (deque accumulates across turns)
                     if len(recent_tools) >= 9:
-                        tool_counts = Counter(list(recent_tools)[-10:])
+                        tool_counts = Counter(list(recent_tools)[-15:])
                         most_common_tool, most_common_count = tool_counts.most_common(1)[0]
-                        if most_common_count >= 8 and most_common_tool not in _DUPLICATE_EXEMPT:
+                        if most_common_count >= 6 and most_common_tool not in _DUPLICATE_EXEMPT:
                             await self.core.log(f"🔄 Repetition guard: {most_common_tool} x{most_common_count}", priority=1)
                             messages.append({
                                 "role": "user",
-                                "content": f"You are stuck calling {most_common_tool}. Try a different approach."
+                                "content": f"You are stuck calling {most_common_tool}. Try a different approach or provide your final answer."
                             })
-                    recent_tools.clear()
+                    # V17: REMOVED recent_tools.clear() — deque now accumulates across turns
 
                     # ── Mandatory Turn Pacing ──
                     # If browser tools were used, add a settle delay before the next turn
@@ -3803,8 +3809,10 @@ class GalacticGateway:
                 called_type = 'chrome_type' in recent_tools or 'browser_type' in recent_tools
 
                 if not tool_calls:
-                    # ── Persistence Nudge (Radical Autonomy) ──
-                    if self.is_coding and turn_count < max_turns - 1:
+                    # ── Persistence Nudge (V17: gated behind discovery budget) ──
+                    # Only nudge early in the task — if the model has already done extensive research,
+                    # let it stop instead of forcing it back into a loop.
+                    if self.is_coding and turn_count < max_turns - 1 and _discovery_calls_used < _discovery_budget // 2:
                         # If coding mode is active, we expect verification or a TASK_COMPLETE marker.
                         if "TASK_COMPLETE" not in response_text and "verification" not in response_text.lower():
                              await self.core.log("🔄 Persistence Nudge: Coding task not verifiably complete.", priority=2)
@@ -4712,7 +4720,7 @@ class GalacticGateway:
                 return "[ERROR] Gemini Native: No candidates (safety filter?)"
             
             candidate = response.candidates[0]
-            parts = candidate.content.parts
+            parts = candidate.content.parts or []
             
             tool_calls = []
             text_content = ""
