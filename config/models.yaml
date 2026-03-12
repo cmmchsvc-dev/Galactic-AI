@@ -131,6 +131,10 @@ providers:
       name: "Pony Alpha (Agentic 200K)🐎: Foundation model excelling in coding, agentic workflows, and roleplay."
       provider: "openrouter"
       enabled: true
+    - id: "openrouter/free"
+      name: "OpenRouter Free (Auto-Router 200K)🆓: Automatically routes to the best available free model based on your request."
+      provider: "openrouter"
+      enabled: true
     - id: "qwen/qwen3.5-flash"
       name: "Qwen 3.5 Flash ⚡"
       provider: "openrouter"
