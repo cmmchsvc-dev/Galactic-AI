@@ -127,10 +127,6 @@ providers:
       name: "Aurora Alpha (Fast Reasoning 128K)🌅: High-speed reasoning model with exposed thinking steps; ideal for coding."
       provider: "openrouter"
       enabled: true
-    - id: "openrouter/pony-alpha"
-      name: "Pony Alpha (Agentic 200K)🐎: Foundation model excelling in coding, agentic workflows, and roleplay."
-      provider: "openrouter"
-      enabled: true
     - id: "openrouter/free"
       name: "OpenRouter Free (Auto-Router 200K)🆓: Automatically routes to the best available free model based on your request."
       provider: "openrouter"
