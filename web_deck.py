@@ -3499,7 +3499,13 @@ function updateSettingsModelList(role) {
 function populatePmoDropdown() {
   const sel = document.getElementById('pmo-model');
   if (!sel || sel.tagName !== 'SELECT') return;
-  const flat = _flatModels();
+
+  // ── Preserve current user selections before rebuilding ──
+  const savedSel = sel.value;
+  const savedCustom = (document.getElementById('pmo-model-custom') || {}).value || '';
+  const savedMaxTok = (document.getElementById('pmo-max-tokens') || {}).value || '';
+  const savedCtxWin = (document.getElementById('pmo-context-window') || {}).value || '';
+
   sel.innerHTML = '<option value="">-- select model --</option>';
   const IMAGE_ONLY = ['Google Imagen', 'FLUX'];
   for (const [group, models] of Object.entries(ALL_MODELS)) {
@@ -3515,6 +3521,15 @@ function populatePmoDropdown() {
     });
     sel.appendChild(optGroup);
   }
+
+  // ── Restore previous selections after rebuild ──
+  if (savedSel) sel.value = savedSel;
+  const customEl = document.getElementById('pmo-model-custom');
+  if (customEl && savedCustom) customEl.value = savedCustom;
+  const maxTokEl = document.getElementById('pmo-max-tokens');
+  if (maxTokEl && savedMaxTok) maxTokEl.value = savedMaxTok;
+  const ctxWinEl = document.getElementById('pmo-context-window');
+  if (ctxWinEl && savedCtxWin) ctxWinEl.value = savedCtxWin;
 }
 
 async function loadSettingsValues() {
