@@ -4961,7 +4961,7 @@ class GalacticGateway:
                 content = (msg.get('content') or '').strip()
                 reasoning = (msg.get('reasoning_content') or '').strip()
                 # Handle native tool_calls
-                if not content and not reasoning and msg.get('tool_calls'):
+                if not content and not reasoning and msg.get('tool_calls') is not None:
                     tc_list = msg['tool_calls']
                     if tc_list:
                         fn = tc_list[0].get('function', {})
@@ -5318,7 +5318,7 @@ class GalacticGateway:
                         data = resp.json()
                         msg = data.get('message', {})
                         content = (msg.get('content') or '').strip()
-                        if not content and msg.get('tool_calls'):
+                        if not content and msg.get('tool_calls') is not None:
                             tc_list = msg['tool_calls']
                             synthesized = []
                             for tc in tc_list:
@@ -5924,7 +5924,7 @@ class GalacticGateway:
                     refusal = (msg.get('refusal') or '').strip()
                     # Handle native tool_calls (Gemini/GPT via OpenRouter may
                     # use this instead of putting JSON in content text)
-                    if msg.get('tool_calls'):
+                    if msg.get('tool_calls') is not None:
                         tc_list = msg['tool_calls']
                         if tc_list:
                             synthesized_list = []
@@ -7388,4 +7388,46 @@ $notify.Dispose()
             await self._git_exec(['add', '-A'], cwd=cwd)
         return await self._git_exec(['commit', '-m', message], cwd=cwd)
 
+
     # tool_spawn_subagent, tool_check_subagent — Migrated to skills/core/subagent_manager.py
+
+    async def tool_restart_galactic(self, args):
+        """
+        Restart the Galactic AI process from within an agent task.
+        Use this after applying self-repairs (patching files, installing deps, etc.)
+        so changes take effect without manual intervention.
+
+        Args (all optional):
+          reason (str): Human-readable reason for the restart (logged before shutdown).
+
+        Returns: confirmation string. Note: the response is sent before the process
+                 restarts, so the current task/session will end immediately after.
+        """
+        reason = args.get('reason', 'Self-repair restart requested by agent.')
+        await self.core.log(f"🔄 Agent-initiated restart: {reason}", priority=1)
+
+        try:
+            import aiohttp
+            port = self.core.config.get('web', {}).get('port', 17789)
+            url  = f"http://127.0.0.1:{port}/api/restart"
+            async with aiohttp.ClientSession() as session:
+                async with session.post(url, json={'reason': reason}, timeout=aiohttp.ClientTimeout(total=5)) as resp:
+                    data = await resp.json()
+                    if data.get('ok'):
+                        return f"✅ Restart triggered: {data.get('message', 'Restarting...')} Reason: {reason}"
+                    else:
+                        return f"⚠️ Restart API returned error: {data}"
+        except Exception as e:
+            # Fallback: direct OS-level restart if HTTP call fails (e.g., web deck not running)
+            await self.core.log(f"⚠️ HTTP restart failed ({e}), falling back to direct restart.", priority=1)
+            import sys, subprocess, asyncio
+            async def _direct_restart():
+                await asyncio.sleep(1.0)
+                subprocess.Popen([sys.executable] + sys.argv)
+                shutdown_event = getattr(self.core, 'shutdown_event', None)
+                if shutdown_event:
+                    shutdown_event.set()
+                else:
+                    sys.exit(0)
+            asyncio.create_task(_direct_restart())
+            return f"✅ Direct restart scheduled. Reason: {reason}"
