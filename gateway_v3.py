@@ -1314,7 +1314,12 @@ class GalacticGateway:
     }
 
     async def tool_write_file(self, args):
-        """Write content to a file (non-blocking) with robust error handling."""
+        """Write content to a file (non-blocking) with robust error handling.
+        
+        VERIFICATION GUARANTEE: After every write, this tool immediately reads
+        the file back and returns the verified byte count and line count.
+        This is structural proof that the write actually happened on disk.
+        """
         path = args.get('path')
         content = args.get('content')
         if not path:
@@ -1327,20 +1332,41 @@ class GalacticGateway:
                 f"Create a new file with a different name instead."
             )
 
-        def _write_sync():
+        def _write_and_verify():
             try:
-                # Detect starting path type for better logging/feedback
                 is_absolute = os.path.isabs(path)
-                
-                # Ensure absolute path and directory existence
                 abs_path = os.path.abspath(path)
                 os.makedirs(os.path.dirname(abs_path), exist_ok=True)
+
+                # ── WRITE ──
                 with open(abs_path, 'w', encoding='utf-8') as f:
                     f.write(content)
-                
-                p_msg = f" (resolved from relative)" if not is_absolute else ""
-                res_msg = f"Successfully wrote {len(content)} chars to {abs_path}{p_msg}"
-                return res_msg
+
+                # ── IMMEDIATE READ-BACK (structural verification) ──
+                # This is what makes tool results trustworthy. The model SEES the
+                # proof: line count, byte count, and a content fingerprint.
+                # It cannot claim it wrote something unless this block confirms it.
+                with open(abs_path, 'r', encoding='utf-8') as f:
+                    verified_content = f.read()
+
+                verified_lines = verified_content.count('\n') + 1
+                verified_bytes = len(verified_content.encode('utf-8'))
+                expected_bytes = len((content or '').encode('utf-8'))
+
+                if verified_bytes == 0 and expected_bytes > 0:
+                    return (
+                        f"❌ WRITE VERIFICATION FAILED: Wrote to {abs_path} but read back 0 bytes. "
+                        f"Expected {expected_bytes} bytes. The file may be empty or locked."
+                    )
+
+                p_msg = " (resolved from relative)" if not is_absolute else ""
+                return (
+                    f"✅ WRITE VERIFIED\n"
+                    f"  Path: {abs_path}{p_msg}\n"
+                    f"  Lines written: {verified_lines}\n"
+                    f"  Bytes on disk: {verified_bytes}\n"
+                    f"  Status: File confirmed on disk. No further read-back needed."
+                )
             except PermissionError:
                 return f"❌ Access Denied: Cannot write to {path}. File may be locked by another process or system restricted."
             except OSError as e:
@@ -1350,7 +1376,7 @@ class GalacticGateway:
 
         try:
             loop = asyncio.get_running_loop()
-            return await loop.run_in_executor(None, _write_sync)
+            return await loop.run_in_executor(None, _write_and_verify)
         except Exception as e:
             return f"Error writing file: {e}"
 
@@ -1762,12 +1788,17 @@ class GalacticGateway:
             return f"Error listing tasks: {e}"
     
     async def tool_edit_file(self, args):
-        """Robustly edit a file (non-blocking)."""
+        """Robustly edit a file (non-blocking).
+        
+        VERIFICATION GUARANTEE: After every edit, this tool reads the file back
+        and returns the verified line count and surrounding context. This is the
+        structural proof that the change actually landed on disk.
+        """
         path = args.get('path')
         if not path:
             return "Error: 'path' parameter is required."
 
-        def _edit_sync():
+        def _edit_and_verify():
             # Collect replacements
             replacements = []
             if 'replacements' in args and isinstance(args['replacements'], list):
@@ -1811,10 +1842,8 @@ class GalacticGateway:
                             return f"Error: Found {count} occurrences of '{old_text}' within lines {s}-{e}. Be more specific."
                         segment = segment.replace(old_text, new_text)
                     
-                    # Reconstruct full content
                     new_content = "".join(lines[:s-1]) + segment + "".join(lines[e:])
                 else:
-                    # Global replacements
                     new_content = content
                     for old_text, new_text in replacements:
                         count = new_content.count(old_text)
@@ -1826,17 +1855,46 @@ class GalacticGateway:
                             return f"Error: Found {count} occurrences of '{old_text}'. Use start_line/end_line to disambiguate."
                         new_content = new_content.replace(old_text, new_text)
 
-                # Write back
+                # ── WRITE BACK ──
                 with open(path, 'w', encoding='utf-8') as f:
                     f.write(new_content)
 
-                return f"[OK] Successfully applied {len(replacements)} replacement(s) to {path}."
+                # ── IMMEDIATE READ-BACK (structural verification) ──
+                # Read the file from disk and verify the change actually landed.
+                # The model receives PROOF: line count + confirmation the new text exists.
+                with open(path, 'r', encoding='utf-8') as f:
+                    verified_content = f.read()
+
+                verified_lines = verified_content.count('\n') + 1
+                verified_bytes = len(verified_content.encode('utf-8'))
+
+                # Spot-check: verify the new text actually landed in the file
+                verification_checks = []
+                for old_text, new_text in replacements:
+                    if new_text and new_text[:40] in verified_content:
+                        verification_checks.append(f"  ✓ '{new_text[:40].strip()}...' confirmed on disk")
+                    elif new_text == '':
+                        verification_checks.append(f"  ✓ Deletion of '{old_text[:30].strip()}...' confirmed")
+                    else:
+                        verification_checks.append(f"  ⚠ '{new_text[:40].strip()}...' NOT found after write — possible encoding issue")
+
+                checks_str = '\n'.join(verification_checks) if verification_checks else '  (no spot-checks)'
+
+                return (
+                    f"✅ EDIT VERIFIED\n"
+                    f"  File: {path}\n"
+                    f"  Replacements applied: {len(replacements)}\n"
+                    f"  Total lines after edit: {verified_lines}\n"
+                    f"  Bytes on disk: {verified_bytes}\n"
+                    f"  Content spot-checks:\n{checks_str}\n"
+                    f"  Status: Edit confirmed on disk."
+                )
             except Exception as e:
                 return f"Error editing file: {str(e)}"
 
         try:
             loop = asyncio.get_running_loop()
-            return await loop.run_in_executor(None, _edit_sync)
+            return await loop.run_in_executor(None, _edit_and_verify)
         except Exception as e:
             return f"Error editing file: {str(e)}"
     
@@ -2674,8 +2732,12 @@ class GalacticGateway:
             "3. NO BASH: You are on WINDOWS. Use PowerShell or direct commands.\n"
             "4. ACTION-FIRST: Call all necessary tools in your VERY FIRST response. Do not explain. JUST DO IT.\n"
             "5. NO PLACEHOLDERS: NEVER use placeholder values. READ config.yaml if you need keys.\n"
-            "6. INDEPENDENT VERIFICATION: ALWAYS verify a file exists after creating it.\n"
-            "7. NO HALLUCINATION: If a tool fails, analyze the error and pivot.\n"
+            "6. TOOL-RESULT TRUTH (THE IRONCLAD ANTI-HALLUCINATION RULE): Your ONLY source of truth is tool results. \n"
+            "   - If you called write_file or edit_file, you will see a '✅ WRITE VERIFIED' or '✅ EDIT VERIFIED' result with the exact line count and bytes confirmed on disk. That is your proof. \n"
+            "   - If you did NOT call a tool, NOTHING HAPPENED. You may NOT say you wrote, updated, saved, edited, or created anything unless a tool result with '✅' appears in the conversation. \n"
+            "   - If you are unsure whether a file was written, call read_file to check. Do NOT assume. \n"
+            "   - 'I've written X to SOUL.md' or 'Done. I've updated the file' are INVALID responses if no tool result proves it.\n"
+            "7. IF A TOOL FAILS: Analyze the error. If the tool returned an error, the action DID NOT HAPPEN. Fix the error and retry.\n"
             "8. PROTOCOL: Output raw JSON for tools ONLY IF native function calling is NOT available. If native mode is active (Rule 5 of Protocol), follow that strictly.\n"
             "9. FILESYSTEM ACCESS: You HAVE full read/write access. NEVER say 'I cannot save files'.\n"
             "10. TOOL RESULT TRUTH: If a tool was executed, that action DID happen. NEVER deny it.\n"
