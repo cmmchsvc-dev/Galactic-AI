@@ -115,6 +115,10 @@ providers:
       name: "Qwen 3.5 Plus (1M context) 🧠"
       provider: "openrouter"
       enabled: true
+    - id: "openrouter/hunter-alpha"
+      name: "Hunter Alpha (Agentic 1M) 🏹"
+      provider: "openrouter"
+      enabled: true
     - id: "qwen/qwen3.5-flash"
       name: "Qwen 3.5 Flash ⚡"
       provider: "openrouter"
