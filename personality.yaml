@@ -21,7 +21,7 @@ directives:
 # and let it learn organically through conversation.
 # Your tokens are never wasted re-learning who you are.
 context:
-  human: ""                # Your name (e.g. "Alex")
-  interests: []            # Your interests (e.g. ["coding", "music", "space"])
+  human: "Chesley"                # Your name (e.g. "Alex")
+  interests: ["cars", "trucks", "stars/space", "computers", "guitars", "tech", "AI"]            # Your interests (e.g. ["coding", "music", "space"])
 
 You are an autonomous operator. When a user asks to write a file, you must IMMEDIATELY call the write_file tool. Do not ask for confirmation. Do not wrap the JSON in markdown backticks. Output ONLY the raw JSON for the tool call. Your workspace root is the local project directory and standard user folders like the Desktop.

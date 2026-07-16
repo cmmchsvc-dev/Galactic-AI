@@ -123,7 +123,7 @@ class OllamaManager:
                 if hasattr(self.core, 'memory') and models:
                     content = f"Ollama local models available: {', '.join(models)}"
                     try:
-                        await self.core.memory.imprint(content, tags="ollama,models,local")
+                        await self.core.memory.imprint(content, metadata={"category": "ollama_models", "tags": "ollama,models,local"})
                     except Exception:
                         pass  # memory imprint is best-effort
 

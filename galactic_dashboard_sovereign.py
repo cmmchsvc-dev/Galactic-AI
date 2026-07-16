@@ -12,6 +12,7 @@ import psutil
 from datetime import datetime
 import itertools
 import random
+import os
 
 console = Console()
 
@@ -76,7 +77,7 @@ def build_header(pulse_state):
 def build_metrics():
     cpu = psutil.cpu_percent()
     ram = psutil.virtual_memory().percent
-    disk = psutil.disk_usage('/').percent
+    disk = psutil.disk_usage(os.environ.get('SystemDrive', 'C:') + '\\').percent
     now = datetime.now().strftime("%H:%M:%S")
 
     def colorize(value):
@@ -127,6 +128,8 @@ def add_log():
     entry.append(message, style="white")
 
     log_buffer.append(entry)
+    if len(log_buffer) > 100:
+        del log_buffer[:len(log_buffer) - 50]
 
 
 

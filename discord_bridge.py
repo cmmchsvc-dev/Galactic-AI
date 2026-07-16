@@ -26,10 +26,6 @@ class DiscordBridge:
         self._component = "Discord"
         self._authorized_user_id = str(self.config.get('admin_user_id', '')).strip()
 
-    async def _log(self, message, priority=3):
-        """Route logs to the Discord component log file."""
-        await self.core.log(message, priority=priority, component=self._component)
-
         if HAS_DISCORD and self.bot_token:
             intents = discord.Intents.default()
             intents.message_content = True
@@ -40,6 +36,10 @@ class DiscordBridge:
             self._setup_slash_commands()
         else:
             self.bot = None
+
+    async def _log(self, message, priority=3):
+        """Route logs to the Discord component log file."""
+        await self.core.log(message, priority=priority, component=self._component)
 
     def is_configured(self) -> bool:
         """Return True if Discord bridge has minimum viable configuration."""

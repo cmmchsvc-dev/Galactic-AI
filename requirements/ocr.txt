@@ -1,0 +1,6 @@
+# FEATURE: ocr — Read text from images and the screen
+# Adds the desktop_ocr tool. Heavy: easyocr pulls in torch and downloads
+# detection models (~100 MB) on first use.
+# Tip: if you enabled the 'memory' feature, torch is already installed.
+
+easyocr>=1.7.0

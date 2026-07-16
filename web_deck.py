@@ -12,7 +12,7 @@ class GalacticWebDeck:
     def __init__(self, core):
         self.core = core
         self.config = core.config.get('web', {})
-        self.port = self.config.get('port', 18789)
+        self.port = self.config.get('port', 17789)  # matches config.yaml, CLI, and desktop shell
         self.host = self.config.get('host', '127.0.0.1')
         self.password_hash = self.config.get('password_hash')
         self.remote_access = self.config.get('remote_access', False)
@@ -77,20 +77,44 @@ class GalacticWebDeck:
         self.app.router.add_post('/api/model_overrides', self.handle_set_model_override)
         self.app.router.add_delete('/api/model_overrides', self.handle_delete_model_override)
         self.app.router.add_get('/api/history', self.handle_history)
+        self.app.router.add_post('/api/history/load', self.handle_history_load)
+        # Named chat sessions (save / switch / delete)
+        self.app.router.add_get('/api/sessions', self.handle_sessions_list)
+        self.app.router.add_post('/api/sessions/save', self.handle_session_save)
+        self.app.router.add_post('/api/sessions/switch', self.handle_session_switch)
+        self.app.router.add_post('/api/sessions/delete', self.handle_session_delete)
         self.app.router.add_get('/api/logs', self.handle_logs)
         self.app.router.add_get('/api/image/{filename}', self.handle_serve_image)
         self.app.router.add_get('/api/video/{filename}', self.handle_serve_video)
+        self.app.router.add_get('/api/audio/{filename}', self.handle_serve_audio)
         self.app.router.add_get('/api/images/{subfolder}/{filename}', self.handle_serve_image_sub)
         self.app.router.add_get('/api/traces', self.handle_traces)
         self.app.router.add_post('/api/save_key', self.handle_save_key)
         # Settings endpoints
         self.app.router.add_post('/api/settings/models', self.handle_settings_models)
         self.app.router.add_post('/api/settings/voice', self.handle_settings_voice)
+        self.app.router.add_post('/api/settings/personality', self.handle_settings_personality)
         self.app.router.add_post('/api/settings/system', self.handle_settings_system)
         self.app.router.add_post('/api/settings/thinking', self.handle_settings_thinking)
+        self.app.router.add_get('/api/doctor', self.handle_doctor)
+        self.app.router.add_get('/api/config_full', self.handle_config_full)
+        self.app.router.add_post('/api/config_update', self.handle_config_update)
+        self.app.router.add_post('/api/cli_sync', self.handle_cli_sync)
+        # Memory endpoints (used by the CLI's /recall and /compact commands)
+        self.app.router.add_post('/api/memory/search', self.handle_memory_search)
+        self.app.router.add_post('/api/memory/compact', self.handle_memory_compact)
+        # Memory browser (deck Memory tab)
+        self.app.router.add_get('/api/memory/list', self.handle_memory_list)
+        self.app.router.add_get('/api/memory/stats', self.handle_memory_stats)
+        self.app.router.add_post('/api/memory/delete', self.handle_memory_delete)
         # Voice API endpoints
         self.app.router.add_post('/api/tts', self.handle_tts)
         self.app.router.add_post('/api/stt', self.handle_stt)
+        self.app.router.add_post('/api/voice/stop', self.handle_voice_stop)
+        self.app.router.add_get('/api/voice/wakeword', self.handle_wakeword_get)
+        self.app.router.add_post('/api/voice/wakeword', self.handle_wakeword_set)
+        # Executable Smart Artifacts
+        self.app.router.add_post('/api/artifact/run', self.handle_artifact_run)
         # Power control endpoints
         self.app.router.add_post('/api/restart', self.handle_restart)
         self.app.router.add_post('/api/shutdown', self.handle_shutdown)
@@ -103,11 +127,16 @@ class GalacticWebDeck:
         self.app.router.add_post('/api/stop_agent', self.handle_stop_agent)
         # Subagent Hive Mind API
         self.app.router.add_get('/api/subagents', self.handle_subagents)
+        self.app.router.add_delete('/api/subagents/clear', self.handle_clear_subagents)
         self.app.router.add_delete('/api/subagents/{session_id}', self.handle_cancel_subagent)
         self.app.router.add_post('/api/subagents/chain', self.handle_spawn_chain)
         self.app.router.add_get('/api/subagents/default_model', self.handle_get_subagent_model)
         self.app.router.add_post('/api/subagents/default_model', self.handle_set_subagent_model)
         self.app.router.add_get('/api/subagents/models', self.handle_subagent_models)
+        self.app.router.add_get('/api/swarm/config', self.handle_get_swarm_config)
+        self.app.router.add_post('/api/swarm/config', self.handle_set_swarm_config)
+        # Virtual Terminal WebSocket (deck Terminal panel)
+        self.app.router.add_get('/ws/terminal', self.handle_terminal_ws)
         # Chrome Bridge WebSocket — connects the Galactic Browser extension
         self.app.router.add_get('/ws/chrome_bridge', self.handle_chrome_bridge_ws)
         self.trace_buffer = []  # last 500 agent trace entries for persistence
@@ -176,20 +205,25 @@ class GalacticWebDeck:
         """POST /api/stop_agent - Sets the stop flag so the ReAct loop exits cleanly at the next turn.
         Unlike cancel_task (which abruptly cancels async tasks), this asks the agent to stop gracefully."""
         gateway = self.core.gateway
-        # Set the stop flag on every gateway that might be running
-        gateways = [gateway]
-        # Also try to stop any isolated subagent gateways if accessible
+        
+        # 1. Gracefully stop the main gateway
+        if hasattr(gateway, '_stop_requested'):
+            gateway._stop_requested = True
+            
+        # 2. Cancel all running subagents in the background
         mgr = self._get_subagent_mgr()
-        if mgr and hasattr(mgr, 'get_all_sessions'):
-            for session in mgr.get_all_sessions().values():
-                gw = session.get('gateway')
-                if gw and hasattr(gw, '_stop_requested'):
-                    gw._stop_requested = True
-        for gw in gateways:
-            if hasattr(gw, '_stop_requested'):
-                gw._stop_requested = True
-        await self.core.log("🛑 STOP signal sent to agent loop.", priority=1)
-        return web.json_response({'ok': True, 'message': '🛑 Stop signal sent. The agent will halt at the next turn.'})
+        subagent_cancelled_count = 0
+        if mgr and hasattr(mgr, 'active_sessions'):
+            for session in list(mgr.active_sessions.values()):
+                if session.status in ('pending', 'running'):
+                    mgr.cancel_session(session.id)
+                    subagent_cancelled_count += 1
+                    
+        await self.core.log(f"🛑 STOP signal sent. Gracefully stopping main agent. Cancelled {subagent_cancelled_count} running subagents.", priority=1)
+        return web.json_response({
+            'ok': True, 
+            'message': f'🛑 Stop signal sent. Main agent will stop at next turn. Cancelled {subagent_cancelled_count} subagent(s).'
+        })
 
     # ── Subagent Hive Mind API ───────────────────────────────────────────────
 
@@ -205,6 +239,13 @@ class GalacticWebDeck:
         if not mgr:
             return web.json_response({'error': 'Subagent manager skill string not loaded/enabled'}, status=404)
         return web.json_response(mgr.get_all_sessions())
+
+    async def handle_clear_subagents(self, request):
+        """DELETE /api/subagents/clear"""
+        mgr = self._get_subagent_mgr()
+        if mgr:
+            mgr.clear_completed_sessions()
+        return web.json_response({'ok': True})
 
     async def handle_cancel_subagent(self, request):
         """DELETE /api/subagents/{session_id}"""
@@ -250,6 +291,34 @@ class GalacticWebDeck:
         except Exception as e:
             return web.json_response({"error": str(e)}, status=500)
 
+    async def handle_get_swarm_config(self, request):
+        """GET /api/swarm/config"""
+        config = self.core.config.get("subagents", {})
+        return web.json_response({
+            "allow_auto": config.get("allow_auto", True),
+            "allow_online_models": config.get("allow_online_models", False),
+            "whitelist": config.get("allowed_online_models", [])
+        })
+
+    async def handle_set_swarm_config(self, request):
+        """POST /api/swarm/config"""
+        try:
+            data = await request.json()
+            if "subagents" not in self.core.config:
+                self.core.config["subagents"] = {}
+            
+            if "allow_auto" in data:
+                self.core.config["subagents"]["allow_auto"] = data["allow_auto"]
+            if "allow_online_models" in data:
+                self.core.config["subagents"]["allow_online_models"] = data["allow_online_models"]
+            if "whitelist" in data:
+                self.core.config["subagents"]["allowed_online_models"] = data["whitelist"]
+                
+            self.core.save_config()
+            return web.json_response({"ok": True})
+        except Exception as e:
+            return web.json_response({"error": str(e)}, status=500)
+
     async def handle_subagent_models(self, request):
         """GET /api/subagents/models — returns all known model IDs for the selector."""
         try:
@@ -274,4348 +343,38 @@ class GalacticWebDeck:
             return web.json_response([], status=200)
 
     async def handle_index(self, request):
-        html = r"""<!DOCTYPE html>
-<html lang="en">
-<head>
-<meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>GALACTIC AI — CONTROL DECK</title>
-<style>
-*{box-sizing:border-box;margin:0;padding:0}
-:root{
-  --bg:#04050d;--bg2:#0a0b18;--bg3:#101120;
-  --cyan:#00f3ff;--pink:#ff00c8;--green:#00ff88;--yellow:#ffcc00;--red:#ff4545;--orange:#ff8c00;
-  --border:rgba(0,243,255,0.22);--border-hi:rgba(0,243,255,0.45);--text:#e8e8e8;--dim:#8a8aaa;
-  --font:'Segoe UI',system-ui,sans-serif;--mono:'Cascadia Code','Consolas',monospace;
-  --fs:17px;
-}
-html{font-size:var(--fs)}
-body{background:var(--bg);color:var(--text);font-family:var(--font);height:100vh;overflow:hidden;display:flex;flex-direction:column;font-size:1rem}
-
-/* ── TOPBAR ─────────────────────────────────────────────────────────────── */
-#topbar{display:flex;align-items:center;justify-content:space-between;padding:10px 24px;background:var(--bg2);border-bottom:1px solid var(--border);flex-shrink:0;z-index:100;box-shadow:0 2px 20px rgba(0,0,0,0.4);height:64px}
-#topbar-left{display:flex;align-items:center;gap:12px;flex:1;justify-content:flex-start;min-width:0}
-#topbar-right{display:flex;align-items:center;gap:14px;flex:1;justify-content:flex-end;min-width:0}
-#topbar .logo{font-size:1.05rem;font-weight:800;letter-spacing:5px;color:var(--cyan);text-shadow:0 0 14px var(--cyan);white-space:nowrap}
-.status-dot{width:10px;height:10px;border-radius:50%;background:var(--green);box-shadow:0 0 8px var(--green);flex-shrink:0}
-.status-dot.offline{background:var(--red);box-shadow:0 0 8px var(--red)}
-#ollama-pill{display:flex;align-items:center;gap:6px;padding:5px 12px;border:1px solid var(--border);border-radius:20px;font-size:0.8rem;background:var(--bg3);cursor:pointer;flex-shrink:0}
-#model-badge{display:inline-flex;align-items:center;justify-content:center;padding:5px 14px;min-width:110px;max-width:280px;flex-shrink:0;border:1px solid var(--pink);border-radius:20px;font-size:0.8rem;color:var(--pink);text-shadow:0 0 8px rgba(255,0,200,0.4);cursor:pointer;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-.topbar-btn{padding:7px 14px;border:1px solid var(--border);border-radius:8px;background:var(--bg3);color:var(--text);cursor:pointer;font-size:0.8rem;transition:all .2s;flex-shrink:0}
-.topbar-btn:hover{border-color:var(--cyan);color:var(--cyan);text-shadow:0 0 8px var(--cyan)}
-#token-counter{font-size:0.8rem;color:var(--dim);font-family:var(--mono);flex-shrink:0;white-space:nowrap;margin-right:4px}
-#main{display:flex;flex:1;overflow:hidden}
-
-/* ── SUB-HEADER ──────────────────────────────────────────────────────────── */
-#sub-header{height:42px;background:var(--bg3);border-bottom:1px solid var(--border);display:flex;align-items:center;justify-content:center;padding:0 24px;flex-shrink:0;z-index:90;position:relative;overflow:hidden}
-#orb-container{display:flex;justify-content:center;align-items:center;pointer-events:none}
-#thinking-orb{display:none;color:var(--cyan);font-family:var(--mono);font-size:0.85rem;text-shadow:0 0 10px rgba(0,243,245,0.5);white-space:nowrap;font-weight:bold;padding:4px 12px;border-radius:10px}
-
-/* ── SIDEBAR ─────────────────────────────────────────────────────────────── */
-#sidebar{width:240px;min-width:190px;background:var(--bg2);border-right:1px solid var(--border);display:flex;flex-direction:column;overflow:hidden;transition:width .2s}
-#sidebar.collapsed{width:0;min-width:0}
-.sidebar-section{padding:11px 14px 7px;font-size:0.72rem;letter-spacing:2px;color:var(--dim);text-transform:uppercase;border-bottom:1px solid rgba(255,255,255,0.06);flex-shrink:0}
-.sidebar-item{display:flex;align-items:center;gap:10px;padding:10px 14px;cursor:pointer;font-size:0.88rem;transition:background .15s;border-bottom:1px solid rgba(255,255,255,0.04)}
-.sidebar-item:hover,.sidebar-item.active{background:rgba(0,243,255,0.1);color:var(--cyan)}
-.sidebar-item.active{border-left:3px solid var(--cyan);padding-left:11px}
-.sidebar-item .icon{width:20px;text-align:center;flex-shrink:0;font-size:1.05em}
-.sidebar-item .badge{margin-left:auto;background:var(--pink);color:#fff;font-size:0.72rem;padding:2px 7px;border-radius:10px}
-#content{flex:1;display:flex;flex-direction:column;overflow:hidden}
-
-/* ── TAB BAR ─────────────────────────────────────────────────────────────── */
-#tabbar{display:flex;background:var(--bg2);border-bottom:1px solid var(--border);flex-shrink:0;overflow-x:auto}
-.tab-btn{padding:11px 20px;font-size:0.86rem;letter-spacing:1px;cursor:pointer;border-bottom:2px solid transparent;white-space:nowrap;color:var(--dim);background:none;border-top:none;border-left:none;border-right:none;transition:all .2s}
-.tab-btn:hover{color:var(--text)}
-.tab-btn.active{color:var(--cyan);border-bottom-color:var(--cyan);text-shadow:0 0 10px rgba(0,243,255,0.5)}
-.tab-pane{display:none;flex:1;overflow:hidden;flex-direction:column}
-.tab-pane.active{display:flex}
-
-/* ── CHAT ────────────────────────────────────────────────────────────────── */
-#chat-wrap{display:flex;flex:1;overflow:hidden;gap:0}
-#chat-log{flex:1;overflow-y:auto;padding:20px;display:flex;flex-direction:column;gap:12px}
-#chat-log::-webkit-scrollbar{width:5px}
-#chat-log::-webkit-scrollbar-thumb{background:var(--border);border-radius:3px}
-.msg{display:flex;flex-direction:column;gap:5px;max-width:88%}
-.msg.user{align-self:flex-end;align-items:flex-end}
-.msg.bot{align-self:flex-start;align-items:flex-start}
-.msg.system{align-self:center;align-items:center;max-width:95%;opacity:0.82}
-.msg.system .bubble{padding:5px 14px;border-radius:20px;font-size:0.78rem;font-family:var(--mono);background:rgba(0,243,255,0.06);border:1px solid rgba(0,243,255,0.18);color:var(--dim);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:100%}
-.msg .bubble{padding:12px 16px;border-radius:16px;font-size:0.95rem;line-height:1.6;word-break:break-word;white-space:pre-wrap}
-.msg.user .bubble{background:linear-gradient(135deg,rgba(0,243,255,0.18),rgba(0,243,255,0.09));border:1px solid rgba(0,243,255,0.35);border-bottom-right-radius:4px}
-.msg.bot .bubble{background:var(--bg3);border:1px solid var(--border);border-bottom-left-radius:4px}
-.msg.bot.thinking .bubble{border-color:rgba(255,0,200,0.3);color:var(--dim)}
-.msg .meta{font-size:0.73rem;color:var(--dim)}
-#stream-bubble{padding:12px 16px;border-radius:16px;font-size:0.95rem;line-height:1.6;background:var(--bg3);border:1px solid rgba(255,0,200,0.35);color:var(--pink);white-space:pre-wrap;word-break:break-word;align-self:flex-start;max-width:88%;display:none}
-#chat-input-row{display:flex;gap:10px;padding:14px 18px;border-top:1px solid var(--border);flex-shrink:0;background:var(--bg2)}
-#chat-input{flex:1;background:var(--bg3);border:1px solid var(--border);border-radius:12px;padding:11px 16px;color:var(--text);font-family:var(--font);font-size:0.95rem;resize:none;height:48px;max-height:200px;overflow-y:auto;outline:none;transition:border .2s}
-#chat-input:focus{border-color:var(--cyan);box-shadow:0 0 0 2px rgba(0,243,255,0.1)}
-#send-btn{padding:11px 24px;background:linear-gradient(135deg,var(--cyan),var(--pink));border:none;border-radius:12px;color:#000;font-weight:800;cursor:pointer;font-size:0.95rem;transition:opacity .2s,box-shadow .2s}
-#send-btn:hover{box-shadow:0 0 20px rgba(0,243,255,0.4)}
-#send-btn:disabled{opacity:0.4;cursor:not-allowed}
-#chat-tools-sidebar{width:240px;border-left:1px solid var(--border);background:var(--bg2);display:flex;flex-direction:column;overflow-y:auto;flex-shrink:0}
-#chat-tools-sidebar h4{padding:11px 14px;font-size:0.76rem;letter-spacing:2px;color:var(--dim);border-bottom:1px solid var(--border);text-transform:uppercase}
-.quick-tool-btn{display:flex;align-items:center;gap:9px;width:100%;padding:9px 14px;background:none;border:none;border-bottom:1px solid rgba(255,255,255,0.04);color:var(--text);font-size:0.86rem;cursor:pointer;text-align:left;transition:background .15s}
-.quick-tool-btn:hover{background:rgba(0,243,255,0.07);color:var(--cyan)}
-.quick-tool-btn .tool-icon{font-size:1.1em;width:20px;text-align:center}
-
-/* ── TOOLS PANE ──────────────────────────────────────────────────────────── */
-#tools-pane{padding:18px;overflow-y:auto}
-#tools-pane h3{color:var(--cyan);margin-bottom:14px;font-size:1rem;letter-spacing:2px;text-shadow:0 0 10px rgba(0,243,255,0.3)}
-#tool-search{width:100%;padding:9px 14px;background:var(--bg3);border:1px solid var(--border);border-radius:9px;color:var(--text);font-size:0.9rem;margin-bottom:16px;outline:none;transition:border .2s}
-#tool-search:focus{border-color:var(--cyan)}
-.tool-group{margin-bottom:18px}
-.tool-group-label{font-size:0.75rem;letter-spacing:2px;color:var(--pink);text-transform:uppercase;margin-bottom:9px;padding:5px 0;border-bottom:1px solid rgba(255,0,200,0.22)}
-.tool-card{background:var(--bg3);border:1px solid var(--border);border-radius:10px;padding:11px 15px;margin-bottom:7px;cursor:pointer;transition:all .2s}
-.tool-card:hover{border-color:var(--cyan);background:rgba(0,243,255,0.06);transform:translateY(-1px);box-shadow:0 4px 16px rgba(0,0,0,0.3)}
-.tool-card h4{font-size:0.9rem;color:var(--cyan);margin-bottom:4px}
-.tool-card p{font-size:0.8rem;color:var(--dim);line-height:1.45}
-.tool-card .params{font-size:0.75rem;color:var(--yellow);margin-top:5px;font-family:var(--mono)}
-
-/* ── TOOL MODAL ──────────────────────────────────────────────────────────── */
-#tool-modal{display:none;position:fixed;inset:0;background:rgba(0,0,0,0.85);z-index:5000;align-items:center;justify-content:center;backdrop-filter:blur(4px)}
-#tool-modal.open{display:flex}
-#tool-modal-inner{background:var(--bg2);border:1px solid var(--cyan);border-radius:16px;padding:28px;width:520px;max-width:95vw;max-height:90vh;overflow-y:auto;box-shadow:0 0 40px rgba(0,243,255,0.15)}
-#tool-modal-inner h3{color:var(--cyan);margin-bottom:10px;font-size:1.05rem}
-#tool-modal-inner p{color:var(--dim);font-size:0.88rem;margin-bottom:18px;line-height:1.5}
-.param-row{margin-bottom:12px}
-.param-row label{display:block;font-size:0.82rem;color:var(--yellow);margin-bottom:5px;font-family:var(--mono)}
-.param-row input,.param-row textarea{width:100%;padding:8px 12px;background:var(--bg3);border:1px solid var(--border);border-radius:7px;color:var(--text);font-size:0.9rem;outline:none;transition:border .2s}
-.param-row input:focus,.param-row textarea:focus{border-color:var(--cyan)}
-.modal-btns{display:flex;gap:10px;margin-top:18px;justify-content:flex-end}
-.btn{padding:9px 20px;border-radius:9px;cursor:pointer;font-size:0.88rem;border:none;font-weight:600;transition:all .2s}
-.btn.primary{background:linear-gradient(135deg,var(--cyan),rgba(0,200,220,1));color:#000}
-.btn.primary:hover{box-shadow:0 0 16px rgba(0,243,255,0.4)}
-.btn.secondary{background:var(--bg3);border:1px solid var(--border);color:var(--text)}
-.btn.secondary:hover{border-color:var(--border-hi)}
-#tool-result{margin-top:14px;padding:12px;background:var(--bg);border:1px solid var(--border);border-radius:7px;font-size:0.84rem;font-family:var(--mono);white-space:pre-wrap;max-height:220px;overflow-y:auto;display:none}
-
-/* ── API KEY MODAL ───────────────────────────────────────────────────────── */
-#key-modal{display:none;position:fixed;inset:0;background:rgba(0,0,0,0.85);z-index:5500;align-items:center;justify-content:center;backdrop-filter:blur(4px)}
-#key-modal.open{display:flex}
-#key-modal-inner{background:var(--bg2);border:1px solid var(--yellow);border-radius:16px;padding:28px;width:500px;max-width:95vw;box-shadow:0 0 40px rgba(255,204,0,0.15)}
-#key-modal-inner h3{color:var(--yellow);margin-bottom:10px;font-size:1.05rem}
-#key-modal-inner p{color:var(--dim);font-size:0.88rem;margin-bottom:18px;line-height:1.5}
-#key-input{width:100%;padding:10px 14px;background:var(--bg3);border:1px solid var(--border);border-radius:9px;color:var(--text);font-size:0.9rem;font-family:var(--mono);outline:none;transition:border .2s;margin-bottom:6px}
-#key-input:focus{border-color:var(--yellow);box-shadow:0 0 0 2px rgba(255,204,0,0.1)}
-
-/* ── PLUGINS PANE ────────────────────────────────────────────────────────── */
-#plugins-pane{padding:18px;overflow-y:auto}
-#plugins-pane h3{color:var(--cyan);margin-bottom:16px;font-size:1rem;letter-spacing:2px;text-shadow:0 0 10px rgba(0,243,255,0.3)}
-.plugin-card{background:var(--bg3);border:1px solid var(--border);border-radius:12px;padding:16px 18px;margin-bottom:11px;display:flex;align-items:center;gap:16px;transition:all .2s}
-.plugin-card:hover{border-color:var(--border-hi);box-shadow:0 4px 20px rgba(0,0,0,0.3)}
-.plugin-card .plugin-icon{font-size:1.7em;width:38px;text-align:center}
-.plugin-card .plugin-info{flex:1}
-.plugin-card .plugin-name{font-size:0.95rem;font-weight:700;color:var(--cyan)}
-.plugin-card .plugin-desc{font-size:0.8rem;color:var(--dim);margin-top:3px;line-height:1.4}
-.plugin-card .plugin-class{font-size:0.73rem;color:var(--pink);font-family:var(--mono);margin-top:3px}
-.toggle-switch{position:relative;width:48px;height:26px;flex-shrink:0}
-.toggle-switch input{opacity:0;width:0;height:0}
-.toggle-slider{position:absolute;inset:0;background:#2a2a3a;border-radius:26px;cursor:pointer;transition:.3s}
-.toggle-slider:before{content:"";position:absolute;height:20px;width:20px;left:3px;bottom:3px;background:#fff;border-radius:50%;transition:.3s;box-shadow:0 1px 4px rgba(0,0,0,0.4)}
-.toggle-switch input:checked + .toggle-slider{background:var(--green);box-shadow:0 0 10px rgba(0,255,136,0.3)}
-.toggle-switch input:checked + .toggle-slider:before{transform:translateX(22px)}
-
-/* ── MODELS PANE ─────────────────────────────────────────────────────────── */
-#models-pane{padding:18px;overflow-y:auto}
-#models-pane h3{color:var(--cyan);margin-bottom:16px;font-size:1rem;letter-spacing:2px;text-shadow:0 0 10px rgba(0,243,255,0.3)}
-.provider-section{margin-bottom:22px}
-.provider-label{font-size:0.76rem;letter-spacing:2px;color:var(--pink);text-transform:uppercase;margin-bottom:11px;padding-bottom:5px;border-bottom:1px solid rgba(255,0,200,0.22)}
-.model-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(175px,1fr));gap:9px}
-.model-btn{padding:11px 14px;background:var(--bg3);border:1px solid var(--border);border-radius:9px;color:var(--text);font-size:0.85rem;cursor:pointer;text-align:left;transition:all .2s;line-height:1.35}
-.model-btn:hover{border-color:var(--cyan);color:var(--cyan);background:rgba(0,243,255,0.06);transform:translateY(-1px)}
-.model-btn.active{border-color:var(--green);color:var(--green);background:rgba(0,255,136,0.09);box-shadow:0 0 12px rgba(0,255,136,0.15)}
-.sort-btn{padding:5px 12px;background:var(--bg);border:1px solid var(--border);border-radius:18px;color:var(--dim);font-size:0.75em;cursor:pointer;transition:all .2s;font-weight:600}
-.sort-btn:hover{border-color:var(--cyan);color:var(--cyan)}
-.sort-btn.active{background:var(--cyan);color:#000;border-color:var(--cyan);box-shadow:0 0 10px rgba(0,243,255,0.3)}
-#ollama-section .model-btn{border-color:rgba(255,136,0,0.32)}
-#ollama-section .model-btn.active{border-color:var(--orange);color:var(--orange)}
-#ollama-health-row{display:flex;align-items:center;gap:9px;margin-bottom:14px;padding:9px 14px;background:var(--bg3);border-radius:9px;border:1px solid var(--border);font-size:0.87rem}
-#ollama-health{font-weight:700}
-.model-config-box{background:var(--bg3);border:1px solid var(--border);border-radius:11px;padding:16px;margin-bottom:16px}
-.model-config-box h4{font-size:0.84rem;color:var(--dim);margin-bottom:12px;letter-spacing:1px}
-.model-config-row{display:flex;gap:9px;margin-bottom:9px}
-.model-config-row label{font-size:0.8rem;color:var(--dim);min-width:76px;display:flex;align-items:center}
-.model-config-row input,.model-config-row select{flex:1;padding:7px 11px;background:var(--bg);border:1px solid var(--border);border-radius:7px;color:var(--text);font-size:0.87rem;outline:none;transition:border .2s}
-.model-config-row input:focus{border-color:var(--cyan)}
-
-/* ── BROWSER PANE ────────────────────────────────────────────────────────── */
-#browser-pane{padding:18px;overflow-y:auto}
-#browser-pane h3{color:var(--cyan);margin-bottom:16px;font-size:1rem;letter-spacing:2px}
-.browser-url-row{display:flex;gap:9px;margin-bottom:16px}
-#browser-url{flex:1;padding:9px 14px;background:var(--bg3);border:1px solid var(--border);border-radius:9px;color:var(--text);font-size:0.92rem;outline:none;transition:border .2s}
-#browser-url:focus{border-color:var(--cyan)}
-.browser-action-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:9px;margin-bottom:18px}
-.browser-btn{padding:11px;background:var(--bg3);border:1px solid var(--border);border-radius:9px;color:var(--text);font-size:0.83rem;cursor:pointer;text-align:center;transition:all .2s}
-.browser-btn:hover{border-color:var(--cyan);color:var(--cyan)}
-#browser-screenshot{width:100%;border-radius:9px;border:1px solid var(--border);display:none;margin-top:11px}
-#browser-status{font-size:0.84rem;color:var(--dim);font-family:var(--mono);padding:9px;background:var(--bg3);border-radius:7px;margin-top:9px;min-height:34px}
-
-/* ── LOGS PANE ───────────────────────────────────────────────────────────── */
-#logs-pane{display:flex;flex-direction:column;overflow:hidden}
-#log-controls{display:flex;gap:9px;padding:11px 16px;border-bottom:1px solid var(--border);flex-shrink:0;background:var(--bg2)}
-#log-filter{padding:6px 11px;background:var(--bg3);border:1px solid var(--border);border-radius:7px;color:var(--text);font-size:0.85rem;flex:1;outline:none;transition:border .2s}
-#log-filter:focus{border-color:var(--cyan)}
-#logs-scroll{flex:1;overflow-y:auto;padding:11px 16px;font-family:var(--mono);font-size:0.84rem;line-height:1.75}
-#logs-scroll::-webkit-scrollbar{width:5px}
-#logs-scroll::-webkit-scrollbar-thumb{background:var(--border);border-radius:3px}
-.log-line{padding:2px 0;border-bottom:1px solid rgba(255,255,255,0.03)}
-.log-line.err{color:var(--red)}
-.log-line.warn{color:var(--yellow)}
-.log-line.ok{color:var(--green)}
-
-/* ── STATUS PANE ─────────────────────────────────────────────────────────── */
-#status-pane{padding:18px;overflow-y:auto}
-.stat-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(200px,1fr));gap:12px;margin-bottom:18px}
-.stat-card{background:var(--bg3);border:1px solid var(--border);border-radius:12px;padding:18px;text-align:center;transition:all .2s}
-.stat-card:hover{border-color:var(--border-hi);box-shadow:0 4px 20px rgba(0,0,0,0.3)}
-.stat-card .val{font-size:2em;font-weight:800;color:var(--cyan);font-family:var(--mono);text-shadow:0 0 12px rgba(0,243,255,0.3)}
-.stat-card .lbl{font-size:0.76rem;color:var(--dim);margin-top:6px;letter-spacing:1px;text-transform:uppercase}
-.stat-card .val.small{font-size:1.1em}
-
-/* ── TOAST NOTIFICATIONS ──────────────────────────────────────────────── */
-#toast-container{position:fixed;top:60px;right:20px;z-index:9000;display:flex;flex-direction:column;gap:8px;pointer-events:none}
-.toast{pointer-events:auto;padding:12px 18px;border-radius:10px;font-size:0.85rem;font-family:var(--mono);color:#fff;backdrop-filter:blur(12px);box-shadow:0 4px 24px rgba(0,0,0,0.5);animation:toastIn .3s ease-out;max-width:420px;display:flex;align-items:center;gap:10px}
-.toast.warning{background:rgba(255,140,0,0.92);border:1px solid rgba(255,200,0,0.4)}
-.toast.success{background:rgba(0,180,80,0.92);border:1px solid rgba(0,255,136,0.4)}
-.toast.error{background:rgba(220,40,40,0.92);border:1px solid rgba(255,80,80,0.4)}
-.toast.info{background:rgba(0,160,255,0.88);border:1px solid rgba(0,200,255,0.4)}
-.toast.fadeout{animation:toastOut .4s ease-in forwards}
-@keyframes toastIn{from{opacity:0;transform:translateX(40px)}to{opacity:1;transform:translateX(0)}}
-@keyframes toastOut{from{opacity:1;transform:translateX(0)}to{opacity:0;transform:translateX(40px)}}
-
-/* ── MEMORY PANE ─────────────────────────────────────────────────────────── */
-#memory-pane{padding:18px;overflow-y:auto}
-.mem-controls{display:flex;gap:9px;margin-bottom:14px}
-#mem-file-select{flex:1;padding:8px 11px;background:var(--bg3);border:1px solid var(--border);border-radius:7px;color:var(--text);font-size:0.88rem;outline:none}
-#mem-editor{width:100%;height:calc(100vh - 280px);padding:12px;background:var(--bg);border:1px solid var(--border);border-radius:9px;color:var(--text);font-family:var(--mono);font-size:0.88rem;resize:vertical;outline:none;transition:border .2s;line-height:1.6}
-#mem-editor:focus{border-color:var(--cyan)}
-
-/* ── LOGIN ───────────────────────────────────────────────────────────────── */
-#login-overlay{position:fixed;inset:0;background:rgba(4,5,13,0.97);z-index:8000;display:flex;align-items:center;justify-content:center}
-.login-box{background:var(--bg2);border:1px solid var(--cyan);border-radius:18px;padding:42px;width:370px;text-align:center;box-shadow:0 0 60px rgba(0,243,255,0.12)}
-.login-box h2{color:var(--cyan);letter-spacing:5px;margin-bottom:8px;font-size:1.2rem;text-shadow:0 0 16px rgba(0,243,255,0.5)}
-.login-box p{color:var(--dim);font-size:0.85rem;margin-bottom:24px}
-#pw-input{width:100%;padding:12px 16px;background:var(--bg3);border:1px solid var(--border);border-radius:9px;color:var(--text);font-size:1rem;text-align:center;outline:none;letter-spacing:4px;margin-bottom:14px;transition:border .2s}
-#pw-input:focus{border-color:var(--cyan);box-shadow:0 0 0 2px rgba(0,243,255,0.1)}
-#login-btn{width:100%;padding:13px;background:linear-gradient(135deg,var(--cyan),var(--pink));border:none;border-radius:9px;color:#000;font-weight:800;cursor:pointer;font-size:1rem;transition:box-shadow .2s}
-#login-btn:hover{box-shadow:0 0 24px rgba(0,243,255,0.4)}
-#login-err{color:var(--red);font-size:0.84rem;margin-top:9px;display:none}
-
-/* ── SCROLLBARS ──────────────────────────────────────────────────────────── */
-::-webkit-scrollbar{width:6px;height:6px}
-::-webkit-scrollbar-track{background:var(--bg)}
-::-webkit-scrollbar-thumb{background:rgba(0,243,255,0.25);border-radius:3px}
-::-webkit-scrollbar-thumb:hover{background:rgba(0,243,255,0.45)}
-
-/* ── THINKING TAB ────────────────────────────────────────────────────────── */
-#thinking-pane{display:flex;flex-direction:column;overflow:hidden;height:100%}
-#thinking-controls{display:flex;gap:9px;padding:11px 16px;border-bottom:1px solid var(--border);flex-shrink:0;background:var(--bg2);align-items:center;flex-wrap:wrap}
-#thinking-filter{padding:6px 11px;background:var(--bg3);border:1px solid var(--border);border-radius:7px;color:var(--text);font-size:0.85rem;flex:1;min-width:110px;outline:none;transition:border .2s}
-#thinking-filter:focus{border-color:var(--pink)}
-#thinking-phase-filter{padding:6px 9px;background:var(--bg3);border:1px solid var(--border);border-radius:7px;color:var(--text);font-size:0.85rem;outline:none}
-#thinking-turn-counter{font-size:0.76rem;color:var(--dim);margin-left:auto;font-family:var(--mono);white-space:nowrap}
-#thinking-scroll{flex:1;overflow-y:auto;padding:16px;font-family:var(--mono);font-size:0.86rem;line-height:1.65}
-#thinking-scroll::-webkit-scrollbar{width:5px}
-#thinking-scroll::-webkit-scrollbar-thumb{background:rgba(255,0,200,0.2);border-radius:3px}
-.trace-session{margin-bottom:18px;border:1px solid rgba(56,217,169,0.22);border-radius:11px;overflow:hidden}
-.trace-session-header{padding:10px 16px;background:rgba(56,217,169,0.06);border-bottom:1px solid rgba(56,217,169,0.13);display:flex;align-items:center;gap:9px;cursor:pointer;user-select:none;transition:background .15s}
-.trace-session-header:hover{background:rgba(56,217,169,0.11)}
-.trace-sid{font-size:0.76rem;color:var(--cyan);font-family:var(--mono);flex-shrink:0}
-.trace-query{font-size:0.87rem;color:var(--text);flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.trace-toggle{color:var(--dim);font-size:0.78rem;flex-shrink:0;transition:transform .2s}
-.trace-session.collapsed .trace-session-body{display:none}
-.trace-session.collapsed .trace-toggle{transform:rotate(-90deg)}
-.trace-session-body{padding:9px 14px}
-.trace-turn{margin-bottom:11px;border-left:2px solid rgba(255,121,198,0.38);padding-left:11px}
-.trace-turn-header{font-size:0.76rem;font-weight:700;color:var(--pink);letter-spacing:1px;margin-bottom:6px;cursor:pointer;user-select:none}
-.trace-turn-header:hover{color:#ff99dd}
-.trace-turn.collapsed .trace-turn-entries{display:none}
-.trace-entry{padding:7px 11px;margin-bottom:5px;border-radius:7px;border:1px solid transparent;position:relative}
-.trace-entry.phase-thinking{background:rgba(255,121,198,0.07);border-color:rgba(255,121,198,0.24)}
-.trace-entry.phase-thinking .trace-label{color:var(--pink)}
-.trace-entry.phase-llm_response{background:rgba(56,217,169,0.05);border-color:rgba(56,217,169,0.17)}
-.trace-entry.phase-llm_response .trace-label{color:var(--cyan)}
-.trace-entry.phase-tool_call{background:rgba(241,250,140,0.06);border-color:rgba(241,250,140,0.22)}
-.trace-entry.phase-tool_call .trace-label{color:var(--yellow)}
-.trace-entry.phase-tool_result{background:rgba(80,250,123,0.05);border-color:rgba(80,250,123,0.2)}
-.trace-entry.phase-tool_result .trace-label{color:var(--green)}
-.trace-entry.phase-tool_result.error{background:rgba(255,85,85,0.07);border-color:rgba(255,85,85,0.24)}
-.trace-entry.phase-tool_result.error .trace-label{color:var(--red)}
-.trace-entry.phase-final_answer{background:rgba(56,217,169,0.09);border-color:rgba(56,217,169,0.32)}
-.trace-entry.phase-final_answer .trace-label{color:var(--cyan);font-weight:700}
-.trace-entry.phase-duplicate_blocked,.trace-entry.phase-tool_not_found{background:rgba(255,85,85,0.06);border-color:rgba(255,85,85,0.2)}
-.trace-entry.phase-duplicate_blocked .trace-label,.trace-entry.phase-tool_not_found .trace-label{color:var(--red)}
-.trace-entry.phase-session_abort{background:rgba(255,85,85,0.09);border-color:rgba(255,85,85,0.27)}
-.trace-entry.phase-session_abort .trace-label{color:var(--red);font-weight:700}
-.trace-label{font-size:0.72rem;font-weight:700;letter-spacing:1px;text-transform:uppercase;margin-bottom:4px}
-.trace-content{font-size:0.86rem;color:var(--text);white-space:pre-wrap;word-break:break-word;max-height:190px;overflow-y:auto}
-.trace-content.expanded{max-height:none}
-.trace-expand-btn{font-size:0.72rem;color:var(--dim);cursor:pointer;margin-top:4px;display:inline-block}
-.trace-expand-btn:hover{color:var(--cyan)}
-.trace-tool-badge{display:inline-block;padding:2px 8px;background:rgba(241,250,140,0.13);border-radius:5px;font-size:0.82rem;color:var(--yellow);margin-right:5px;font-family:var(--mono)}
-.trace-ts{font-size:0.66rem;color:var(--dim);position:absolute;top:7px;right:9px}
-
-/* ── SUBAGENTS / CHAIN BUILDER ───────────────────────────────────────────── */
-.subagent-card { background:var(--bg3); border:1px solid var(--border); border-radius:10px; padding:12px; margin-bottom:10px; font-size:0.85rem; }
-.subagent-card .header { display:flex; justify-content:space-between; align-items:center; margin-bottom:8px; }
-.subagent-card .sid { font-family:var(--mono); color:var(--cyan); font-size:0.8rem; }
-.subagent-card .status { font-weight:bold; padding:2px 8px; border-radius:12px; font-size:0.75rem; text-transform:uppercase; }
-.subagent-card .status.running { background:rgba(0,243,255,0.1); color:var(--cyan); }
-.subagent-card .status.done { background:rgba(0,255,136,0.1); color:var(--green); }
-.subagent-card .status.error, .subagent-card .status.cancelled { background:rgba(255,69,69,0.1); color:var(--red); }
-.subagent-card .task { color:var(--text); margin-bottom:8px; line-height:1.4; }
-.subagent-card .progress { color:var(--dim); font-size:0.8rem; margin-bottom:8px; }
-.subagent-card .logs { background:var(--bg2); border:1px solid var(--border); border-radius:6px; padding:8px; font-family:var(--mono); font-size:0.75rem; max-height:100px; overflow-y:auto; color:var(--dim); }
-.subagent-card .actions { margin-top:10px; display:flex; gap:8px; justify-content:flex-end; }
-.chain-step { background:var(--bg2); border:1px solid var(--border); border-radius:8px; padding:10px; margin-bottom:10px; position:relative; }
-.chain-step-remove { position:absolute; top:8px; right:8px; cursor:pointer; color:var(--red); font-size:1.2em; line-height:1; }
-
-/* ── CRT SCANLINES (toggled via body.crt class) ──────────────────────────── */
-body.crt::after{content:"";position:fixed;inset:0;background:repeating-linear-gradient(0deg,transparent,transparent 2px,rgba(0,0,0,0.18) 2px,rgba(0,0,0,0.18) 4px);pointer-events:none;z-index:9000;animation:flicker 8s infinite}
-@keyframes flicker{0%,100%{opacity:1}92%{opacity:0.97}93%{opacity:0.92}94%{opacity:0.98}}
-
-/* ── GLOW INTENSITY CLASSES ──────────────────────────────────────────────── */
-body.glow-off #topbar .logo{text-shadow:none}
-body.glow-off .tab-btn.active{text-shadow:none}
-body.glow-off .stat-card .val{text-shadow:none}
-body.glow-off #models-pane h3,body.glow-off #tools-pane h3,body.glow-off #plugins-pane h3{text-shadow:none}
-body.glow-off .status-dot{box-shadow:none}
-body.glow-off #model-badge{text-shadow:none}
-body.glow-max #topbar .logo{text-shadow:0 0 20px var(--cyan),0 0 40px var(--cyan),0 0 60px rgba(0,243,255,0.4)}
-body.glow-max .tab-btn.active{text-shadow:0 0 16px var(--cyan),0 0 30px rgba(0,243,255,0.5)}
-body.glow-max .stat-card .val{text-shadow:0 0 20px rgba(0,243,255,0.6)}
-body.glow-max .status-dot{box-shadow:0 0 14px var(--green),0 0 28px rgba(0,255,136,0.5)}
-</style>
-</head>
-<body>
-
-<!-- LOGIN -->
-<div id="login-overlay" style="display:none">
-  <div class="login-box">
-    <div style="font-size:2em;margin-bottom:8px">⬡</div>
-    <h2>GALACTIC AI</h2>
-    <p>AUTOMATION SUITE v1.6.9</p>
-    <input id="pw-input" type="password" placeholder="Enter passphrase" autocomplete="off">
-    <button id="login-btn" onclick="doLogin()">ACCESS</button>
-    <div id="login-err" style="display:none;color:var(--red);font-size:0.8em;margin-top:8px">Invalid passphrase</div>
-    <div style="margin-top:16px;font-size:0.72em;color:var(--dim)">
-      <span style="cursor:pointer;text-decoration:underline" onclick="showSetupWizard({})">First time? Run Setup Wizard</span>
-    </div>
-  </div>
-</div>
-
-<!-- SETUP SUCCESS -->
-<div id="setup-success" style="display:none;position:fixed;inset:0;background:rgba(5,6,10,0.97);z-index:9500;align-items:center;justify-content:center;flex-direction:column;gap:16px">
-  <div style="font-size:3em">✅</div>
-  <div style="font-size:1.3em;color:var(--green);font-weight:700;letter-spacing:3px">CONFIGURATION SAVED</div>
-  <div style="color:var(--dim);font-size:0.85em">Launching Galactic AI...</div>
-</div>
-
-<!-- SETUP WIZARD -->
-<div id="setup-wizard" style="display:none;position:fixed;inset:0;background:rgba(5,6,10,0.98);z-index:9000;align-items:flex-start;justify-content:center;overflow-y:auto;padding:20px 0">
-  <div style="background:var(--bg2);border:1px solid var(--cyan);border-radius:20px;width:min(720px,96vw);margin:auto">
-    <!-- Header -->
-    <div style="padding:28px 32px 0;text-align:center">
-      <div style="font-size:2.5em;margin-bottom:8px">⬡</div>
-      <div style="font-size:1.3em;font-weight:700;letter-spacing:4px;color:var(--cyan)">GALACTIC AI SETUP</div>
-      <div style="color:var(--dim);font-size:0.82em;margin-top:4px">Initial configuration wizard — takes about 2 minutes</div>
-    </div>
-    <!-- Progress bar -->
-    <div style="margin:20px 32px 0;height:3px;background:var(--bg3);border-radius:2px">
-      <div id="sw-progress" style="height:100%;background:linear-gradient(90deg,var(--cyan),var(--pink));border-radius:2px;width:16.7%;transition:width .4s"></div>
-    </div>
-
-    <!-- Step 1: Primary Model Provider -->
-    <div id="sw-step-1" style="padding:28px 32px">
-      <div style="font-size:0.7em;letter-spacing:3px;color:var(--cyan);margin-bottom:18px">STEP 1 OF 7 — PRIMARY AI PROVIDER</div>
-      <div style="margin-bottom:18px">
-        <label style="font-size:0.8em;color:var(--dim);display:block;margin-bottom:6px">Choose your primary AI provider:</label>
-        <select id="sw-provider" onchange="swUpdateModelHint()" style="width:100%;padding:10px 14px;background:var(--bg3);border:1px solid var(--border);border-radius:8px;color:var(--text);font-size:0.9em">
-          <option value="google">🌐 Google Gemini — Best overall, free tier available</option>
-          <option value="anthropic">🤖 Anthropic Claude — Best for reasoning &amp; code</option>
-          <option value="openai">🧠 OpenAI GPT — GPT-4o, GPT-4.1</option>
-          <option value="xai">⚡ xAI Grok — Fast &amp; capable</option>
-          <option value="groq">🚀 Groq — Ultra-fast free inference</option>
-          <option value="mistral">🇪🇺 Mistral AI — Codestral, Magistral</option>
-          <option value="cerebras">⚙️ Cerebras — Lightning fast Llama/Qwen</option>
-          <option value="openrouter">🔀 OpenRouter — 100+ models, one key</option>
-          <option value="huggingface">🤗 HuggingFace — Free tier, Llama/Qwen/DeepSeek</option>
-          <option value="kimi">🌙 Kimi / Moonshot — Kimi K2.5 coding model</option>
-          <option value="zai">🔷 ZAI / GLM — GLM-4.5, GLM-4.7</option>
-          <option value="minimax">🎵 MiniMax — M2 multimodal + TTS</option>
-          <option value="nvidia">🟢 NVIDIA AI — DeepSeek, Qwen 480B, Kimi</option>
-          <option value="ollama">🦙 Ollama Local — 100% private, no API key needed</option>
-        </select>
-      </div>
-      <div style="margin-bottom:18px">
-        <label style="font-size:0.8em;color:var(--dim);display:block;margin-bottom:6px">Model ID <span style="color:var(--dim)">(leave blank for recommended default)</span>:</label>
-        <input id="sw-model" type="text" placeholder="gemini-2.5-flash" style="width:100%;padding:10px 14px;background:var(--bg3);border:1px solid var(--border);border-radius:8px;color:var(--text);font-size:0.9em">
-        <div id="sw-model-hint" style="margin-top:5px;font-size:0.72em;color:var(--dim)"></div>
-      </div>
-      <!-- Standard API Key field -->
-      <div id="sw-apikey-wrap" style="margin-bottom:18px">
-        <label style="font-size:0.8em;color:var(--dim);display:block;margin-bottom:6px">API Key:</label>
-        <input id="sw-apikey" type="password" placeholder="Paste your API key here" style="width:100%;padding:10px 14px;background:var(--bg3);border:1px solid var(--border);border-radius:8px;color:var(--text);font-size:0.9em">
-        <div id="sw-key-link" style="margin-top:6px;font-size:0.72em;color:var(--dim)"></div>
-      </div>
-      <!-- Ollama URL field -->
-      <div id="sw-ollama-wrap" style="display:none;margin-bottom:18px">
-        <label style="font-size:0.8em;color:var(--dim);display:block;margin-bottom:6px">Ollama Server URL:</label>
-        <input id="sw-ollama-url" type="text" placeholder="http://127.0.0.1:11434/v1" value="http://127.0.0.1:11434/v1" style="width:100%;padding:10px 14px;background:var(--bg3);border:1px solid var(--border);border-radius:8px;color:var(--text);font-size:0.9em">
-        <div style="margin-top:8px;padding:10px 14px;background:rgba(0,255,136,0.05);border:1px solid rgba(0,255,136,0.2);border-radius:6px;font-size:0.78em;color:var(--dim)">
-          💡 Ollama must be running locally. Install from <a href="https://ollama.com" target="_blank" style="color:var(--cyan)">ollama.com</a> then run <code style="background:var(--bg3);padding:2px 6px;border-radius:3px">ollama pull qwen3:8b</code>
-        </div>
-      </div>
-      <!-- NVIDIA single-key field -->
-      <div id="sw-nvidia-wrap" style="display:none;margin-bottom:18px">
-        <label style="font-size:0.8em;color:var(--dim);display:block;margin-bottom:6px">
-          NVIDIA API Key — one key works for <strong>all 500+ models</strong> on
-          <a href="https://build.nvidia.com/models" target="_blank" style="color:var(--cyan)">build.nvidia.com</a>
-        </label>
-        <input id="sw-nvidia-key" type="password" placeholder="nvapi-..." style="width:100%;padding:10px 14px;background:var(--bg3);border:1px solid var(--border);border-radius:8px;color:var(--text);font-size:0.9em;margin-bottom:10px">
-        <label style="font-size:0.8em;color:var(--dim);display:block;margin-bottom:6px">
-          Model — pick a popular one or paste any model ID from
-          <a href="https://build.nvidia.com/models" target="_blank" style="color:var(--cyan)">build.nvidia.com</a>:
-        </label>
-        <div style="display:flex;flex-wrap:wrap;gap:6px;margin-bottom:8px">
-          <button type="button" onclick="swNvSet('deepseek-ai/deepseek-v3.2')"         style="padding:4px 10px;background:var(--bg3);border:1px solid var(--border);border-radius:5px;color:var(--cyan);font-size:0.75em;cursor:pointer">DeepSeek V3.2</button>
-          <button type="button" onclick="swNvSet('qwen/qwen3-coder-480b-a35b-instruct')" style="padding:4px 10px;background:var(--bg3);border:1px solid var(--border);border-radius:5px;color:var(--cyan);font-size:0.75em;cursor:pointer">Qwen3-Coder 480B</button>
-          <button type="button" onclick="swNvSet('moonshot-ai/kimi-k2-instruct')"       style="padding:4px 10px;background:var(--bg3);border:1px solid var(--border);border-radius:5px;color:var(--cyan);font-size:0.75em;cursor:pointer">Kimi K2</button>
-          <button type="button" onclick="swNvSet('meta/llama-3.3-70b-instruct')"        style="padding:4px 10px;background:var(--bg3);border:1px solid var(--border);border-radius:5px;color:var(--cyan);font-size:0.75em;cursor:pointer">Llama 3.3 70B</button>
-          <button type="button" onclick="swNvSet('mistralai/mistral-large-2-instruct')" style="padding:4px 10px;background:var(--bg3);border:1px solid var(--border);border-radius:5px;color:var(--cyan);font-size:0.75em;cursor:pointer">Mistral Large 2</button>
-          <button type="button" onclick="swNvSet('nvidia/llama-3.3-nemotron-super-49b-v1')" style="padding:4px 10px;background:var(--bg3);border:1px solid var(--border);border-radius:5px;color:var(--cyan);font-size:0.75em;cursor:pointer">Nemotron 49B</button>
-        </div>
-        <input id="sw-nvidia-model" type="text" placeholder="or paste any model ID, e.g. deepseek-ai/deepseek-v3.2" style="width:100%;padding:8px 12px;background:var(--bg3);border:1px solid var(--border);border-radius:6px;color:var(--text);font-size:0.82em">
-      </div>
-      <button onclick="swNextStep(1,2)" style="width:100%;padding:12px;background:linear-gradient(135deg,var(--cyan),var(--pink));border:none;border-radius:10px;color:#000;font-weight:700;cursor:pointer;font-size:0.95em">Next →</button>
-    </div>
-
-    <!-- Step 2: Additional API Keys -->
-    <div id="sw-step-2" style="display:none;padding:28px 32px">
-      <div style="font-size:0.7em;letter-spacing:3px;color:var(--cyan);margin-bottom:4px">STEP 2 OF 7 — ADDITIONAL PROVIDERS</div>
-      <div style="color:var(--dim);font-size:0.78em;margin-bottom:8px">Add more providers to unlock the full model grid. Keys entered here are saved but only used when you switch to that provider. All optional.</div>
-      <div style="background:rgba(6,182,212,0.08);border:1px solid rgba(6,182,212,0.25);border-radius:8px;padding:8px 12px;margin-bottom:14px;font-size:0.78em;color:var(--cyan)">🎤 <strong>Voice messages (STT):</strong> Add an <strong>OpenAI</strong> or <strong>Groq</strong> key to enable Telegram voice transcription. Groq is free.</div>
-      <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">
-        <div id="sw-extra-google">
-          <label style="font-size:0.75em;color:var(--dim);display:block;margin-bottom:4px">🌐 Google Gemini <a href="https://aistudio.google.com/apikey" target="_blank" style="color:var(--cyan)">[get key]</a></label>
-          <input id="sw-google-key" type="password" placeholder="AIzaSy..." style="width:100%;padding:8px 12px;background:var(--bg3);border:1px solid var(--border);border-radius:7px;color:var(--text);font-size:0.85em">
-        </div>
-        <div id="sw-extra-anthropic">
-          <label style="font-size:0.75em;color:var(--dim);display:block;margin-bottom:4px">🤖 Anthropic Claude <a href="https://console.anthropic.com/keys" target="_blank" style="color:var(--cyan)">[get key]</a></label>
-          <input id="sw-anthropic-key" type="password" placeholder="sk-ant-..." style="width:100%;padding:8px 12px;background:var(--bg3);border:1px solid var(--border);border-radius:7px;color:var(--text);font-size:0.85em">
-        </div>
-        <div id="sw-extra-openai">
-          <label style="font-size:0.75em;color:var(--dim);display:block;margin-bottom:4px">🧠 OpenAI <a href="https://platform.openai.com/api-keys" target="_blank" style="color:var(--cyan)">[get key]</a></label>
-          <input id="sw-openai-key" type="password" placeholder="sk-..." style="width:100%;padding:8px 12px;background:var(--bg3);border:1px solid var(--border);border-radius:7px;color:var(--text);font-size:0.85em">
-        </div>
-        <div id="sw-extra-xai">
-          <label style="font-size:0.75em;color:var(--dim);display:block;margin-bottom:4px">⚡ xAI Grok <a href="https://console.x.ai" target="_blank" style="color:var(--cyan)">[get key]</a></label>
-          <input id="sw-xai-key" type="password" placeholder="xai-..." style="width:100%;padding:8px 12px;background:var(--bg3);border:1px solid var(--border);border-radius:7px;color:var(--text);font-size:0.85em">
-        </div>
-        <div id="sw-extra-groq">
-          <label style="font-size:0.75em;color:var(--dim);display:block;margin-bottom:4px">🚀 Groq <a href="https://console.groq.com/keys" target="_blank" style="color:var(--cyan)">[get key]</a></label>
-          <input id="sw-groq-key" type="password" placeholder="gsk_..." style="width:100%;padding:8px 12px;background:var(--bg3);border:1px solid var(--border);border-radius:7px;color:var(--text);font-size:0.85em">
-        </div>
-        <div id="sw-extra-mistral">
-          <label style="font-size:0.75em;color:var(--dim);display:block;margin-bottom:4px">🇪🇺 Mistral <a href="https://console.mistral.ai/api-keys" target="_blank" style="color:var(--cyan)">[get key]</a></label>
-          <input id="sw-mistral-key" type="password" placeholder="..." style="width:100%;padding:8px 12px;background:var(--bg3);border:1px solid var(--border);border-radius:7px;color:var(--text);font-size:0.85em">
-        </div>
-        <div id="sw-extra-cerebras">
-          <label style="font-size:0.75em;color:var(--dim);display:block;margin-bottom:4px">⚙️ Cerebras <a href="https://cloud.cerebras.ai" target="_blank" style="color:var(--cyan)">[get key]</a></label>
-          <input id="sw-cerebras-key" type="password" placeholder="csk-..." style="width:100%;padding:8px 12px;background:var(--bg3);border:1px solid var(--border);border-radius:7px;color:var(--text);font-size:0.85em">
-        </div>
-        <div id="sw-extra-openrouter">
-          <label style="font-size:0.75em;color:var(--dim);display:block;margin-bottom:4px">🔀 OpenRouter <a href="https://openrouter.ai/keys" target="_blank" style="color:var(--cyan)">[get key]</a></label>
-          <input id="sw-openrouter-key" type="password" placeholder="sk-or-..." style="width:100%;padding:8px 12px;background:var(--bg3);border:1px solid var(--border);border-radius:7px;color:var(--text);font-size:0.85em">
-        </div>
-        <div id="sw-extra-huggingface">
-          <label style="font-size:0.75em;color:var(--dim);display:block;margin-bottom:4px">🤗 HuggingFace <a href="https://huggingface.co/settings/tokens" target="_blank" style="color:var(--cyan)">[get token]</a></label>
-          <input id="sw-huggingface-key" type="password" placeholder="hf_..." style="width:100%;padding:8px 12px;background:var(--bg3);border:1px solid var(--border);border-radius:7px;color:var(--text);font-size:0.85em">
-        </div>
-        <div id="sw-extra-kimi">
-          <label style="font-size:0.75em;color:var(--dim);display:block;margin-bottom:4px">🌙 Kimi / Moonshot <a href="https://platform.moonshot.cn/console/api-keys" target="_blank" style="color:var(--cyan)">[get key]</a></label>
-          <input id="sw-kimi-key" type="password" placeholder="Bearer token..." style="width:100%;padding:8px 12px;background:var(--bg3);border:1px solid var(--border);border-radius:7px;color:var(--text);font-size:0.85em">
-        </div>
-        <div id="sw-extra-zai">
-          <label style="font-size:0.75em;color:var(--dim);display:block;margin-bottom:4px">🔷 ZAI / GLM <a href="https://open.bigmodel.cn/usercenter/apikeys" target="_blank" style="color:var(--cyan)">[get key]</a></label>
-          <input id="sw-zai-key" type="password" placeholder="zai-..." style="width:100%;padding:8px 12px;background:var(--bg3);border:1px solid var(--border);border-radius:7px;color:var(--text);font-size:0.85em">
-        </div>
-        <div id="sw-extra-minimax">
-          <label style="font-size:0.75em;color:var(--dim);display:block;margin-bottom:4px">🎵 MiniMax <a href="https://platform.minimaxi.com/user-center/basic-information/interface-key" target="_blank" style="color:var(--cyan)">[get key]</a></label>
-          <input id="sw-minimax-key" type="password" placeholder="..." style="width:100%;padding:8px 12px;background:var(--bg3);border:1px solid var(--border);border-radius:7px;color:var(--text);font-size:0.85em">
-        </div>
-      </div>
-      <!-- TTS Section -->
-      <div style="margin-top:18px;padding:14px;background:rgba(0,243,255,0.04);border:1px solid rgba(0,243,255,0.15);border-radius:10px">
-        <div style="font-size:0.72em;letter-spacing:2px;color:var(--cyan);margin-bottom:10px">🔊 TEXT-TO-SPEECH (OPTIONAL)</div>
-        <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px">
-          <div>
-            <label style="font-size:0.75em;color:var(--dim);display:block;margin-bottom:4px">ElevenLabs API Key <a href="https://elevenlabs.io" target="_blank" style="color:var(--cyan)">[get key]</a> <span style="color:var(--dim)">(optional)</span></label>
-            <input id="sw-elevenlabs-key" type="password" placeholder="xi_... (leave blank for free voices)" style="width:100%;padding:8px 12px;background:var(--bg3);border:1px solid var(--border);border-radius:7px;color:var(--text);font-size:0.85em">
-          </div>
-          <div>
-            <label style="font-size:0.75em;color:var(--dim);display:block;margin-bottom:4px">TTS Voice</label>
-            <select id="sw-elevenlabs-voice" style="width:100%;padding:8px 12px;background:var(--bg3);border:1px solid var(--border);border-radius:7px;color:var(--text);font-size:0.85em">
-              <optgroup label="FREE — Microsoft Neural (no key needed)">
-                <option value="Guy" selected>Guy — natural male (free) ✓</option>
-                <option value="Davis">Davis — expressive male (free)</option>
-                <option value="Aria">Aria — natural female (free)</option>
-                <option value="Jenny">Jenny — friendly female (free)</option>
-              </optgroup>
-              <optgroup label="Premium — ElevenLabs (API key required)">
-                <option value="Byte">Byte (Adam) — AI male</option>
-                <option value="Nova">Nova (Rachel) — warm female</option>
-              </optgroup>
-              <optgroup label="Fallback">
-                <option value="gtts">gTTS — basic female (free)</option>
-              </optgroup>
-            </select>
-          </div>
-        </div>
-        <div style="margin-top:6px;font-size:0.72em;color:var(--dim)">💡 Free Microsoft voices work without any API key. ElevenLabs provides the highest quality.</div>
-      </div>
-      <div style="display:flex;gap:10px;margin-top:20px">
-        <button onclick="swNextStep(2,1)" style="flex:0.4;padding:11px;background:var(--bg3);border:1px solid var(--border);border-radius:10px;color:var(--text);cursor:pointer;font-size:0.9em">← Back</button>
-        <button onclick="swNextStep(2,3)" style="flex:1;padding:11px;background:linear-gradient(135deg,var(--cyan),var(--pink));border:none;border-radius:10px;color:#000;font-weight:700;cursor:pointer;font-size:0.95em">Next →</button>
-      </div>
-    </div>
-
-    <!-- Step 3: Telegram (optional) -->
-    <div id="sw-step-3" style="display:none;padding:28px 32px">
-      <div style="font-size:0.7em;letter-spacing:3px;color:var(--cyan);margin-bottom:4px">STEP 3 OF 7 — TELEGRAM BOT <span style="color:var(--dim)">(optional)</span></div>
-      <div style="color:var(--dim);font-size:0.78em;margin-bottom:18px">Connect a Telegram bot to control Galactic AI from anywhere on your phone.</div>
-      <div style="display:flex;flex-direction:column;gap:14px">
-        <div>
-          <label style="font-size:0.8em;color:var(--dim);display:block;margin-bottom:5px">Bot Token <span style="font-size:0.85em">(from <a href="https://t.me/BotFather" target="_blank" style="color:var(--cyan)">@BotFather</a>)</span></label>
-          <input id="sw-tg-token" type="password" placeholder="1234567890:AAF..." style="width:100%;padding:9px 13px;background:var(--bg3);border:1px solid var(--border);border-radius:7px;color:var(--text);font-size:0.88em">
-        </div>
-        <div>
-          <label style="font-size:0.8em;color:var(--dim);display:block;margin-bottom:5px">Your Chat ID <span style="font-size:0.85em">(message <a href="https://t.me/userinfobot" target="_blank" style="color:var(--cyan)">@userinfobot</a>)</span></label>
-          <input id="sw-tg-chat" type="text" placeholder="123456789" style="width:100%;padding:9px 13px;background:var(--bg3);border:1px solid var(--border);border-radius:7px;color:var(--text);font-size:0.88em">
-        </div>
-      </div>
-      <div style="display:flex;gap:10px;margin-top:22px">
-        <button onclick="swNextStep(3,2)" style="flex:0.4;padding:11px;background:var(--bg3);border:1px solid var(--border);border-radius:10px;color:var(--text);cursor:pointer;font-size:0.9em">← Back</button>
-        <button onclick="swNextStep(3,4)" style="flex:1;padding:11px;background:linear-gradient(135deg,var(--cyan),var(--pink));border:none;border-radius:10px;color:#000;font-weight:700;cursor:pointer;font-size:0.95em">Next →</button>
-      </div>
-    </div>
-
-    <!-- Step 4: Security -->
-    <div id="sw-step-4" style="display:none;padding:28px 32px">
-      <div style="font-size:0.7em;letter-spacing:3px;color:var(--cyan);margin-bottom:4px">STEP 4 OF 7 — SECURITY</div>
-      <div style="color:var(--dim);font-size:0.78em;margin-bottom:18px">Set a passphrase to protect your Galactic AI web UI.</div>
-      <div style="display:flex;flex-direction:column;gap:14px">
-        <div>
-          <label style="font-size:0.8em;color:var(--dim);display:block;margin-bottom:5px">System Name <span style="color:var(--dim)">(shown in UI)</span></label>
-          <input id="sw-sysname" type="text" placeholder="Galactic AI" value="Galactic AI" style="width:100%;padding:9px 13px;background:var(--bg3);border:1px solid var(--border);border-radius:7px;color:var(--text);font-size:0.88em">
-        </div>
-        <div>
-          <label style="font-size:0.8em;color:var(--dim);display:block;margin-bottom:5px">Web UI Passphrase <span style="color:var(--dim)">(leave blank for no password)</span></label>
-          <input id="sw-pw" type="password" placeholder="Choose a passphrase..." style="width:100%;padding:9px 13px;background:var(--bg3);border:1px solid var(--border);border-radius:7px;color:var(--text);font-size:0.88em">
-        </div>
-      </div>
-      <div style="display:flex;gap:10px;margin-top:22px">
-        <button onclick="swNextStep(4,3)" style="flex:0.4;padding:11px;background:var(--bg3);border:1px solid var(--border);border-radius:10px;color:var(--text);cursor:pointer;font-size:0.9em">← Back</button>
-        <button onclick="swNextStep(4,5)" style="flex:1;padding:11px;background:linear-gradient(135deg,var(--cyan),var(--pink));border:none;border-radius:10px;color:#000;font-weight:700;cursor:pointer;font-size:0.95em">Next →</button>
-      </div>
-    </div>
-
-    <!-- Step 5: Personality -->
-    <div id="sw-step-5" style="display:none;padding:28px 32px">
-      <div style="font-size:0.7em;letter-spacing:3px;color:var(--cyan);margin-bottom:4px">STEP 5 OF 7 — PERSONALITY</div>
-      <div style="color:var(--dim);font-size:0.78em;margin-bottom:18px">Choose the personality for your AI assistant.</div>
-      <div style="display:flex;flex-direction:column;gap:12px">
-        <label style="display:flex;align-items:flex-start;gap:10px;padding:12px 14px;background:var(--bg3);border:1px solid var(--border);border-radius:9px;cursor:pointer" onclick="document.getElementById('sw-persona-byte').checked=true;document.getElementById('sw-custom-fields').style.display='none'">
-          <input type="radio" name="sw-persona" id="sw-persona-byte" value="byte" checked style="margin-top:3px">
-          <div><div style="font-weight:600;font-size:0.88em">⬡ Byte <span style="color:var(--dim);font-weight:400;font-size:0.85em">(Recommended)</span></div><div style="font-size:0.75em;color:var(--dim);margin-top:2px">Techno-hippie AI familiar. Chill, resourceful, opinionated. The default Galactic AI personality.</div></div>
-        </label>
-        <label style="display:flex;align-items:flex-start;gap:10px;padding:12px 14px;background:var(--bg3);border:1px solid var(--border);border-radius:9px;cursor:pointer" onclick="document.getElementById('sw-persona-custom').checked=true;document.getElementById('sw-custom-fields').style.display='block'">
-          <input type="radio" name="sw-persona" id="sw-persona-custom" value="custom" style="margin-top:3px">
-          <div><div style="font-weight:600;font-size:0.88em">✏️ Custom</div><div style="font-size:0.75em;color:var(--dim);margin-top:2px">Define your own AI name, personality, and behavior.</div></div>
-        </label>
-        <label style="display:flex;align-items:flex-start;gap:10px;padding:12px 14px;background:var(--bg3);border:1px solid var(--border);border-radius:9px;cursor:pointer" onclick="document.getElementById('sw-persona-generic').checked=true;document.getElementById('sw-custom-fields').style.display='none'">
-          <input type="radio" name="sw-persona" id="sw-persona-generic" value="generic" style="margin-top:3px">
-          <div><div style="font-weight:600;font-size:0.88em">🤖 Generic Assistant</div><div style="font-size:0.75em;color:var(--dim);margin-top:2px">Neutral, professional AI. No personality — just the facts.</div></div>
-        </label>
-      </div>
-      <div id="sw-custom-fields" style="display:none;margin-top:16px;display:flex;flex-direction:column;gap:12px">
-        <div>
-          <label style="font-size:0.8em;color:var(--dim);display:block;margin-bottom:5px">AI Name</label>
-          <input id="sw-persona-name" type="text" placeholder="e.g. Nova, Spark, Atlas..." style="width:100%;padding:9px 13px;background:var(--bg3);border:1px solid var(--border);border-radius:7px;color:var(--text);font-size:0.88em">
-        </div>
-        <div>
-          <label style="font-size:0.8em;color:var(--dim);display:block;margin-bottom:5px">Personality / Soul <span style="color:var(--dim)">(describe how the AI should behave)</span></label>
-          <textarea id="sw-persona-soul" rows="3" placeholder="e.g. You are a witty, curious assistant who loves science and dad jokes..." style="width:100%;padding:9px 13px;background:var(--bg3);border:1px solid var(--border);border-radius:7px;color:var(--text);font-size:0.85em;resize:vertical"></textarea>
-        </div>
-        <div>
-          <label style="font-size:0.8em;color:var(--dim);display:block;margin-bottom:5px">User Context <span style="color:var(--dim)">(optional — tell the AI about yourself)</span></label>
-          <textarea id="sw-persona-context" rows="2" placeholder="e.g. I'm a software developer who likes hiking and coffee..." style="width:100%;padding:9px 13px;background:var(--bg3);border:1px solid var(--border);border-radius:7px;color:var(--text);font-size:0.85em;resize:vertical"></textarea>
-        </div>
-      </div>
-      <div style="margin-top:14px;padding:10px;background:rgba(0,243,255,0.05);border:1px solid rgba(0,243,255,0.15);border-radius:8px;font-size:0.72em;color:var(--dim)">
-        💡 If you import files from OpenClaw in the next step, your IDENTITY.md and SOUL.md will override this selection.
-      </div>
-      <div style="display:flex;gap:10px;margin-top:22px">
-        <button onclick="swNextStep(5,4)" style="flex:0.4;padding:11px;background:var(--bg3);border:1px solid var(--border);border-radius:10px;color:var(--text);cursor:pointer;font-size:0.9em">← Back</button>
-        <button onclick="swNextStep(5,6)" style="flex:1;padding:11px;background:linear-gradient(135deg,var(--cyan),var(--pink));border:none;border-radius:10px;color:#000;font-weight:700;cursor:pointer;font-size:0.95em">Next →</button>
-      </div>
-    </div>
-
-    <!-- Step 6: OpenClaw Migration -->
-    <div id="sw-step-6" style="display:none;padding:28px 32px">
-      <div style="font-size:0.7em;letter-spacing:3px;color:var(--cyan);margin-bottom:4px">STEP 6 OF 7 — OPENCLAW MIGRATION <span style="color:var(--dim)">(optional)</span></div>
-      <div style="color:var(--dim);font-size:0.78em;margin-bottom:18px">Import your identity and memory files from an existing OpenClaw installation. This copies your USER.md, IDENTITY.md, SOUL.md, MEMORY.md, and TOOLS.md into Galactic AI.</div>
-      <div id="sw-oc-checking" style="padding:16px;text-align:center;color:var(--dim);font-size:0.85em">🔍 Checking for OpenClaw installation...</div>
-      <div id="sw-oc-not-found" style="display:none;padding:16px;background:rgba(136,136,136,0.07);border:1px solid rgba(136,136,136,0.2);border-radius:10px;text-align:center;color:var(--dim);font-size:0.85em">
-        OpenClaw installation not detected — nothing to import. Click Next to continue.
-      </div>
-      <div id="sw-oc-found" style="display:none">
-        <div style="padding:10px 14px;background:rgba(0,255,136,0.06);border:1px solid rgba(0,255,136,0.2);border-radius:8px;font-size:0.78em;color:var(--green);margin-bottom:14px">
-          ✅ OpenClaw detected at <span id="sw-oc-path" style="font-family:var(--mono)"></span>
-        </div>
-        <div style="font-size:0.78em;color:var(--dim);margin-bottom:10px">Select files to import (all available files are checked by default):</div>
-        <div id="sw-oc-file-list" style="display:flex;flex-direction:column;gap:8px;margin-bottom:16px"></div>
-        <button onclick="swMigrateOpenClaw()" id="sw-oc-import-btn" style="width:100%;padding:10px;background:linear-gradient(135deg,rgba(0,255,136,0.8),rgba(0,243,255,0.8));border:none;border-radius:9px;color:#000;font-weight:700;cursor:pointer;font-size:0.88em">⬡ Import Selected Files</button>
-        <div id="sw-oc-result" style="margin-top:10px;font-size:0.78em;display:none"></div>
-      </div>
-      <div style="display:flex;gap:10px;margin-top:22px">
-        <button onclick="swNextStep(6,5)" style="flex:0.4;padding:11px;background:var(--bg3);border:1px solid var(--border);border-radius:10px;color:var(--text);cursor:pointer;font-size:0.9em">← Back</button>
-        <button onclick="swNextStep(6,7)" style="flex:1;padding:11px;background:linear-gradient(135deg,var(--cyan),var(--pink));border:none;border-radius:10px;color:#000;font-weight:700;cursor:pointer;font-size:0.95em">Next →</button>
-      </div>
-    </div>
-
-    <!-- Step 7: Review & Save -->
-    <div id="sw-step-7" style="display:none;padding:28px 32px">
-      <div style="font-size:0.7em;letter-spacing:3px;color:var(--cyan);margin-bottom:4px">STEP 7 OF 7 — REVIEW &amp; LAUNCH</div>
-      <div style="color:var(--dim);font-size:0.78em;margin-bottom:20px">Everything looks good? Hit Save &amp; Launch to start using Galactic AI.</div>
-      <div style="background:var(--bg3);border:1px solid var(--border);border-radius:10px;padding:16px;font-size:0.82em;line-height:2;margin-bottom:20px">
-        <div>Provider: <span id="sw-review-provider" style="color:var(--cyan)">—</span></div>
-        <div>Model: <span id="sw-review-model" style="color:var(--cyan)">—</span></div>
-        <div>Additional providers: <span id="sw-review-extras" style="color:var(--dim)">—</span></div>
-        <div>TTS: <span id="sw-review-tts" style="color:var(--dim)">—</span></div>
-        <div>Web password: <span id="sw-review-pw" style="color:var(--green)">—</span></div>
-        <div>Telegram: <span id="sw-review-tg" style="color:var(--dim)">—</span></div>
-        <div>Personality: <span id="sw-review-persona" style="color:var(--cyan)">—</span></div>
-      </div>
-      <div style="display:flex;gap:10px">
-        <button onclick="swNextStep(7,6)" style="flex:0.4;padding:11px;background:var(--bg3);border:1px solid var(--border);border-radius:10px;color:var(--text);cursor:pointer;font-size:0.9em">← Back</button>
-        <button id="sw-save-btn" onclick="swFillReview();swSave()" style="flex:1;padding:13px;background:linear-gradient(135deg,var(--green),var(--cyan));border:none;border-radius:10px;color:#000;font-weight:700;cursor:pointer;font-size:1em">⬡ Save &amp; Launch</button>
-      </div>
-      <div style="margin-top:16px;text-align:center;font-size:0.75em;color:var(--dim)">
-        Settings are saved to <code style="background:var(--bg3);padding:2px 6px;border-radius:3px">config.yaml</code> in your Galactic AI folder. You can edit them anytime.
-      </div>
-    </div>
-  </div>
-</div>
-
-<!-- TOAST NOTIFICATIONS -->
-<div id="toast-container"></div>
-
-<!-- TOP BAR -->
-<div id="topbar">
-  <div id="topbar-left">
-    <div class="logo">⬡ GALACTIC AI</div>
-    <div style="font-size:0.7em;color:var(--cyan);letter-spacing:2px;opacity:0.7;font-weight:600">CONTROL DECK</div>
-    <div id="version-badge" style="font-size:0.65em;color:var(--dim);letter-spacing:1px;padding:2px 7px;border:1px solid var(--border);border-radius:10px;cursor:default" title="Galactic AI version">v1.5.2</div>
-    <div id='ollama-pill' onclick='switchTab("models")'>
-      <div class="status-dot" id="ollama-dot"></div>
-      <span id="ollama-label">Ollama</span>
-    </div>
-    <div id='model-badge' onclick='switchTab("models")'>Loading...</div>
-  </div>
-
-  <div id="topbar-right">
-    <div id="token-counter">↑0 ↓0 tokens</div>
-    <button class="topbar-btn" onclick="clearChat()">🗑 Clear</button>
-    <button class="topbar-btn" onclick="switchTab('logs')">📋 Logs</button>
-    <button class="topbar-btn" onclick="showSetupWizard({})" title="Re-run Setup Wizard — add API keys, change settings">⚙ Setup</button>
-    <button class="topbar-btn" onclick="openDisplaySettings()" title="Display Settings — font size, CRT effect, etc.">🖥 Display</button>
-    <button class="topbar-btn" onclick="location.reload()">↺</button>
-  </div>
-</div>
-
-<!-- SUB-HEADER for Thinking Orb -->
-<div id="sub-header">
-  <div id="orb-container">
-    <div id="thinking-orb">⠋ Pondering the orb...</div>
-    <div id="progress-container" style="display:none;width:300px;height:4px;background:rgba(255,255,255,0.05);border-radius:2px;margin:8px auto;overflow:hidden;border:1px solid rgba(0,243,255,0.1)">
-      <div id="progress-bar" style="width:0%;height:100%;background:linear-gradient(90deg, var(--cyan), var(--pink));transition:width 0.3s ease-out;box-shadow:0 0 10px var(--cyan)"></div>
-    </div>
-  </div>
-</div>
-
-<!-- DISPLAY SETTINGS MODAL -->
-<div id="display-modal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,0.85);z-index:6000;align-items:center;justify-content:center;backdrop-filter:blur(4px)">
-  <div style="background:var(--bg2);border:1px solid var(--cyan);border-radius:18px;padding:30px 34px;width:420px;max-width:95vw;box-shadow:0 0 50px rgba(0,243,255,0.15)">
-    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:24px">
-      <h3 style="color:var(--cyan);letter-spacing:2px;font-size:1.05rem;text-shadow:0 0 10px rgba(0,243,255,0.4)">🖥 DISPLAY SETTINGS</h3>
-      <span onclick="closeDisplaySettings()" style="cursor:pointer;color:var(--dim);font-size:1.4em;line-height:1" title="Close">&times;</span>
-    </div>
-
-    <!-- Font Size -->
-    <div style="margin-bottom:22px">
-      <label style="display:flex;justify-content:space-between;align-items:center;font-size:0.85rem;color:var(--dim);margin-bottom:10px;letter-spacing:1px;text-transform:uppercase">
-        Font Size
-        <span id="fs-label" style="color:var(--cyan);font-family:var(--mono);font-weight:700;font-size:1rem">17px</span>
-      </label>
-      <input type="range" id="fs-slider" min="13" max="26" step="1" value="17"
-        oninput="applyFontSize(this.value)"
-        style="width:100%;accent-color:var(--cyan);cursor:pointer;height:6px">
-      <div style="display:flex;justify-content:space-between;font-size:0.72rem;color:var(--dim);margin-top:5px">
-        <span>Small (13px)</span><span>Large (26px)</span>
-      </div>
-    </div>
-
-    <!-- CRT Scanlines -->
-    <div style="margin-bottom:22px;display:flex;align-items:center;justify-content:space-between;padding:14px 16px;background:var(--bg3);border-radius:10px;border:1px solid var(--border)">
-      <div>
-        <div style="font-size:0.88rem;color:var(--text);margin-bottom:3px">CRT Scanlines</div>
-        <div style="font-size:0.76rem;color:var(--dim)">Retro scanline overlay effect</div>
-      </div>
-      <label class="toggle-switch">
-        <input type="checkbox" id="crt-toggle" onchange="applyCRT(this.checked)">
-        <span class="toggle-slider"></span>
-      </label>
-    </div>
-
-    <!-- Glow Intensity -->
-    <div style="margin-bottom:24px">
-      <label style="display:flex;justify-content:space-between;align-items:center;font-size:0.85rem;color:var(--dim);margin-bottom:10px;letter-spacing:1px;text-transform:uppercase">
-        Neon Glow Intensity
-        <span id="glow-label" style="color:var(--cyan);font-family:var(--mono);font-weight:700;font-size:1rem">Medium</span>
-      </label>
-      <input type="range" id="glow-slider" min="0" max="2" step="1" value="1"
-        oninput="applyGlow(this.value)"
-        style="width:100%;accent-color:var(--cyan);cursor:pointer;height:6px">
-      <div style="display:flex;justify-content:space-between;font-size:0.72rem;color:var(--dim);margin-top:5px">
-        <span>Off</span><span>Medium</span><span>Max</span>
-      </div>
-    </div>
-
-    <div style="display:flex;gap:10px;justify-content:flex-end">
-      <button class="btn secondary" onclick="resetDisplaySettings()">Reset Defaults</button>
-      <button class="btn primary" onclick="closeDisplaySettings()">Done</button>
-    </div>
-  </div>
-</div>
-
-<!-- MAIN -->
-<div id="main">
-
-  <!-- SIDEBAR -->
-  <div id="sidebar">
-    <div class="sidebar-section">Navigation</div>
-    <div class="sidebar-item active" onclick="switchTab('chat')"><span class="icon">💬</span> Chat</div>
-    <div class="sidebar-item" onclick="switchTab('tools')"><span class="icon">🔧</span> Tools<span class="badge" id="tool-count-badge">72</span></div>
-    <div class="sidebar-item" onclick="switchTab('plugins')"><span class="icon">⚡</span> Skills</div>
-    <div class="sidebar-item" onclick="switchTab('models')"><span class="icon">🧠</span> Models</div>
-    <div class="sidebar-item" onclick="switchTab('browser')"><span class="icon">🌐</span> Browser</div>
-    <div class="sidebar-item" onclick="switchTab('memory')"><span class="icon">💾</span> Memory</div>
-    <div class="sidebar-item" onclick="switchTab('status')"><span class="icon">📊</span> Status</div>
-    <div class="sidebar-item" onclick="switchTab('settings')"><span class="icon">⚙️</span> Settings</div>
-    <div class="sidebar-item" onclick="switchTab('logs')"><span class="icon">📋</span> Logs</div>
-    <div class="sidebar-item" onclick="switchTab('thinking')"><span class="icon">🧠</span> Thinking</div>
-  </div>
-
-  <!-- CONTENT -->
-  <div id="content">
-    <div id="tabbar">
-      <button class="tab-btn active" onclick="switchTab('chat')">💬 Chat</button>
-      <button class="tab-btn" onclick="switchTab('tools')">🔧 Tools</button>
-      <button class="tab-btn" onclick="switchTab('plugins')">⚡ Skills</button>
-      <button class="tab-btn" onclick="switchTab('models')">🧠 Models</button>
-      <button class="tab-btn" onclick="switchTab('browser')">🌐 Browser</button>
-      <button class="tab-btn" onclick="switchTab('memory')">💾 Memory</button>
-      <button class="tab-btn" onclick="switchTab('status')">📊 Status</button>
-      <button class="tab-btn" onclick="switchTab('settings')">⚙️ Settings</button>
-      <button class="tab-btn" onclick="switchTab('logs')">📋 Logs</button>
-      <button class="tab-btn" id="thinking-tab-btn" onclick="switchTab('thinking')">🧠 Thinking</button>
-    </div>
-
-    <!-- CHAT -->
-    <div class="tab-pane active" id="tab-chat">
-      <div id="chat-wrap">
-        <div style="display:flex;flex-direction:column;flex:1;overflow:hidden">
-          <div id="chat-log">
-            <div class="msg bot"><div class="bubble">⬡ Galactic AI online. How can I help?</div></div>
-            <div id="stream-bubble"></div>
-          </div>
-          <div id="chat-attach-bar" style="display:none;padding:4px 16px 0;border-top:1px solid var(--border);background:var(--bg2)"></div>
-          <div id="chat-input-row" style="display:flex;gap:8px;padding:12px 16px;border-top:1px solid var(--border);flex-shrink:0;background:var(--bg2)">
-            <input type="file" id="chat-file-input" multiple accept=".txt,.md,.py,.js,.ts,.json,.yaml,.yml,.xml,.html,.css,.csv,.log,.toml,.ini,.cfg,.sh,.ps1,.bat,.rs,.go,.java,.c,.cpp,.h,.hpp,.rb,.php,.sql,.r,.swift,.kt,.dart,.env,.conf,.properties,.jpg,.jpeg,.png,.gif,.webp,.bmp,.tiff,.tif,.heic,.heif,.avif,.svg,image/*" style="display:none" onchange="handleFileAttach(this)">
-            <button id="attach-btn" onclick="document.getElementById('chat-file-input').click()" title="Attach files" style="padding:10px 12px;background:var(--bg3);border:1px solid var(--border);border-radius:10px;color:var(--dim);cursor:pointer;font-size:1.1em;transition:border .2s,color .2s" onmouseover="this.style.borderColor='var(--cyan)';this.style.color='var(--cyan)'" onmouseout="this.style.borderColor='var(--border)';this.style.color='var(--dim)'">📎</button>
-            <textarea id="chat-input-main" placeholder="Message Byte... (Enter to send, Shift+Enter for newline)" style="flex:1;background:var(--bg3);border:1px solid var(--border);border-radius:10px;padding:10px 14px;color:var(--text);font-family:var(--font);font-size:0.9em;resize:none;height:44px;max-height:200px;overflow-y:auto;outline:none;transition:border .2s" onkeydown="handleKeyMain(event)" oninput="autoResize(this)"></textarea>
-            <button id="live-call-btn" onclick="toggleLiveCall()" title="Live Call Mode (auto-TTS & interruption)" style="padding:10px 12px;background:var(--bg3);border:1px solid var(--border);border-radius:10px;color:var(--dim);cursor:pointer;font-size:1.1em;transition:border .2s,color .2s,background .2s" onmouseover="if(!this.classList.contains('active'))this.style.borderColor='var(--green)',this.style.color='var(--green)'" onmouseout="if(!this.classList.contains('active'))this.style.borderColor='var(--border)',this.style.color='var(--dim)'">📞</button>
-            <button id="voice-btn" onclick="toggleVoiceInput()" title="Voice input (hold or click to record)" style="padding:10px 12px;background:var(--bg3);border:1px solid var(--border);border-radius:10px;color:var(--dim);cursor:pointer;font-size:1.1em;transition:border .2s,color .2s,background .2s" onmouseover="if(!this.classList.contains('recording'))this.style.borderColor='var(--cyan)',this.style.color='var(--cyan)'" onmouseout="if(!this.classList.contains('recording'))this.style.borderColor='var(--border)',this.style.color='var(--dim)'">🎤</button>
-            <button id="send-btn-main" onclick="sendChatMain()" style="padding:10px 22px;background:linear-gradient(135deg,var(--cyan),var(--pink));border:none;border-radius:10px;color:#000;font-weight:700;cursor:pointer;font-size:0.9em">Send ▶</button>
-            <button id="stop-btn" onclick="stopAgent()" title="Stop the agent mid-task (graceful)" style="padding:10px 14px;background:linear-gradient(135deg,#ff4444,#cc0000);border:none;border-radius:10px;color:#fff;font-weight:700;cursor:pointer;font-size:0.9em;letter-spacing:0.5px;transition:opacity .2s" onmouseover="this.style.opacity='.8'" onmouseout="this.style.opacity='1'">🛑 STOP</button>
-          </div>
-        </div>
-        <div id="chat-tools-sidebar">
-          <h4>Quick Tools</h4>
-          <button class="quick-tool-btn" onclick="quickTool('web_search')"><span class="tool-icon">🔍</span>Web Search</button>
-          <button class="quick-tool-btn" onclick="quickTool('web_fetch')"><span class="tool-icon">🌐</span>Web Fetch</button>
-          <button class="quick-tool-btn" onclick="quickTool('screenshot')"><span class="tool-icon">📸</span>Screenshot</button>
-          <button class="quick-tool-btn" onclick="quickTool('open_browser')"><span class="tool-icon">🌍</span>Open URL</button>
-          <button class="quick-tool-btn" onclick="quickTool('exec_shell')"><span class="tool-icon">💻</span>Shell</button>
-          <button class="quick-tool-btn" onclick="quickTool('read_file')"><span class="tool-icon">📄</span>Read File</button>
-          <button class="quick-tool-btn" onclick="quickTool('write_file')"><span class="tool-icon">✏️</span>Write File</button>
-          <button class="quick-tool-btn" onclick="quickTool('memory_search')"><span class="tool-icon">🧠</span>Memory Search</button>
-          <button class="quick-tool-btn" onclick="quickTool('memory_imprint')"><span class="tool-icon">💡</span>Imprint Memory</button>
-          <button class="quick-tool-btn" onclick="quickTool('analyze_image')"><span class="tool-icon">👁️</span>Analyze Image</button>
-          <button class="quick-tool-btn" onclick="quickTool('text_to_speech')"><span class="tool-icon">🔊</span>Text to Speech</button>
-          <div style="padding:2px 14px 8px;border-bottom:1px solid rgba(255,255,255,0.04)">
-            <div style="font-size:0.65em;color:var(--dim);letter-spacing:1px;margin-bottom:3px">VOICE</div>
-            <select id="quick-voice-select" onchange="saveQuickVoice(this.value)" style="width:100%;padding:5px 8px;background:var(--bg);border:1px solid var(--border);border-radius:5px;color:var(--text);font-size:0.78em;cursor:pointer">
-              <option value="Guy">🗣️ Guy — Edge TTS</option>
-              <option value="Aria">🗣️ Aria — Edge TTS</option>
-              <option value="Jenny">🗣️ Jenny — Edge TTS</option>
-              <option value="Davis">🗣️ Davis — Edge TTS</option>
-              <option value="Nova">⭐ Nova — ElevenLabs</option>
-              <option value="Byte">⭐ Byte — ElevenLabs</option>
-              <option value="gtts">🗣️ Google TTS</option>
-            </select>
-          </div>
-          <button class="quick-tool-btn" onclick="quickTool('browser_save_session')"><span class="tool-icon">💾</span>Save Session</button>
-          <button class="quick-tool-btn" onclick="quickTool('browser_response_body')"><span class="tool-icon">📡</span>Response Body</button>
-          <button class="quick-tool-btn" onclick="quickTool('schedule_task')"><span class="tool-icon">⏰</span>Schedule Task</button>
-        </div>
-      </div>
-    </div>
-
-    <!-- TOOLS -->
-    <div class="tab-pane" id="tab-tools">
-      <div id="tools-pane">
-        <h3>🔧 ALL TOOLS (72 registered)</h3>
-        <input id="tool-search" type="text" placeholder="Search tools..." oninput="filterTools(this.value)">
-        <div id="tools-list"></div>
-      </div>
-    </div>
-
-    <!-- PLUGINS -->
-    <div class="tab-pane" id="tab-plugins">
-      <div id="plugins-pane">
-        <h3>⚡ SKILLS</h3>
-        <div id="plugins-list">Loading...</div>
-      </div>
-    </div>
-
-    <!-- MODELS -->
-    <div class="tab-pane" id="tab-models">
-      <div id="models-pane">
-        <h3>🧠 MODEL MATRIX</h3>
-
-        <!-- Nitro-only toggle (aliases) -->
-        <div style="display:flex;align-items:center;justify-content:space-between;gap:12px;margin:10px 0 14px;padding:10px 12px;background:var(--bg3);border:1px solid var(--border);border-radius:10px">
-          <div>
-            <div style="font-size:0.86em;color:var(--text);font-weight:600">🚀 OpenRouter Nitro only</div>
-            <div style="font-size:0.72em;color:var(--dim)">When enabled, all OpenRouter models will use the high-speed Nitro endpoints</div>
-          </div>
-          <div style="display:flex;align-items:center;gap:14px">
-            <span id="versionBadge" class="badge bg-primary" style="opacity:0.6;font-size:0.7em">v1.5.2</span>
-            <label class="toggle-switch" title="Show only OpenRouter Nitro aliases">
-              <input type="checkbox" id="nitro-only-toggle" onchange="saveNitroOnly(this.checked)">
-              <span class="toggle-slider"></span>
-            </label>
-          </div>
-        </div>
-
-        <div id="ollama-health-row">
-          <div class="status-dot" id="ollama-health-dot"></div>
-          <span id="ollama-health">Checking Ollama...</span>
-          <span style="margin-left:auto;font-size:0.75em;color:var(--dim)" id="ollama-model-count"></span>
-          <button onclick="refreshOllama()" style="padding:3px 10px;background:var(--bg);border:1px solid var(--border);border-radius:5px;color:var(--text);cursor:pointer;font-size:0.75em">Refresh</button>
-        </div>
-        <div class="model-config-box">
-          <h4>GLOBAL TOKEN CONFIG</h4>
-          <div style="font-size:0.78em;color:var(--dim);margin-bottom:10px">
-            Set global max tokens and context window defaults applicable to all models.
-          </div>
-          <div class="model-config-row">
-            <label title="Max output tokens (0 = provider default)">Max Tokens</label>
-            <input id="cfg-max-tokens" type="number" placeholder="0 = default" min="0" max="200000">
-          </div>
-          <div class="model-config-row">
-            <label title="Context window size (0 = auto-detect)">Context Window</label>
-            <input id="cfg-context-window" type="number" placeholder="0 = auto" min="0" max="2000000">
-          </div>
-          <div style="margin-top:8px;display:flex;gap:8px">
-            <button class="btn secondary" onclick="applyModelConfig()">Save Token Config</button>
-          </div>
-        </div>
-        <!-- PER-MODEL OVERRIDES -->
-        <div class="model-config-box" style="margin-top:18px">
-          <h4>PER-MODEL OVERRIDES</h4>
-          <div style="font-size:0.78em;color:var(--dim);margin-bottom:10px">
-            Set max tokens and context window per model. Takes precedence over global settings above.
-            Use the exact model ID (e.g. <code>gemini-2.5-flash</code>, <code>claude-sonnet-4-5</code>, <code>llama3.3:70b</code>) or an alias.
-          </div>
-          <div style="display:flex;gap:6px;flex-wrap:wrap;align-items:flex-end;margin-bottom:8px">
-            <div style="flex:2;min-width:120px">
-              <div style="font-size:0.72em;color:var(--dim);margin-bottom:3px">Model</div>
-              <select id="pmo-model" style="width:100%;padding:7px 10px;background:var(--bg);border:1px solid var(--border);border-radius:7px;color:var(--text);font-size:0.88em;cursor:pointer">
-                <option value="">-- select model --</option>
-              </select>
-              <input id="pmo-model-custom" type="text" placeholder="or type custom model ID..." style="width:100%;padding:5px 10px;background:var(--bg);border:1px solid var(--border);border-radius:5px;color:var(--dim);font-size:0.76em;margin-top:4px">
-            </div>
-            <div style="flex:1;min-width:90px">
-              <div style="font-size:0.72em;color:var(--dim);margin-bottom:3px">Max Tokens</div>
-              <input id="pmo-max-tokens" type="number" placeholder="0 = global" min="0" max="200000" style="width:100%;padding:7px 10px;background:var(--bg);border:1px solid var(--border);border-radius:7px;color:var(--text);font-size:0.88em">
-            </div>
-            <div style="flex:1;min-width:90px">
-              <div style="font-size:0.72em;color:var(--dim);margin-bottom:3px">Context Window</div>
-              <input id="pmo-context-window" type="number" placeholder="0 = global" min="0" max="2000000" style="width:100%;padding:7px 10px;background:var(--bg);border:1px solid var(--border);border-radius:7px;color:var(--text);font-size:0.88em">
-            </div>
-            <button class="btn primary" onclick="pmoSave()" style="padding:7px 16px;white-space:nowrap">Add / Update</button>
-          </div>
-          <div id="pmo-list" style="margin-top:4px"></div>
-        </div>
-        <div id="model-grid-root"></div>
-      </div>
-    </div>
-
-    <!-- BROWSER -->
-    <div class="tab-pane" id="tab-browser">
-      <div id="browser-pane">
-        <h3>🌐 BROWSER CONTROL</h3>
-        <div class="browser-url-row">
-          <input id="browser-url" type="text" placeholder="https://example.com" onkeydown="if(event.key==='Enter')browserNav()">
-          <button class="btn primary" onclick="browserNav()">Go</button>
-          <button class="btn secondary" onclick="browserCmd('start')">Launch</button>
-        </div>
-        <div class="browser-action-grid">
-          <button class="browser-btn" onclick="browserCmd('screenshot_quick')">📸 Screenshot</button>
-          <button class="browser-btn" onclick="browserCmd('scroll',{direction:'down'})">↓ Scroll Down</button>
-          <button class="browser-btn" onclick="browserCmd('scroll',{direction:'up'})">↑ Scroll Up</button>
-          <button class="browser-btn" onclick="browserCmd('snapshot_quick')">🔍 Snapshot</button>
-          <button class="browser-btn" onclick="browserCmd('get_frames')">🖼 List Frames</button>
-          <button class="browser-btn" onclick="browserCmd('get_console_logs')">🖥 Console Logs</button>
-          <button class="browser-btn" onclick="browserCmd('get_page_errors')">⚠️ Page Errors</button>
-          <button class="browser-btn" onclick="browserCmd('get_network_requests')">📡 Network</button>
-          <button class="browser-btn" onclick="browserCmd('save_session',{session_name:'default'})">&#x1f4be; Save Session</button>
-          <button class="browser-btn" onclick="browserCmd('load_session',{session_name:'default'})">&#x1f4c2; Load Session</button>
-          <button class="browser-btn" onclick="browserCmd('generate_pdf')">📄 PDF</button>
-          <button class="browser-btn" onclick="browserCmd('close')">&#x2715; Close</button>
-        </div>
-        <div id="browser-status">Browser not started.</div>
-        <img id="browser-screenshot" alt="screenshot">
-      </div>
-    </div>
-
-    <!-- MEMORY -->
-    <div class="tab-pane" id="tab-memory">
-      <div id="memory-pane">
-        <h3>💾 MEMORY FILES</h3>
-        <div class="mem-controls">
-          <select id="mem-file-select" onchange="loadMemFile(this.value)"><option>Loading...</option></select>
-          <button class="btn primary" onclick="saveMemFile()">Save</button>
-          <button class="btn secondary" onclick="loadFileList()">Refresh</button>
-        </div>
-        <textarea id="mem-editor" placeholder="Select a file to edit..."></textarea>
-      </div>
-    </div>
-
-    <!-- STATUS -->
-    <div class="tab-pane" id="tab-status">
-      <div id="status-pane" style="overflow-y:auto;padding-bottom:40px">
-        <h3>📊 SYSTEM STATUS</h3>
-        <button class="btn secondary" onclick="refreshStatus()" style="margin-bottom:14px">Refresh Status</button>
-
-        <!-- Section 1: System Overview -->
-        <div style="font-size:0.72rem;letter-spacing:2px;color:var(--dim);margin:14px 0 8px;text-transform:uppercase">System Overview</div>
-        <div class="stat-grid">
-          <div class="stat-card"><div class="val" id="st-uptime">--</div><div class="lbl">Uptime</div></div>
-          <div class="stat-card"><div class="val" id="st-version">v1.5.2</div><div class="lbl">Version</div></div>
-          <div class="stat-card"><div class="val" id="st-personality">--</div><div class="lbl">Personality</div></div>
-          <div class="stat-card"><div class="val" id="st-tin">--</div><div class="lbl">Tokens In</div></div>
-          <div class="stat-card"><div class="val" id="st-tout">--</div><div class="lbl">Tokens Out</div></div>
-          <div class="stat-card"><div class="val" id="st-tools">--</div><div class="lbl">Tools</div></div>
-        </div>
-
-        <!-- Section 1.5: Software Update -->
-        <div style="font-size:0.72rem;letter-spacing:2px;color:var(--dim);margin:18px 0 8px;text-transform:uppercase">🚀 Software Update</div>
-        <div class="stat-grid">
-          <div class="stat-card" style="grid-column: span 2; display:flex; flex-direction:row; align-items:center; justify-content:space-between; padding: 12px 18px;">
-            <div style="text-align:left">
-              <div id="update-status-text" style="font-size:0.85rem; color:var(--text); margin-bottom:2px">Checking for updates...</div>
-              <div id="update-version-hint" style="font-size:0.7rem; color:var(--dim)">Current version: v1.6.8</div>
-            </div>
-            <div style="display:flex; gap:8px">
-              <button class="btn secondary" onclick="checkUpdate()" style="padding:6px 12px; font-size:0.75rem;">Check Now</button>
-              <button id="update-btn-status" class="btn primary" onclick="triggerUpdate(false)" style="padding:6px 12px; font-size:0.75rem; display:none; background:var(--green); color:#000;">Update Now</button>
-            </div>
-          </div>
-          <div class="stat-card" style="grid-column: span 1; padding: 12px 14px; cursor:pointer;" onclick="triggerUpdate(true)" title="Forced Re-install / Dependency Repair">
-            <div class="val" style="font-size:1.1rem">🛠️</div>
-            <div class="lbl">Smart Repair</div>
-          </div>
-        </div>
-
-        <!-- Cost Dashboard -->
-        <div style="display:flex;align-items:center;justify-content:space-between;margin:18px 0 8px">
-          <div style="font-size:0.72rem;letter-spacing:2px;color:var(--dim);text-transform:uppercase">💰 Cost Dashboard</div>
-          <select id="cost-currency" onchange="saveCurrency();refreshCostDashboard()" style="background:var(--bg3);color:var(--text);border:1px solid var(--border);border-radius:6px;padding:4px 8px;font-size:0.78rem;font-family:var(--mono);cursor:pointer">
-            <option value="USD">💲 USD</option>
-            <option value="EUR">€ EUR</option>
-            <option value="GBP">£ GBP</option>
-            <option value="CAD">🇨🇦 CAD</option>
-            <option value="AUD">🇦🇺 AUD</option>
-            <option value="JPY">¥ JPY</option>
-            <option value="INR">₹ INR</option>
-            <option value="BRL">🇧🇷 BRL</option>
-            <option value="KRW">₩ KRW</option>
-          </select>
-        </div>
-        <div class="stat-grid" id="cost-cards">
-          <div class="stat-card"><div class="val" id="cost-session">--</div><div class="lbl">Session Cost</div></div>
-          <div class="stat-card"><div class="val" id="cost-today">--</div><div class="lbl">Today</div></div>
-          <div class="stat-card"><div class="val" id="cost-week">--</div><div class="lbl">This Week</div></div>
-          <div class="stat-card"><div class="val" id="cost-month">--</div><div class="lbl">This Month</div></div>
-          <div class="stat-card"><div class="val" id="cost-last">--</div><div class="lbl">Last Request</div></div>
-          <div class="stat-card"><div class="val" id="cost-avg">--</div><div class="lbl">Avg / Message</div></div>
-        </div>
-        <div id="cost-free-note" style="font-size:0.72rem;color:var(--dim);margin-bottom:18px"></div>
-
-        <!-- Section 2: Model & AI -->
-        <div style="font-size:0.72rem;letter-spacing:2px;color:var(--dim);margin:18px 0 8px;text-transform:uppercase">Model & AI</div>
-        <div class="stat-grid">
-          <div class="stat-card"><div class="val" id="st-model" style="font-size:1.1em">--</div><div class="lbl">Active Model</div></div>
-          <div class="stat-card"><div class="val" id="st-provider">--</div><div class="lbl">Provider</div></div>
-          <div class="stat-card"><div class="val" id="st-mode">--</div><div class="lbl">Mode</div></div>
-          <div class="stat-card"><div class="val" id="st-ctx-used">--</div><div class="lbl">Context Used</div></div>
-          <div class="stat-card"><div class="val" id="st-ctx-max">--</div><div class="lbl">Context Limit</div></div>
-
-        </div>
-        <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:12px">
-          <div class="stat-card" style="text-align:left;padding:14px 18px">
-            <div class="lbl" style="margin-bottom:8px">Primary Model</div>
-            <div id="st-primary" style="font-family:var(--mono);font-size:0.9em;color:var(--green)">--</div>
-          </div>
-          <div class="stat-card" style="text-align:left;padding:14px 18px">
-            <div class="lbl" style="margin-bottom:8px">Fallback Model</div>
-            <div id="st-fallback" style="font-family:var(--mono);font-size:0.9em;color:var(--yellow)">--</div>
-          </div>
-        </div>
-
-
-
-        <!-- Section 3: Connections -->
-        <div style="font-size:0.72rem;letter-spacing:2px;color:var(--dim);margin:18px 0 8px;text-transform:uppercase">Connections</div>
-        <div class="stat-grid" id="st-connections"></div>
-
-        <!-- Section 4: Providers -->
-        <div style="font-size:0.72rem;letter-spacing:2px;color:var(--dim);margin:18px 0 8px;text-transform:uppercase">Configured Providers</div>
-        <div class="stat-grid" id="st-providers"></div>
-
-        <!-- Section 5: Plugins -->
-        <div style="font-size:0.72rem;letter-spacing:2px;color:var(--dim);margin:18px 0 8px;text-transform:uppercase">Plugins</div>
-        <div id="status-plugins-list"></div>
-
-        <!-- Section 6: Ollama -->
-        <div style="font-size:0.72rem;letter-spacing:2px;color:var(--dim);margin:18px 0 8px;text-transform:uppercase">Ollama</div>
-        <div class="stat-grid">
-          <div class="stat-card"><div class="val" id="st-ollama-status">--</div><div class="lbl">Status</div></div>
-          <div class="stat-card"><div class="val" id="st-ollama-models">--</div><div class="lbl">Models</div></div>
-        </div>
-      </div>
-    </div>
-
-    <!-- LOGS -->
-    <div class="tab-pane" id="tab-logs">
-      <div id="logs-pane">
-        <div id="log-controls">
-          <input id="log-filter" type="text" placeholder="Filter logs..." oninput="filterLogs(this.value)">
-          <button class="btn secondary" onclick="clearLogs()">Clear</button>
-          <button class="btn secondary" id="log-auto-scroll-btn" onclick="toggleAutoScroll()">Auto-scroll: ON</button>
-        </div>
-        <div id="logs-scroll"></div>
-      </div>
-    </div>
-
-    <!-- THINKING / AGENT TRACE -->
-    <!-- SETTINGS -->
-    <div class="tab-pane" id="tab-settings">
-      <div id="settings-pane" style="padding:18px;overflow-y:auto">
-        <h3>⚙️ SETTINGS</h3>
-
-        <!-- Section 1: Model Configuration -->
-        <div class="model-config-box">
-          <h4>MODEL CONFIGURATION</h4>
-          <div class="model-config-row">
-            <label>Primary Model</label>
-            <div style="display:flex;gap:8px;flex:1">
-              <select id="set-primary-provider" onchange="updateSettingsModelList('primary')" style="flex:0.4;padding:7px 10px;background:var(--bg);border:1px solid var(--border);border-radius:7px;color:var(--text);font-size:0.88em">
-              </select>
-              <select id="set-primary-model" style="flex:0.6;padding:7px 10px;background:var(--bg);border:1px solid var(--border);border-radius:7px;color:var(--text);font-size:0.88em">
-              </select>
-            </div>
-          </div>
-          <div class="model-config-row">
-            <label>Fallback Model</label>
-            <div style="display:flex;gap:8px;flex:1">
-              <select id="set-fallback-provider" onchange="updateSettingsModelList('fallback')" style="flex:0.4;padding:7px 10px;background:var(--bg);border:1px solid var(--border);border-radius:7px;color:var(--text);font-size:0.88em">
-              </select>
-              <select id="set-fallback-model" style="flex:0.6;padding:7px 10px;background:var(--bg);border:1px solid var(--border);border-radius:7px;color:var(--text);font-size:0.88em">
-              </select>
-            </div>
-          </div>
-          <div class="model-config-row">
-            <label>Planner Model</label>
-            <div style="display:flex;gap:8px;flex:1">
-              <select id="set-planner-provider" onchange="updateSettingsModelList('planner')" style="flex:0.4;padding:7px 10px;background:var(--bg);border:1px solid var(--border);border-radius:7px;color:var(--text);font-size:0.88em">
-              </select>
-              <select id="set-planner-model" style="flex:0.6;padding:7px 10px;background:var(--bg);border:1px solid var(--border);border-radius:7px;color:var(--text);font-size:0.88em">
-              </select>
-            </div>
-          </div>
-          <div class="model-config-row">
-            <label>Planner Fallback</label>
-            <div style="display:flex;gap:8px;flex:1">
-              <select id="set-planner_fallback-provider" onchange="updateSettingsModelList('planner_fallback')" style="flex:0.4;padding:7px 10px;background:var(--bg);border:1px solid var(--border);border-radius:7px;color:var(--text);font-size:0.88em">
-              </select>
-              <select id="set-planner_fallback-model" style="flex:0.6;padding:7px 10px;background:var(--bg);border:1px solid var(--border);border-radius:7px;color:var(--text);font-size:0.88em">
-              </select>
-            </div>
-          </div>
-          <div style="display:flex;gap:18px;flex-wrap:wrap;margin-top:14px">
-            <label style="display:flex;align-items:center;gap:8px;cursor:pointer;font-size:0.88em">
-              <input type="checkbox" id="set-streaming" checked style="accent-color:var(--cyan);width:18px;height:18px;cursor:pointer">
-              <span>Streaming</span>
-            </label>
-          </div>
-          <div style="margin-top:16px;padding-top:14px;border-top:1px solid var(--border)">
-            <div style="font-size:0.82em;color:var(--dim);margin-bottom:8px;letter-spacing:1px;text-transform:uppercase">🧠 Thinking Level</div>
-            <div style="font-size:0.72em;color:var(--dim);margin-bottom:10px">Sets <code style="font-size:0.95em;background:var(--bg3);padding:1px 5px;border-radius:4px">reasoning_effort</code> — how deeply the model thinks before responding.</div>
-            <div id="thinking-level-btns" style="display:flex;gap:0;border:1px solid var(--border);border-radius:8px;overflow:hidden">
-              <button class="think-btn" data-level="off" onclick="setThinkingLevel('off')" style="flex:1;padding:9px 0;background:var(--bg3);border:none;color:var(--dim);cursor:pointer;font-size:0.82em;font-weight:600;transition:all .2s">OFF</button>
-              <button class="think-btn active" data-level="low" onclick="setThinkingLevel('low')" style="flex:1;padding:9px 0;background:linear-gradient(135deg,var(--cyan),var(--green));border:none;color:#000;cursor:pointer;font-size:0.82em;font-weight:700;transition:all .2s">LOW ⚡</button>
-              <button class="think-btn" data-level="medium" onclick="setThinkingLevel('medium')" style="flex:1;padding:9px 0;background:var(--bg3);border:none;color:var(--dim);cursor:pointer;font-size:0.82em;font-weight:600;transition:all .2s">MEDIUM</button>
-              <button class="think-btn" data-level="high" onclick="setThinkingLevel('high')" style="flex:1;padding:9px 0;background:var(--bg3);border:none;color:var(--dim);cursor:pointer;font-size:0.82em;font-weight:600;transition:all .2s">HIGH 🧠</button>
-            </div>
-          </div>
-          <div style="margin-top:12px">
-            <button class="btn primary" onclick="saveModelSettings()">Save Model Settings</button>
-          </div>
-        </div>
-
-        <!-- Section 2: Voice -->
-        <div class="model-config-box" style="margin-top:18px">
-          <h4>VOICE</h4>
-          <div style="font-size:0.78em;color:var(--dim);margin-bottom:10px">
-            Select the default voice for text-to-speech. ElevenLabs voices require an API key.
-          </div>
-          <div style="display:flex;gap:8px;align-items:center">
-            <select id="set-voice" style="flex:1;padding:9px 12px;background:var(--bg);border:1px solid var(--border);border-radius:7px;color:var(--text);font-size:0.88em;cursor:pointer">
-              <option value="Guy">🗣️ Guy — Edge TTS (Free, male)</option>
-              <option value="Aria">🗣️ Aria — Edge TTS (Free, female)</option>
-              <option value="Jenny">🗣️ Jenny — Edge TTS (Free, female)</option>
-              <option value="Davis">🗣️ Davis — Edge TTS (Free, male)</option>
-              <option value="Nova">⭐ Nova — ElevenLabs (Premium, female)</option>
-              <option value="Byte">⭐ Byte — ElevenLabs (Premium, male)</option>
-              <option value="gtts">🗣️ Google TTS (Free, female)</option>
-            </select>
-            <button class="btn primary" onclick="saveVoiceSettings()">Save</button>
-            <button class="btn secondary" onclick="testVoice()">Test Voice</button>
-          </div>
-        </div>
-
-        <!-- Section 3: System -->
-        <div class="model-config-box" style="margin-top:18px">
-          <h4>SYSTEM</h4>
-          <div class="model-config-row">
-            <label>Update Check Interval</label>
-            <select id="set-update-interval" style="flex:1;padding:7px 10px;background:var(--bg);border:1px solid var(--border);border-radius:7px;color:var(--text);font-size:0.88em">
-              <option value="21600">Every 6 hours (default)</option>
-              <option value="43200">Every 12 hours</option>
-              <option value="86400">Every 24 hours</option>
-              <option value="0">Disabled</option>
-            </select>
-          </div>
-          <div class="model-config-row">
-            <label title="Maximum time a single speak() call can run before being stopped">Speak Timeout (seconds)</label>
-            <input id="set-speak-timeout" type="number" value="600" min="60" max="3600" style="flex:1;padding:7px 10px;background:var(--bg);border:1px solid var(--border);border-radius:7px;color:var(--text);font-size:0.88em">
-          </div>
-          <div class="model-config-row">
-            <label title="Maximum ReAct loop turns per query">Max ReAct Turns</label>
-            <input id="set-max-turns" type="number" value="50" min="5" max="200" style="flex:1;padding:7px 10px;background:var(--bg);border:1px solid var(--border);border-radius:7px;color:var(--text);font-size:0.88em">
-          </div>
-          <div style="margin-top:12px">
-            <button class="btn primary" onclick="saveSystemSettings()">Save System Settings</button>
-          </div>
-        </div>
-
-        <!-- Section 4: Display -->
-        <div class="model-config-box" style="margin-top:18px">
-          <h4>DISPLAY</h4>
-          <div style="display:flex;gap:18px;flex-wrap:wrap;align-items:center">
-            <label style="display:flex;align-items:center;gap:8px;font-size:0.88em;cursor:pointer">
-              <span>Font Size</span>
-              <input type="range" id="ds-fontsize" min="13" max="26" value="17" style="accent-color:var(--cyan);width:120px;cursor:pointer" oninput="applyFontSize(this.value)">
-              <span id="ds-fontsize-label" style="font-size:0.78em;color:var(--dim);min-width:30px">17px</span>
-            </label>
-            <label style="display:flex;align-items:center;gap:8px;font-size:0.88em;cursor:pointer">
-              <input type="checkbox" id="crt-toggle" onchange="applyCRT(this.checked)" style="accent-color:var(--cyan);width:18px;height:18px;cursor:pointer">
-              <span>CRT Scanlines</span>
-            </label>
-            <label style="display:flex;align-items:center;gap:8px;font-size:0.88em;cursor:pointer">
-              <span>Glow</span>
-              <select id="ds-glow" onchange="applyGlow(this.value)" style="padding:5px 8px;background:var(--bg);border:1px solid var(--border);border-radius:5px;color:var(--text);font-size:0.85em;cursor:pointer">
-                <option value="0">Off</option>
-                <option value="1">Medium</option>
-                <option value="2" selected>Max</option>
-              </select>
-            </label>
-          </div>
-        </div>
-
-        <!-- Section 5: Power Controls -->
-        <div class="model-config-box" style="margin-top:18px">
-          <h4>POWER CONTROLS</h4>
-          <div style="font-size:0.78em;color:var(--dim);margin-bottom:12px">
-            Restart or shut down the Galactic AI process. Restart will reload all modules and reconnect.
-          </div>
-          <div style="display:flex;gap:12px;flex-wrap:wrap">
-            <button class="btn primary" onclick="confirmRestart()" style="background:linear-gradient(135deg,#f0c040,#e08020);color:#000;font-weight:700;padding:10px 28px;font-size:0.92em">
-              🔄 Restart Galactic AI
-            </button>
-            <button class="btn primary" onclick="confirmShutdown()" style="background:linear-gradient(135deg,#ff4060,#c00030);color:#fff;font-weight:700;padding:10px 28px;font-size:0.92em">
-              ⏻ Shutdown Galactic AI
-            </button>
-            <button class="btn primary" onclick="triggerUpdate(false)" style="background:linear-gradient(135deg,var(--green),var(--cyan));color:#000;font-weight:700;padding:10px 28px;font-size:0.92em">
-              🚀 Update Software
-            </button>
-            <button class="btn secondary" onclick="triggerUpdate(true)" style="border:1px solid var(--orange);color:var(--orange);font-weight:700;padding:10px 28px;font-size:0.92em;background:transparent">
-              🛠️ Force Update / Repair
-            </button>
-          </div>
-        </div>
-
-      </div>
-    </div>
-
-    <div class="tab-pane" id="tab-thinking">
-      <div style="display:flex; height:100%; overflow:hidden;">
-        <!-- TRACES -->
-        <div id="thinking-pane" style="flex:1; display:flex; flex-direction:column; border-right:1px solid var(--border);">
-          <div id="thinking-controls" style="border-bottom:1px solid rgba(255,255,255,0.05); padding-bottom: 8px;">
-            <input id="thinking-filter" type="text" placeholder="Filter traces..." oninput="filterTraces()">
-            <select id="thinking-phase-filter" onchange="filterTraces()">
-              <option value="">All Phases</option>
-              <option value="thinking">Thinking</option>
-              <option value="tool_call">Tool Calls</option>
-              <option value="tool_result">Tool Results</option>
-              <option value="final_answer">Final Answers</option>
-              <option value="llm_response">LLM Response</option>
-            </select>
-            <button class="btn secondary" onclick="clearTraces()">Clear</button>
-            <button class="btn secondary" id="thinking-auto-scroll-btn" onclick="toggleThinkingAutoScroll()">Auto-scroll: ON</button>
-            <span id="thinking-turn-counter">Turns: 0</span>
-          </div>
-          <div id="thinking-controls" style="background:var(--bg3); padding: 8px 16px;">
-            <span style="font-size: 0.85em; color: var(--dim);">Resumable Workflows:</span>
-            <select id="runs-list" style="padding:4px 8px;background:var(--bg);border:1px solid var(--border);border-radius:4px;color:var(--text);font-size:0.8em;flex:1;">
-              <option value="">-- No runs found --</option>
-            </select>
-            <button class="btn secondary" style="padding:4px 10px; font-size: 0.8em;" onclick="resumeWorkflow()">▶ Resume</button>
-            <button class="btn secondary" style="padding:4px 10px; font-size: 0.8em;" onclick="loadRuns()">↻ Refresh</button>
-          </div>
-          <div id="thinking-scroll"></div>
-        </div>
-        
-        <!-- HIVE MIND / SUBAGENTS -->
-        <div id="hive-mind-pane" style="width:380px; display:flex; flex-direction:column; background:var(--bg2);">
-          <div style="padding:16px; border-bottom:1px solid var(--border); display:flex; justify-content:space-between; align-items:center;">
-            <h3 style="color:var(--cyan); font-size:1rem; margin:0; letter-spacing:1px;">🕸️ HIVE MIND</h3>
-            <div>
-              <button class="btn secondary" style="padding:6px 10px; font-size:0.75rem;" onclick="refreshSubagents()">↻</button>
-              <button class="btn primary" style="padding:6px 10px; font-size:0.75rem;" onclick="openChainModal()">+ Chain</button>
-            </div>
-          </div>
-          <div id="subagents-list" style="flex:1; overflow-y:auto; padding:16px;">
-            <div style="color:var(--dim); font-size:0.85rem; text-align:center; margin-top:20px;">No active subagents.</div>
-          </div>
-          <div style="padding:10px 16px; border-top:1px solid var(--border); flex-shrink:0; background:var(--bg3);">
-            <div style="font-size:0.72rem; color:var(--dim); letter-spacing:1px; text-transform:uppercase; margin-bottom:6px;">🤖 Default Sub-agent Model</div>
-            <div style="display:flex; gap:6px; align-items:center;">
-              <select id="subagent-default-model" onchange="saveSubagentModel()" style="flex:1; padding:5px 9px; background:var(--bg); border:1px solid var(--border); border-radius:7px; color:var(--text); font-size:0.82rem; outline:none;">
-                <option value="">— Same as main agent —</option>
-              </select>
-            </div>
-            <div style="font-size:0.7rem; color:var(--dim); margin-top:4px;">Applies to all autonomously spawned agents. Per-step overrides possible in Chain Builder.</div>
-          </div>
-        </div>
-      </div>
-    </div>
-
-    <!-- TERMINAL -->
-    <div class="tab-pane" id="tab-terminal">
-      <div id="terminal-header">
-        <div id="terminal-title">💻 Virtual Terminal</div>
-        <div style="display:flex;gap:8px">
-          <button class="term-btn" onclick="launchShell()">💻 Standard Shell</button>
-          <button class="term-btn" onclick="launchGeminiCLI()">🚀 Launch Gemini CLI</button>
-          <button class="term-btn" onclick="resetTerminal()">↺ Reset</button>
-        </div>
-      </div>
-      <div id="terminal-container"></div>
-    </div>
-
-  </div><!-- /content -->
-</div><!-- /main -->
-
-<!-- CHAIN BUILDER MODAL -->
-<div id="chain-modal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,0.85);z-index:5000;align-items:center;justify-content:center;backdrop-filter:blur(4px)">
-  <div style="background:var(--bg2);border:1px solid var(--cyan);border-radius:16px;padding:28px;width:600px;max-width:95vw;max-height:90vh;display:flex;flex-direction:column;box-shadow:0 0 40px rgba(0,243,255,0.15)">
-    <h3 style="color:var(--cyan);margin-bottom:10px;font-size:1.1rem">⛓️ SPfAWN AGENT CHAIN</h3>
-    <p style="color:var(--dim);font-size:0.85rem;margin-bottom:16px">Define a sequence of subagents. Each agent's result is passed as context to the next.</p>
-    
-    <div id="chain-steps-container" style="flex:1;overflow-y:auto;padding-right:10px;margin-bottom:16px;"></div>
-    
-    <button class="btn secondary" style="margin-bottom:20px;width:100%;border-style:dashed;" onclick="addChainStep()">+ Add Step</button>
-    
-    <div class="modal-btns" style="flex-shrink:0;">
-      <button class="btn secondary" onclick="document.getElementById('chain-modal').style.display='none'">Cancel</button>
-      <button class="btn primary" onclick="submitChain()">Launch Chain 🚀</button>
-    </div>
-  </div>
-</div>
-
-<!-- TOOL MODAL -->
-<div id="tool-modal" onclick="closeToolModal(event)">
-  <div id="tool-modal-inner">
-    <h3 id="modal-title">Tool Name</h3>
-    <p id="modal-desc"></p>
-    <div id="modal-params"></div>
-    <div id="tool-result"></div>
-    <div class="modal-btns">
-      <button class="btn secondary" onclick="document.getElementById('tool-modal').classList.remove('open')">Cancel</button>
-      <button class="btn primary" onclick="runTool()">Run Tool ▶</button>
-    </div>
-  </div>
-</div>
-
-<!-- API KEY MODAL -->
-<div id="key-modal" onclick="if(event.target===this)this.classList.remove('open')">
-  <div id="key-modal-inner">
-    <h3 id="key-modal-title">\ud83d\udd11 API Key Required</h3>
-    <p id="key-modal-desc">Enter your API key to use this provider.</p>
-    <div style="margin-bottom:14px">
-      <label style="display:block;font-size:0.82rem;color:var(--yellow);margin-bottom:6px;font-family:var(--mono)" id="key-modal-label">API Key</label>
-      <input id="key-input" type="password" placeholder="Paste your API key here..." autocomplete="off">
-      <div style="font-size:0.72rem;color:var(--dim);margin-top:4px">Your key will be saved to config.yaml and never shared.</div>
-    </div>
-    <div class="modal-btns">
-      <button class="btn secondary" onclick="document.getElementById('key-modal').classList.remove('open')">Cancel</button>
-      <button class="btn primary" onclick="submitApiKey()" style="background:linear-gradient(135deg,var(--yellow),var(--orange))">Save &amp; Switch</button>
-    </div>
-  </div>
-</div>
-
-<script>
-// State
-let token = localStorage.getItem('gal_token') || '';
-let socket = null;
-let allToolsData = [];
-let currentTool = null;
-let autoScroll = true;
-let allLogs = [];
-let httpChatPending = false;  // suppresses WS 'thought' dupes while HTTP /api/chat in flight
-
-let _orbInterval = null;
-let _orbStartTime = 0;
-let _orbActiveCount = 0;
-const ORB_JOKES = [
-  "Pondering the orb...",
-  "Consulting the digital ancestors...",
-  "Waking up the subagents...",
-  "Counting the stars...",
-  "Re-routing the warp drive...",
-  "Convincing the LLM it is human...",
-  "Generating highly plausible hallucinations...",
-  "Downloading more RAM...",
-  "Bribing the firewall...",
-  "Feeding the hamsters...",
-  "Synthesizing cognitive fluid...",
-  "Tuning the flux capacitor...",
-  "Aligning the satellite dish...",
-  "Optimizing the spice flow...",
-  "Recalibrating the reality matrix...",
-  "Hacking the mainframe (nicely)...",
-  "Polishing the chrome...",
-  "Checking the tire pressure...",
-  "Swapping the glasspacks..."
-];
-
-function startOrb() {
-  _orbActiveCount++;
-  const tBtn = document.getElementById('thinking-tab-btn');
-  if (tBtn && !tBtn.classList.contains('active')) {
-    tBtn.style.color = 'var(--pink)';
-    tBtn.style.textShadow = '0 0 10px var(--pink)';
-  }
-
-  const el = document.getElementById('thinking-orb');
-  if (!el || _orbActiveCount > 1) return;
-  
-  el.style.display = 'block';
-  _orbStartTime = Date.now();
-  let frame = 0;
-  let jokeIdx = Math.floor(Math.random() * ORB_JOKES.length);
-  const frames = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏'];
-  
-  clearInterval(_orbInterval);
-  _orbInterval = setInterval(() => {
-    const elapsed = Math.floor((Date.now() - _orbStartTime) / 1000);
-    const mins = Math.floor(elapsed / 60);
-    const secs = (elapsed % 60).toString().padStart(2, '0');
-    
-    // Change joke every 15 seconds
-    if (elapsed > 0 && elapsed % 15 === 0) {
-      jokeIdx = (jokeIdx + 1) % ORB_JOKES.length;
-    }
-    
-    el.textContent = `${frames[frame]} ${ORB_JOKES[jokeIdx]} (esc to cancel, ${mins}m ${secs}s)`;
-    frame = (frame + 1) % frames.length;
-  }, 100);
-}
-
-function stopOrb() {
-  _orbActiveCount--;
-  if (_orbActiveCount < 0) _orbActiveCount = 0;
-  if (_orbActiveCount > 0) return;
-
-  const tBtn = document.getElementById('thinking-tab-btn');
-  if (tBtn) { tBtn.style.color = ''; tBtn.style.textShadow = ''; }
-
-  const el = document.getElementById('thinking-orb');
-  if (el) el.style.display = 'none';
-  clearInterval(_orbInterval);
-}
-
-function resetOrb() {
-  _orbActiveCount = 0;
-  
-  const tBtn = document.getElementById('thinking-tab-btn');
-  if (tBtn) { tBtn.style.color = ''; tBtn.style.textShadow = ''; }
-
-  const el = document.getElementById('thinking-orb');
-  if (el) el.style.display = 'none';
-  clearInterval(_orbInterval);
-}
-
-let ALIASES = [];
-
-// ─── VIRTUAL TERMINAL ──────────────────────────────────────────────────────
-let term = null;
-let fitAddon = null;
-let termSocket = null;
-
-function initTerminal() {
-  if (term) return;
-  term = new Terminal({
-    cursorBlink: true,
-    theme: {
-      background: '#000000',
-      foreground: '#00f3ff',
-      cursor: '#ff00c8'
-    },
-    fontFamily: 'JetBrains Mono, Cascadia Code, monospace',
-    fontSize: 14
-  });
-  fitAddon = new FitAddon.FitAddon();
-  term.loadAddon(fitAddon);
-  term.open(document.getElementById('terminal-container'));
-  fitAddon.fit();
-
-  term.onData(data => {
-    if (termSocket && termSocket.readyState === WebSocket.OPEN) {
-      termSocket.send(JSON.stringify({type: 'input', data: data}));
-    }
-  });
-
-  window.addEventListener('resize', () => fitAddon.fit());
-}
-
-function connectTerminalWS() {
-  if (termSocket) termSocket.close();
-  const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-  termSocket = new WebSocket(`${protocol}//${window.location.host}/ws/terminal?token=${token}`);
-  
-  termSocket.onopen = () => {
-    term.write('\r\n\x1b[1;32mCONNECTED TO GALACTIC TERMINAL ENGINE\x1b[0m\r\n');
-  };
-  
-  termSocket.onmessage = (event) => {
-    const p = JSON.parse(event.data);
-    if (p.type === 'output') term.write(p.data);
-  };
-  
-  termSocket.onclose = () => {
-    term.write('\r\n\x1b[1;31mTERMINAL DISCONNECTED\x1b[0m\r\n');
-  };
-}
-
-function launchGeminiCLI() {
-  if (!termSocket || termSocket.readyState !== WebSocket.OPEN) {
-    connectTerminalWS();
-  }
-  const check = setInterval(() => {
-    if (termSocket.readyState === WebSocket.OPEN) {
-      clearInterval(check);
-      termSocket.send(JSON.stringify({type: 'command', data: 'gemini'}));
-    }
-  }, 100);
-  setTimeout(() => clearInterval(check), 5000);
-}
-
-function launchShell() {
-  if (!termSocket || termSocket.readyState !== WebSocket.OPEN) {
-    connectTerminalWS();
-  }
-}
-
-function resetTerminal() {
-  if (term) term.clear();
-  if (termSocket) termSocket.close();
-  connectTerminalWS();
-}
-
-async function loadAliases() {
-  try {
-    const r = await authFetch('/api/aliases');
-    const d = await r.json();
-    ALIASES = d.aliases || [];
-  } catch(e) { console.error('loadAliases error:', e); ALIASES = []; }
-}
-
-function aliasEmoji(aliasName, target, isNitro) {
-  const s = `${aliasName || ''} ${target || ''}`.toLowerCase();
-  
-  // Strict priority matching for specific aliases
-  if (isNitro || s.includes('nitro')) return '🚀';
-  if (s.includes('flux') || s.includes('sd35') || s.includes('imagen')) return '🎨';
-  if (s.includes('gpt') || s.includes('o1') || s.includes('o3') || s.includes('codex')) return '🧠';
-  if (s.includes('claude') || s.includes('sonnet') || s.includes('opus') || s.includes('haiku')) return '🤖';
-  if (s.includes('gemini')) return '🌐';
-  if (s.includes('grok')) return '⚡';
-  if (s.includes('deepseek')) return '🐋';
-  if (s.includes('qwen') || s.includes('coder') || s.includes('code')) return '💻';
-  if (s.includes('llama') || s.includes('q8') || s.includes('q30')) return '🦙';
-  if (s.includes('kimi') || s.includes('moonshot')) return '🌙';
-  if (s.includes('groq')) return '⚡';
-  if (s.includes('mistral')) return '🌬️';
-  
-  // Fallback based on provider if target is visible
-  if (s.includes('openrouter')) return '🔀';
-  if (s.includes('nvidia')) return '🟢';
-  
-  return '📌';
-}
-
-function prettyAliasLabel(aliasName, target) {
-  const raw = String(aliasName || '').trim();
-  if (raw) {
-    return raw
-      .replace(/[-_]+/g, ' ')
-      .replace(/\b(gpt|glm|qwen|api|ai)\b/gi, m => m.toUpperCase())
-      .replace(/\b(\w)/g, c => c.toUpperCase());
-  }
-  const t = String(target || '').split('/').pop() || '(alias)';
-  return t.replace(':nitro','').replace(/[-_]+/g,' ');
-}
-
-// Auth helper — adds JWT Bearer header to all fetch calls
-function authHeaders(extra) {
-  const h = Object.assign({}, extra || {});
-  if (token) h['Authorization'] = 'Bearer ' + token;
-  return h;
-}
-async function authFetch(url, opts) {
-  opts = opts || {};
-  opts.headers = authHeaders(opts.headers);
-  const r = await fetch(url, opts);
-  if (r.status === 401) { localStorage.removeItem('gal_token'); token = ''; document.getElementById('login-overlay').style.display = 'flex'; }
-  return r;
-}
-
-// ── Setup Wizard ─────────────────────────────────────────────────────────────
-async function checkSetup() {
-  try {
-    const r = await authFetch('/api/check_setup');
-    const d = await r.json();
-    if (d.needs_setup) {
-      showSetupWizard(d);
-      return true;
-    }
-  } catch(e) {}
-  return false;
-}
-
-function showSetupWizard(status) {
-  document.getElementById('login-overlay').style.display = 'none';
-  document.getElementById('setup-wizard').style.display = 'flex';
-  // pre-fill current provider if known
-  if (status && status.current_provider) {
-    const sel = document.getElementById('sw-provider');
-    if (sel) sel.value = status.current_provider;
-    swUpdateModelHint();
-  }
-}
-
-const SW_MODEL_HINTS = {
-  google:      {placeholder:'gemini-2.5-flash', link:'Get key: <a href="https://aistudio.google.com/apikey" target="_blank" style="color:var(--cyan)">aistudio.google.com/apikey</a>'},
-  anthropic:   {placeholder:'claude-sonnet-4-6', link:'Get key: <a href="https://console.anthropic.com/keys" target="_blank" style="color:var(--cyan)">console.anthropic.com/keys</a>'},
-  openai:      {placeholder:'gpt-4o', link:'Get key: <a href="https://platform.openai.com/api-keys" target="_blank" style="color:var(--cyan)">platform.openai.com/api-keys</a>'},
-  xai:         {placeholder:'grok-4', link:'Get key: <a href="https://console.x.ai" target="_blank" style="color:var(--cyan)">console.x.ai</a>'},
-  groq:        {placeholder:'llama-4-scout-17b-16e-instruct', link:'Get key: <a href="https://console.groq.com/keys" target="_blank" style="color:var(--cyan)">console.groq.com/keys</a>'},
-  mistral:     {placeholder:'mistral-small-latest', link:'Get key: <a href="https://console.mistral.ai/api-keys" target="_blank" style="color:var(--cyan)">console.mistral.ai/api-keys</a>'},
-  cerebras:    {placeholder:'llama3.3-70b', link:'Get key: <a href="https://cloud.cerebras.ai" target="_blank" style="color:var(--cyan)">cloud.cerebras.ai</a>'},
-  openrouter:  {placeholder:'google/gemini-2.5-flash', link:'Get key: <a href="https://openrouter.ai/keys" target="_blank" style="color:var(--cyan)">openrouter.ai/keys</a>'},
-  huggingface: {placeholder:'Qwen/Qwen3-235B-A22B', link:'Get token: <a href="https://huggingface.co/settings/tokens" target="_blank" style="color:var(--cyan)">huggingface.co/settings/tokens</a>'},
-  kimi:        {placeholder:'kimi-k2.5', link:'Get key: <a href="https://platform.moonshot.cn/console/api-keys" target="_blank" style="color:var(--cyan)">platform.moonshot.cn</a>'},
-  zai:         {placeholder:'glm-4-plus', link:'Get key: <a href="https://open.bigmodel.cn/usercenter/apikeys" target="_blank" style="color:var(--cyan)">open.bigmodel.cn</a>'},
-  minimax:     {placeholder:'MiniMax-Text-01', link:'Get key: <a href="https://platform.minimaxi.com" target="_blank" style="color:var(--cyan)">platform.minimaxi.com</a>'},
-  nvidia:      {placeholder:'deepseek-ai/deepseek-v3.2', link:'500+ models available: <a href="https://build.nvidia.com/models" target="_blank" style="color:var(--cyan)">build.nvidia.com/models</a>'},
-  ollama:      {placeholder:'qwen3:8b', link:''}
-};
-
-// Quick-pick button helper for NVIDIA model chips
-function swNvSet(modelId) {
-  const el = document.getElementById('sw-nvidia-model');
-  if (el) { el.value = modelId; el.focus(); }
-  // Also update the main sw-model field so it is saved correctly
-  const swm = document.getElementById('sw-model');
-  if (swm) swm.value = modelId;
-}
-
-function swUpdateModelHint() {
-  const prov = document.getElementById('sw-provider').value;
-  const hint = SW_MODEL_HINTS[prov] || {placeholder:'', link:''};
-  const inp = document.getElementById('sw-model');
-  if (inp) inp.placeholder = hint.placeholder;
-  const linkEl = document.getElementById('sw-key-link');
-  if (linkEl) linkEl.innerHTML = hint.link;
-  // Show/hide API key fields
-  document.getElementById('sw-apikey-wrap').style.display = (prov === 'ollama' || prov === 'nvidia') ? 'none' : '';
-  document.getElementById('sw-nvidia-wrap').style.display = prov === 'nvidia' ? '' : 'none';
-  document.getElementById('sw-ollama-wrap').style.display = prov === 'ollama' ? '' : 'none';
-  // Update API key placeholder
-  const keyPlaceholders = {
-    google:'AIzaSy...', anthropic:'sk-ant-...', openai:'sk-...', xai:'xai-...',
-    groq:'gsk_...', mistral:'key...', cerebras:'csk-...', openrouter:'sk-or-...',
-    huggingface:'hf_...', kimi:'Bearer token...', zai:'zai-...', minimax:'key...'
-  };
-  const keyInp = document.getElementById('sw-apikey');
-  if (keyInp) keyInp.placeholder = keyPlaceholders[prov] || 'API key...';
-}
-
-function swNextStep(currentStep, nextStep) {
-  document.getElementById('sw-step-' + currentStep).style.display = 'none';
-  document.getElementById('sw-step-' + nextStep).style.display = '';
-  document.getElementById('sw-progress').style.width = (nextStep * (100/7)).toFixed(1) + '%';
-  // When entering Step 2: pre-fill the provider key from Step 1 to avoid duplicate entry
-  if (nextStep === 2) {
-    const prov = document.getElementById('sw-provider').value;
-    const step1Key = (document.getElementById('sw-apikey') || {value:''}).value.trim();
-    if (step1Key) {
-      const provMap = {
-        google:'sw-google-key', anthropic:'sw-anthropic-key', openai:'sw-openai-key',
-        xai:'sw-xai-key', groq:'sw-groq-key', mistral:'sw-mistral-key',
-        cerebras:'sw-cerebras-key', openrouter:'sw-openrouter-key',
-        huggingface:'sw-huggingface-key', kimi:'sw-kimi-key', zai:'sw-zai-key',
-        minimax:'sw-minimax-key'
-      };
-      const targetId = provMap[prov];
-      if (targetId) {
-        const targetEl = document.getElementById(targetId);
-        if (targetEl && !targetEl.value) {
-          targetEl.value = step1Key;
-          // Mark the field visually as already-set from step 1
-          const container = document.getElementById('sw-extra-' + prov);
-          if (container) {
-            const note = container.querySelector('.sw-prefill-note');
-            if (!note) {
-              const n = document.createElement('div');
-              n.className = 'sw-prefill-note';
-              n.style.cssText = 'font-size:0.7em;color:var(--green);margin-top:3px';
-              n.textContent = '✓ Pre-filled from Step 1';
-              container.appendChild(n);
-            }
-          }
+        theme = request.cookies.get('theme', 'modern')
+        file_map = {
+            'legacy': 'deck_legacy.html',
+            'modern': 'deck_modern.html'
         }
-      }
-    }
-  }
-  // When entering Step 6: check for OpenClaw
-  if (nextStep === 6) swCheckOpenClaw();
-  if (nextStep === 7) swFillReview();
-}
-
-async function swSave() {
-  const btn = document.getElementById('sw-save-btn');
-  btn.textContent = 'Saving...';
-  btn.disabled = true;
-
-  const prov = document.getElementById('sw-provider').value;
-  // For NVIDIA, prefer the dedicated model field / quick-pick chip over sw-model
-  const nvModelEl = document.getElementById('sw-nvidia-model');
-  const nvModelVal = nvModelEl ? nvModelEl.value.trim() : '';
-  const modelVal = (prov === 'nvidia' && nvModelVal) ? nvModelVal : document.getElementById('sw-model').value.trim();
-  const modelFinal = modelVal || document.getElementById('sw-model').placeholder.split(' ')[0];
-
-  function gv(id) { const el = document.getElementById(id); return el ? el.value.trim() : ''; }
-
-  const payload = {
-    provider: prov,
-    model: modelFinal,
-    api_key: gv('sw-apikey'),
-    password: gv('sw-pw'),
-    system_name: gv('sw-sysname') || 'Galactic AI',
-    // Per-provider keys
-    google_key: gv('sw-google-key'),
-    anthropic_key: gv('sw-anthropic-key'),
-    openai_key: gv('sw-openai-key'),
-    xai_key: gv('sw-xai-key'),
-    groq_key: gv('sw-groq-key'),
-    mistral_key: gv('sw-mistral-key'),
-    cerebras_key: gv('sw-cerebras-key'),
-    openrouter_key: gv('sw-openrouter-key'),
-    huggingface_key: gv('sw-huggingface-key'),
-    kimi_key: gv('sw-kimi-key'),
-    zai_key: gv('sw-zai-key'),
-    minimax_key: gv('sw-minimax-key'),
-    // NVIDIA single key + optional custom model
-    nvidia_key: gv('sw-nvidia-key'),
-    nvidia_model: gv('sw-nvidia-model'),
-    ollama_url: gv('sw-ollama-url') || 'http://127.0.0.1:11434/v1',
-    // Telegram
-    telegram_token: gv('sw-tg-token'),
-    telegram_chat_id: gv('sw-tg-chat'),
-    // ElevenLabs TTS
-    elevenlabs_key: gv('sw-elevenlabs-key'),
-    elevenlabs_voice: gv('sw-elevenlabs-voice') || 'Guy',
-    persona_mode: (document.getElementById('sw-persona-custom').checked ? 'custom' : document.getElementById('sw-persona-generic').checked ? 'generic' : 'byte'),
-    persona_name: (document.getElementById('sw-persona-name') || {}).value || '',
-    persona_soul: (document.getElementById('sw-persona-soul') || {}).value || '',
-    persona_context: (document.getElementById('sw-persona-context') || {}).value || '',
-  };
-
-  // If primary provider key wasn't entered in step 1, pull from step 2
-  if (!payload.api_key) {
-    payload.api_key = payload[prov + '_key'] || '';
-  }
-
-  try {
-    const r = await authFetch('/api/setup', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(payload)});
-    const d = await r.json();
-    if (d.ok) {
-      // After setup, save token from new password and go to main UI
-      if (payload.password) {
-        const lr = await fetch('/login', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({password: payload.password})});
-        const ld = await lr.json();
-        if (ld.success) {
-          token = ld.token;
-          localStorage.setItem('gal_token', token);
-        }
-      }
-      document.getElementById('setup-wizard').style.display = 'none';
-      document.getElementById('setup-success').style.display = 'flex';
-      setTimeout(() => { document.getElementById('setup-success').style.display = 'none'; init(); }, 2500);
-    } else {
-      alert('Setup error: ' + (d.error || 'Unknown error'));
-      btn.textContent = 'Save & Launch';
-      btn.disabled = false;
-    }
-  } catch(e) {
-    alert('Network error: ' + e.message);
-    btn.textContent = 'Save & Launch';
-    btn.disabled = false;
-  }
-}
-
-// ── Login ─────────────────────────────────────────────────────────────────────
-async function doLogin() {
-  const loginBtn = document.getElementById('login-btn');
-  const errEl = document.getElementById('login-err');
-  const pwEl = document.getElementById('pw-input');
-  if (!pwEl) return;
-  const pw = pwEl.value.trim();
-  if (!pw) { errEl.textContent = 'Enter your passphrase'; errEl.style.display = 'block'; return; }
-
-  if (loginBtn) { loginBtn.disabled = true; loginBtn.textContent = '...'; }
-  errEl.style.display = 'none';
-
-  try {
-    const r = await fetch('/login', {
-      method: 'POST',
-      headers: {'Content-Type': 'application/json'},
-      body: JSON.stringify({password: pw})
-    });
-    const d = await r.json();
-    if (d.success) {
-      token = d.token;
-      localStorage.setItem('gal_token', token);
-      document.getElementById('login-overlay').style.display = 'none';
-      if (d.first_run) { showSetupWizard({}); } else { init(); }
-    } else {
-      errEl.textContent = d.error || 'Invalid passphrase';
-      errEl.style.display = 'block';
-      if (loginBtn) { loginBtn.disabled = false; loginBtn.textContent = 'ACCESS'; }
-    }
-  } catch(e) {
-    errEl.textContent = 'Connection error: ' + e.message;
-    errEl.style.display = 'block';
-    if (loginBtn) { loginBtn.disabled = false; loginBtn.textContent = 'ACCESS'; }
-  }
-}
-
-function swFillReview() {
-  const prov = document.getElementById('sw-provider').value;
-  const modelVal = document.getElementById('sw-model').value.trim() || document.getElementById('sw-model').placeholder.split(' ')[0];
-  const pw = document.getElementById('sw-pw').value;
-  const tgToken = document.getElementById('sw-tg-token').value.trim();
-  const elevenlabsKey = (document.getElementById('sw-elevenlabs-key') || {value:''}).value.trim();
-  const voice = (document.getElementById('sw-elevenlabs-voice') || {value:'gtts'}).value;
-  // Count extra providers with keys
-  const extraProviders = ['google','anthropic','openai','xai','groq','mistral','cerebras','openrouter','huggingface','kimi','zai','minimax']
-    .filter(p => {
-      const el = document.getElementById('sw-' + p + '-key');
-      return el && el.value.trim();
-    });
-  document.getElementById('sw-review-provider').textContent = prov;
-  document.getElementById('sw-review-model').textContent = modelVal;
-  document.getElementById('sw-review-extras').textContent = extraProviders.length ? extraProviders.join(', ') : 'None';
-  const freeVoices = ['Guy','Davis','Aria','Jenny','gtts'];
-  document.getElementById('sw-review-tts').textContent = (elevenlabsKey && !freeVoices.includes(voice)) ? 'ElevenLabs (' + voice + ')' : 'Free voice: ' + voice;
-  document.getElementById('sw-review-pw').textContent = pw ? '✓ Set' : 'None (open access)';
-  document.getElementById('sw-review-tg').textContent = tgToken ? '✓ Configured' : 'Not configured';
-  const personaMode = document.getElementById('sw-persona-custom').checked ? 'Custom' : document.getElementById('sw-persona-generic').checked ? 'Generic' : 'Byte';
-  document.getElementById('sw-review-persona').textContent = personaMode;
-}
-
-async function swCheckOpenClaw() {
-  document.getElementById('sw-oc-checking').style.display = '';
-  document.getElementById('sw-oc-not-found').style.display = 'none';
-  document.getElementById('sw-oc-found').style.display = 'none';
-  try {
-    const r = await authFetch('/api/check_openclaw');
-    const d = await r.json();
-    document.getElementById('sw-oc-checking').style.display = 'none';
-    if (d.found && d.files && d.files.length) {
-      document.getElementById('sw-oc-path').textContent = d.path;
-      const listEl = document.getElementById('sw-oc-file-list');
-      listEl.innerHTML = '';
-      d.files.forEach(f => {
-        const row = document.createElement('label');
-        row.style.cssText = 'display:flex;align-items:center;gap:10px;padding:8px 12px;background:var(--bg3);border:1px solid var(--border);border-radius:8px;cursor:pointer;font-size:0.83em';
-        row.innerHTML = '<input type="checkbox" checked value="' + f + '" style="accent-color:var(--cyan)"> <span style="color:var(--cyan)">📄 ' + f + '</span>';
-        listEl.appendChild(row);
-      });
-      document.getElementById('sw-oc-found').style.display = '';
-    } else {
-      document.getElementById('sw-oc-not-found').style.display = '';
-    }
-  } catch(e) {
-    document.getElementById('sw-oc-checking').style.display = 'none';
-    document.getElementById('sw-oc-not-found').style.display = '';
-  }
-}
-
-async function swMigrateOpenClaw() {
-  const checkboxes = document.querySelectorAll('#sw-oc-file-list input[type=checkbox]:checked');
-  const files = Array.from(checkboxes).map(c => c.value);
-  if (!files.length) { alert('No files selected.'); return; }
-  const btn = document.getElementById('sw-oc-import-btn');
-  btn.textContent = '⏳ Importing...';
-  btn.disabled = true;
-  try {
-    const r = await authFetch('/api/migrate_openclaw', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({files})});
-    const d = await r.json();
-    const resultEl = document.getElementById('sw-oc-result');
-    resultEl.style.display = '';
-    if (d.ok) {
-      resultEl.innerHTML = '<span style="color:var(--green)">✅ Imported: ' + (d.imported || []).join(', ') + '</span>';
-      if (d.failed && d.failed.length) {
-        resultEl.innerHTML += '<br><span style="color:var(--red)">⚠️ Failed: ' + d.failed.join(', ') + '</span>';
-      }
-    } else {
-      resultEl.innerHTML = '<span style="color:var(--red)">Error: ' + (d.error || 'Unknown') + '</span>';
-    }
-    btn.textContent = '✅ Done';
-  } catch(e) {
-    document.getElementById('sw-oc-result').innerHTML = '<span style="color:var(--red)">Network error: ' + e.message + '</span>';
-    document.getElementById('sw-oc-result').style.display = '';
-    btn.textContent = '⬡ Import Selected Files';
-    btn.disabled = false;
-  }
-}
-
-// Startup: check setup first, then check saved token or desktop auto-login
-(async () => {
-  const needsSetup = await checkSetup();
-  if (needsSetup) return;
-
-  // Desktop auto-login: the launcher passes ?dt=<password_hash> so pywebview
-  // doesn't need to ask for a password on every launch.
-  const urlParams = new URLSearchParams(window.location.search);
-  const desktopToken = urlParams.get('dt');
-  if (desktopToken && !token) {
-    token = desktopToken;
-    localStorage.setItem('gal_token', token);
-    // Clean the token from the URL bar for security
-    if (window.history.replaceState) {
-      window.history.replaceState(null, '', window.location.pathname);
-    }
-  }
-
-  if (token) {
-    document.getElementById('login-overlay').style.display = 'none';
-    init();
-    return;
-  }
-  // Show login form
-  document.getElementById('login-overlay').style.display = 'flex';
-})();
-
-document.getElementById('pw-input').addEventListener('keydown', e => { if (e.key === 'Enter') doLogin(); });
-
-// Init
-async function loadTraceHistory() {
-  try {
-    const r = await authFetch('/api/traces');
-    const d = await r.json();
-    (d.traces || []).forEach(t => handleAgentTrace(t));
-  } catch(e) { console.error('loadTraceHistory:', e); }
-}
-
-async function init() {
-  stopOrb(); // Reset orb state on load
-  await loadChatHistory();
-  await loadLogHistory();
-  await loadTraceHistory();
-  connectWS();
-  await loadTools();
-  await loadPlugins();
-  loadOllamaStatus();
-  await loadAliases();
-  await loadModels(); // Fetches models from config/models.yaml
-  refreshStatus();
-  loadFileList();
-  // Settings tab initialization
-  loadSettingsValues();
-  // Sub-agent model selector
-  loadSubagentModels();
-  // Restore the last active tab (defaults to 'chat' if none saved)
-  const savedTab = localStorage.getItem('gal_activeTab') || 'chat';
-  switchTab(savedTab);
-
-  // Smart auto-scroll: pause auto-scroll when user scrolls up, resume at bottom
-  const _scL = (id, flagSetter) => {
-    const el = document.getElementById(id);
-    if (!el) return;
-    el.addEventListener('scroll', () => {
-      const atBottom = (el.scrollHeight - el.scrollTop - el.clientHeight) < 80;
-      window[flagSetter] = atBottom;
-    });
-  };
-  
-  window.autoScroll = true;
-  window.traceAutoScroll = true;
-  window.logAutoScroll = true;
-  
-  _scL('chat-log', 'autoScroll');
-  _scL('thinking-scroll', 'traceAutoScroll');
-  _scL('logs-scroll', 'logAutoScroll');
-}
-
-
-// WebSocket
-function connectWS() {
-  const wsProt = location.protocol === 'https:' ? 'wss:' : 'ws:';
-  socket = new WebSocket(`${wsProt}//${location.host}/stream?token=${token}`);
-  socket.onmessage = e => {
-    const p = JSON.parse(e.data);
-    if (p.type === 'stream_chunk') {
-      const sb = document.getElementById('stream-bubble');
-      sb.style.display = 'block';
-      // accumulate raw text on a data attr, render formatted
-      sb._rawText = (sb._rawText || '') + p.data;
-      sb.innerHTML = formatMsg(sb._rawText);
-      if (autoScroll) document.getElementById('chat-log').scrollTop = document.getElementById('chat-log').scrollHeight;
-    } else if (p.type === 'bot_msg') {
-      appendBotMsg(p.data.content, p.data.ts);
-    } else if (p.type === 'log') {
-      addLog(p.data);
-    } else if (p.type === 'telemetry') {
-      document.getElementById('token-counter').textContent = '↑' + p.data.tin + ' ↓' + p.data.tout + ' tokens';
-      document.getElementById('st-uptime').textContent = p.data.uptime;
-      document.getElementById('st-tin').textContent = p.data.tin;
-      document.getElementById('st-tout').textContent = p.data.tout;
-      if (p.data.model) {
-        document.getElementById('model-badge').textContent = p.data.model.split('/').pop().substring(0,24);
-        document.getElementById('st-model').textContent = p.data.model.split('/').pop().substring(0,12);
-        document.getElementById('st-provider').textContent = p.data.provider || '--';
-      }
-    } else if (p.type === 'ollama_models') {
-      renderOllamaModels(p.data);
-    } else if (p.type === 'ollama_status') {
-      updateOllamaHealth(p.data);
-    } else if (p.type === 'thought') {
-      if (!httpChatPending) appendBotMsg(p.data);  // skip if HTTP /api/chat will handle it
-    } else if (p.type === 'chat_from_telegram') {
-      // Telegram messages relayed to web UI
-      const tg = p.data || {};
-      if (tg.data) appendUserMsg('[Telegram] ' + tg.data);
-      if (tg.response) appendBotMsg(tg.response);
-    } else if (p.type === 'alert') {
-      // optional alert sound
-    } else if (p.type === 'agent_trace') {
-      handleAgentTrace(p.data);
-    } else if (p.type === 'model_fallback') {
-      // Fallback activation toast — show when primary model fails and chain kicks in
-      const fb = p.data || {};
-      showToast(`⚡ Fallback active: ${fb.fallback || '?'} (${fb.reason || 'error'})`, 'warning', 10000);
-    } else if (p.type === 'chat_from_extension') {
-      const ext = p.data || {};
-      if (ext.data) appendUserMsg('[Browser] ' + ext.data);
-    } else if (p.type === 'subagent_update') {
-      updateSubagentUI(p.data);
-    } else if (p.type === 'subagent_done') {
-      updateSubagentUI(p.data);
-    } else if (p.type === 'system_notice') {
-      appendSystemNotice(p.message || '');
-    } else if (p.type === 'progress') {
-      const pc = document.getElementById('progress-container');
-      const pb = document.getElementById('progress-bar');
-      if (pc && pb) {
-        pc.style.display = 'block';
-        pb.style.width = p.percent + '%';
-        if (p.percent >= 100) setTimeout(() => pc.style.display = 'none', 3000);
-      }
-    } else if (p.type === 'update_available') {
-      const u = p.data || {};
-      showToast(`🆕 Update available: v${u.latest} — Run ./update.ps1`, 'info', 30000);
-      showUpdateBanner(u);
-    }
-  };
-  socket.onclose = () => setTimeout(connectWS, 3000);
-}
-
-// Chat
-function fmtTime(ts) {
-  if (!ts) return new Date().toLocaleTimeString();
-  if (typeof ts === 'string') return new Date(ts).toLocaleTimeString();
-  if (typeof ts === 'number') return new Date(ts * 1000).toLocaleTimeString();
-  return new Date().toLocaleTimeString();
-}
-
-function appendBotMsg(text, ts) {
-  const sb = document.getElementById('stream-bubble');
-  sb.style.display = 'none'; sb.textContent = ''; sb._rawText = '';
-  const log = document.getElementById('chat-log');
-  const div = document.createElement('div');
-  div.className = 'msg bot';
-  div.innerHTML = `<div class="bubble">${formatMsg(text)}</div><div class="meta">Byte \u2022 ${fmtTime(ts)}</div>`;
-  log.insertBefore(div, sb);
-  if (autoScroll) log.scrollTop = log.scrollHeight;
-}
-
-function appendBotImage(url) {
-  const log = document.getElementById('chat-log');
-  const sb = document.getElementById('stream-bubble');
-  const div = document.createElement('div');
-  div.className = 'msg bot';
-  div.innerHTML = `<div class="bubble" style="padding:8px">
-    <img src="${url}" style="max-width:100%;max-height:512px;border-radius:8px;display:block;cursor:pointer"
-         onclick="window.open('${url}','_blank')" title="Click to open full size" />
-    <div style="font-size:0.75em;color:var(--dim);margin-top:4px">🎨 Click image to open full size</div>
-  </div><div class="meta">Byte \u2022 ${fmtTime()}</div>`;
-  log.insertBefore(div, sb);
-  if (autoScroll) log.scrollTop = log.scrollHeight;
-}
-
-function appendBotVideo(url) {
-  const log = document.getElementById('chat-log');
-  const sb = document.getElementById('stream-bubble');
-  const div = document.createElement('div');
-  div.className = 'msg bot';
-  div.innerHTML = `<div class="bubble" style="padding:8px">
-    <video src="${url}" controls autoplay muted loop
-           style="max-width:100%;max-height:512px;border-radius:8px;display:block"></video>
-    <div style="display:flex;align-items:center;gap:8px;margin-top:6px">
-      <span style="font-size:0.75em;color:var(--dim)">🎬 Generated video</span>
-      <a href="${url}" download style="font-size:0.75em;color:var(--cyan);text-decoration:none">⬇ Download MP4</a>
-    </div>
-  </div><div class="meta">Byte \u2022 ${fmtTime()}</div>`;
-  log.insertBefore(div, sb);
-  if (autoScroll) log.scrollTop = log.scrollHeight;
-}
-
-async function loadChatHistory() {
-  try {
-    const r = await authFetch('/api/history?limit=50');
-    const d = await r.json();
-    const msgs = d.messages || [];
-    if (msgs.length > 0) {
-      // Clear the default welcome message before restoring history
-      document.getElementById('chat-log').innerHTML = '<div id="stream-bubble" style="display:none"></div>';
-      // Render oldest→newest; each insertBefore(sb) puts newest at bottom
-      msgs.forEach(m => {
-        if (m.role === 'user') appendUserMsg(m.content, m.ts);
-        else if (m.role === 'assistant') appendBotMsg(m.content, m.ts);
-      });
-    }
-  } catch(e) { console.error('loadChatHistory:', e); }
-}
-
-async function loadLogHistory() {
-  try {
-    const r = await authFetch('/api/logs?limit=200');
-    const d = await r.json();
-    (d.logs || []).forEach(l => addLog(l));
-  } catch(e) { console.error('loadLogHistory:', e); }
-}
-
-function appendUserMsg(text, ts) {
-  const log = document.getElementById('chat-log');
-  const sb = document.getElementById('stream-bubble');
-  const div = document.createElement('div');
-  div.className = 'msg user';
-  div.innerHTML = `<div class="bubble">${escHtml(text)}</div><div class="meta">You \u2022 ${fmtTime(ts)}</div>`;
-  log.insertBefore(div, sb);
-  if (autoScroll) log.scrollTop = log.scrollHeight;
-}
-
-// ─── File Attachment State ───
-let pendingFiles = [];
-const IMAGE_TYPES = new Set(['image/jpeg','image/jpg','image/png','image/gif','image/webp','image/bmp','image/tiff','image/heic','image/heif','image/avif','image/svg+xml']);
-
-function isImageFile(f) {
-  return IMAGE_TYPES.has(f.type) || /\.(jpg|jpeg|png|gif|webp|bmp|tiff?|heic|heif|avif|svg)$/i.test(f.name);
-}
-
-function fileToBase64(f) {
-  return new Promise((resolve, reject) => {
-    const reader = new FileReader();
-    reader.onload = () => resolve(reader.result); // data:image/png;base64,...
-    reader.onerror = reject;
-    reader.readAsDataURL(f);
-  });
-}
-
-function handleFileAttach(input) {
-  for (const f of input.files) {
-    if (f.size > 20 * 1024 * 1024) { appendBotMsg('[File too large] ' + f.name + ' exceeds 20 MB limit.'); continue; }
-    pendingFiles.push(f);
-  }
-  input.value = '';
-  renderAttachBar();
-}
-
-function removeAttachment(idx) {
-  pendingFiles.splice(idx, 1);
-  renderAttachBar();
-}
-
-function renderAttachBar() {
-  const bar = document.getElementById('chat-attach-bar');
-  if (!pendingFiles.length) { bar.style.display = 'none'; bar.innerHTML = ''; return; }
-  bar.style.display = 'flex';
-  bar.style.flexWrap = 'wrap';
-  bar.style.gap = '6px';
-  bar.style.alignItems = 'center';
-  bar.innerHTML = pendingFiles.map((f, i) => {
-    const isImg = isImageFile(f);
-    const icon = isImg ? '🖼️' : '📄';
-    const sizeStr = f.size < 1024 ? f.size + 'B' : f.size < 1024*1024 ? (f.size/1024).toFixed(1) + 'KB' : (f.size/1024/1024).toFixed(1) + 'MB';
-    return '<span style="display:inline-flex;align-items:center;gap:4px;padding:3px 10px;background:var(--bg3);border:1px solid ' + (isImg ? 'var(--cyan)' : 'var(--border)') + ';border-radius:8px;font-size:0.78em;color:var(--cyan)">' +
-      icon + ' ' + escHtml(f.name) + ' <span style="font-size:0.75em;color:var(--dim)">(' + sizeStr + ')</span>' +
-      '<span onclick="removeAttachment(' + i + ')" style="cursor:pointer;color:var(--red);margin-left:4px;font-weight:700" title="Remove">&times;</span></span>';
-  }).join('');
-}
-
-// ─── Drag & Drop ───
-(function initDragDrop() {
-  const wrap = document.getElementById('tab-chat');
-  if (!wrap) return;
-  let dragCounter = 0;
-  wrap.addEventListener('dragenter', function(e) { e.preventDefault(); dragCounter++; wrap.style.outline = '2px dashed var(--cyan)'; });
-  wrap.addEventListener('dragleave', function(e) { e.preventDefault(); dragCounter--; if (dragCounter <= 0) { dragCounter = 0; wrap.style.outline = ''; } });
-  wrap.addEventListener('dragover', function(e) { e.preventDefault(); });
-  wrap.addEventListener('drop', function(e) {
-    e.preventDefault(); dragCounter = 0; wrap.style.outline = '';
-    if (e.dataTransfer.files.length) {
-      for (const f of e.dataTransfer.files) {
-        if (f.size > 5 * 1024 * 1024) { appendBotMsg('[File too large] ' + f.name + ' exceeds 5 MB limit.'); continue; }
-        pendingFiles.push(f);
-      }
-      renderAttachBar();
-    }
-  });
-})();
-
-async function stopAgent() {
-  const btn = document.getElementById('stop-btn');
-  if (btn) { btn.textContent = '⏳ Stopping...'; btn.disabled = true; }
-  try {
-    const r = await fetch('/api/stop_agent', { method: 'POST' });
-    const d = await r.json();
-    appendBotMsg('🛑 ' + (d.message || 'Stop signal sent.'));
-  } catch(e) {
-    appendBotMsg('⚠️ Failed to send stop signal: ' + e.message);
-  } finally {
-    if (btn) { btn.textContent = '🛑 STOP'; btn.disabled = false; }
-  }
-}
-
-async function sendChatMain() {
-  const inp = document.getElementById('chat-input-main');
-  const msg = inp.value.trim();
-  if (!msg && !pendingFiles.length) return;
-  const filesToSend = [...pendingFiles];
-  pendingFiles = [];
-  renderAttachBar();
-  inp.value = ''; inp.style.height = '44px';
-  const displayMsg = msg + (filesToSend.length ? '\n📎 ' + filesToSend.map(f => f.name).join(', ') : '');
-  appendUserMsg(displayMsg);
-  document.getElementById('send-btn-main').disabled = true;
-  document.getElementById('send-btn-main').textContent = '...';
-  const stream = document.getElementById('stream-bubble');
-  stream.style.display = 'block'; stream.textContent = '';
-  httpChatPending = true;
-  try {
-    let r;
-    if (filesToSend.length) {
-      // Separate images from text files
-      const imgFiles = filesToSend.filter(f => isImageFile(f));
-      const textFiles = filesToSend.filter(f => !isImageFile(f));
-
-      if (imgFiles.length > 0) {
-        // Encode images as base64 and send as JSON (vision-capable)
-        const images = await Promise.all(imgFiles.map(async f => ({
-          name: f.name,
-          data: await fileToBase64(f),   // full data URL: data:image/png;base64,...
-          mime: f.type || 'image/jpeg'
-        })));
-        const body = { message: msg, images };
-        // Attach any text files as context too
-        if (textFiles.length) {
-          const fd = new FormData();
-          fd.append('message', msg);
-          fd.append('images_json', JSON.stringify(images));
-          for (const f of textFiles) fd.append('files', f);
-          r = await authFetch('/api/chat', {method:'POST', body: fd});
-        } else {
-          r = await authFetch('/api/chat', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(body)});
-        }
-      } else {
-        // Text files only — multipart
-        const fd = new FormData();
-        fd.append('message', msg);
-        for (const f of textFiles) fd.append('files', f);
-        r = await authFetch('/api/chat', {method:'POST', body: fd});
-      }
-    } else {
-      r = await authFetch('/api/chat', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({message: msg})});
-    }
-    const d = await r.json();
-    stream.style.display = 'none'; stream.textContent = ''; stream._rawText = '';
-    const aiResponse = d.response || d.error || 'No response';
-    appendBotMsg(aiResponse);
-    console.log('[Image Delivery] response keys:', Object.keys(d), 'image_url:', d.image_url || 'NONE');
-    if (d.image_url) appendBotImage(d.image_url);
-    if (d.video_url) appendBotVideo(d.video_url);
-
-    // Live Call Auto-TTS
-    if (_liveCallMode && aiResponse && !d.error) {
-      // Strip markdown code blocks before speaking
-      const speakText = aiResponse.replace(/```[\s\S]*?```/g, '').replace(/\*\*/g, '').replace(/__/g, '').trim();
-      if (speakText) {
-        try {
-          const qs = document.getElementById('quick-voice-select');
-          const voice = qs ? qs.value : 'Nova';
-          const ttsRes = await authFetch('/api/tts', {
-            method: 'POST', headers: {'Content-Type': 'application/json'},
-            body: JSON.stringify({text: speakText, voice: voice})
-          });
-          const ttsBlob = await ttsRes.blob();
-          const ttsUrl = URL.createObjectURL(ttsBlob);
-          _currentLiveAudio = new Audio(ttsUrl);
-          _currentLiveAudio.onended = () => URL.revokeObjectURL(ttsUrl);
-          _currentLiveAudio.play();
-        } catch(e) {
-          console.error("Live Call TTS Error:", e);
-        }
-      }
-    }
-  } catch(err) {
-    stream.style.display = 'none';
-    appendBotMsg('[ERROR] ' + err.message);
-  }
-  httpChatPending = false;
-  document.getElementById('send-btn-main').disabled = false;
-  document.getElementById('send-btn-main').textContent = 'Send ▶';
-}
-
-function handleKeyMain(e) {
-  if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendChatMain(); }
-}
-
-// Global key listeners
-document.addEventListener('keydown', async (e) => {
-  if (e.key === 'Escape') {
-    const orb = document.getElementById('thinking-orb');
-    const isVisible = orb && window.getComputedStyle(orb).display !== 'none';
-    if (isVisible) {
-      resetOrb(); // Force clear local orb state
-      try {
-        const r = await authFetch('/api/cancel_task', { method: 'POST' });
-        const d = await r.json();
-        if (d.ok) showToast('🚫 Task cancellation requested', 'info', 3000);
-      } catch (err) { console.error('Cancel error:', err); }
-    }
-  }
-});
-
-function autoResize(el) {
-  el.style.height = '44px';
-  el.style.height = Math.min(el.scrollHeight, 200) + 'px';
-}
-function clearChat() {
-  const log = document.getElementById('chat-log');
-  log.innerHTML = '<div class="msg bot"><div class="bubble">⬡ Galactic AI online. Context cleared.</div></div><div id="stream-bubble" style="display:none"></div>';
-  pendingFiles = [];
-  renderAttachBar();
-}
-
-// Quick Tool
-function quickTool(name) {
-  const tool = allToolsData.find(t => t.name === name);
-  if (tool) openToolModal(tool);
-}
-
-// Tools Tab
-async function loadTools() {
-  const r = await authFetch('/api/tools');
-  const d = await r.json();
-  allToolsData = d.tools || [];
-  document.getElementById('tool-count-badge').textContent = allToolsData.length;
-  document.querySelector('#tab-tools h3').textContent = `🔧 ALL TOOLS (${allToolsData.length} registered)`;
-  renderTools(allToolsData);
-}
-
-const TOOL_GROUPS = {
-  'Browser': ['browser_', 'open_browser', 'browser_search', 'screenshot'],
-  'File System': ['read_file','write_file','edit_file','list_directory'],
-  'Shell': ['exec_shell','process_start','process_status','process_kill'],
-  'Web': ['web_search','web_fetch'],
-  'Memory': ['memory_search','memory_imprint'],
-  'Vision & Audio': ['analyze_image','text_to_speech'],
-  'Task & Schedule': ['schedule_task','list_tasks'],
-  'Browser Session': ['browser_save_session','browser_load_session','browser_intercept','browser_clear_intercept','browser_set_proxy'],
-  'Browser Debug': ['browser_trace','browser_response_body','browser_get_frames','browser_frame_action','browser_click_coords'],
-  'Browser Env': ['browser_set_locale','browser_set_timezone','browser_emulate_media','browser_set_geolocation','browser_set_offline','browser_set_headers'],
-  'Other': []
-};
-
-function classifyTool(name) {
-  for (const [group, prefixes] of Object.entries(TOOL_GROUPS)) {
-    if (group === 'Other') continue;
-    if (prefixes.some(p => name.startsWith(p) || name === p)) return group;
-  }
-  return 'Other';
-}
-
-function renderTools(tools) {
-  const groups = {};
-  tools.forEach(t => {
-    const g = classifyTool(t.name);
-    if (!groups[g]) groups[g] = [];
-    groups[g].push(t);
-  });
-  const container = document.getElementById('tools-list');
-  container.innerHTML = '';
-  for (const [gname, gtools] of Object.entries(groups)) {
-    if (!gtools.length) continue;
-    const sec = document.createElement('div');
-    sec.className = 'tool-group';
-    sec.innerHTML = `<div class="tool-group-label">${gname} (${gtools.length})</div>`;
-    gtools.forEach(t => {
-      const card = document.createElement('div');
-      card.className = 'tool-card';
-      card.innerHTML = '<h4>'+t.name+'</h4><p>'+t.description+'</p>'+(t.params.length ? '<div class="params">Params: '+t.params.join(', ')+'</div>' : '');
-      card.onclick = () => openToolModal(t);
-      sec.appendChild(card);
-    });
-    container.appendChild(sec);
-  }
-}
-
-function filterTools(q2) {
-  const filtered = allToolsData.filter(t =>
-    t.name.includes(q2) || t.description.toLowerCase().includes(q2.toLowerCase())
-  );
-  renderTools(filtered);
-}
-
-// Tool Modal
-function openToolModal(tool) {
-  currentTool = tool;
-  document.getElementById('modal-title').textContent = tool.name;
-  document.getElementById('modal-desc').textContent = tool.description;
-  document.getElementById('tool-result').style.display = 'none';
-  document.getElementById('tool-result').textContent = '';
-  const pane = document.getElementById('modal-params');
-  pane.innerHTML = '';
-  tool.params.forEach(p => {
-    pane.innerHTML += `<div class="param-row"><label>${p}</label><input type="text" id="param-${p}" placeholder="${p}"></div>`;
-  });
-  if (!tool.params.length) pane.innerHTML = '<p style="color:var(--dim);font-size:0.82em">No parameters required.</p>';
-  document.getElementById('tool-modal').classList.add('open');
-}
-
-function closeToolModal(e) {
-  if (e.target.id === 'tool-modal') document.getElementById('tool-modal').classList.remove('open');
-}
-
-async function runTool() {
-  if (!currentTool) return;
-  const args = {};
-  currentTool.params.forEach(p => {
-    const v = document.getElementById(`param-${p}`)?.value;
-    if (v !== undefined && v !== '') {
-      try { args[p] = JSON.parse(v); } catch { args[p] = v; }
-    }
-  });
-  const resEl = document.getElementById('tool-result');
-  resEl.style.display = 'block';
-  resEl.textContent = '⏳ Running...';
-  try {
-    const r = await authFetch('/api/tool_invoke', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({tool: currentTool.name, args})});
-    const d = await r.json();
-    resEl.textContent = typeof d.result === 'string' ? d.result : JSON.stringify(d.result || d.error, null, 2);
-  } catch(err) { resEl.textContent = 'Error: ' + err.message; }
-}
-
-// Plugins
-async function loadPlugins() {
-  const r = await authFetch('/api/plugins');
-  const d = await r.json();
-  const list = document.getElementById('plugins-list');
-  list.innerHTML = '';
-  const skills = d.plugins || [];
-  if (!skills.length) {
-    list.innerHTML = '<p style="color:#888">No skills loaded.</p>';
-    return;
-  }
-  skills.forEach(s => {
-    const card = document.createElement('div');
-    card.className = 'plugin-card';
-    const coreTag = s.is_core ? '<span style="font-size:0.7em;color:#00ff88;margin-left:4px">CORE</span>' : '<span style="font-size:0.7em;color:#ff00c8;margin-left:4px">COMMUNITY</span>';
-    const toolsHtml = s.tools && s.tools.length
-      ? `<div class="plugin-desc" style="font-size:0.75em;color:#666;margin-top:2px">${s.tool_count} tools: ${s.tools.slice(0,4).join(', ')}${s.tools.length > 4 ? ' …' : ''}</div>`
-      : '';
-    card.innerHTML = `
-      <div class="plugin-icon">${s.icon || '⚙️'}</div>
-      <div class="version-tag">${s.display_name} v${s.version}</div>
-      <div class="plugin-info">
-        <div class="plugin-name">${s.display_name}${coreTag} <span style="color:#555;font-size:0.8em">v${s.version}</span></div>
-        <div class="plugin-desc">${s.description}</div>
-        ${toolsHtml}
-        <div class="plugin-class" style="color:#444">${s.category} · ${s.author}</div>
-      </div>
-      <label class="toggle-switch">
-        <input type="checkbox" ${s.enabled ? 'checked' : ''}
-               onchange="togglePlugin('${s.name}', this.checked)">
-        <span class="toggle-slider"></span>
-      </label>`;
-    list.appendChild(card);
-  });
-}
-
-async function togglePlugin(name, enabled) {
-  await authFetch('/api/plugin_toggle', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({name, enabled})});
-}
-
-// Models
-let ALL_MODELS = {};
-
-const PROV_ICONS = {
-  'google': '🔵 Google',
-  'anthropic': '🟣 Anthropic',
-  'openai': '🟢 OpenAI',
-  'nvidia': '🟩 NVIDIA',
-  'openrouter': '🔀 OpenRouter',
-  'openrouter-frontier': '🔀 OpenRouter — Frontier',
-  'openrouter-strong': '🔀 OpenRouter — Strong',
-  'openrouter-fast': '🔀 OpenRouter — Fast',
-  'deepseek': '🔮 DeepSeek',
-  'xai': '⚡ xAI',
-  'groq': '🏎️ Groq (Fast)',
-  'mistral': '🌊 Mistral',
-  'cerebras': '⚡ Cerebras',
-  'huggingface': '🤗 HuggingFace',
-  'kimi': '🌙 Kimi / Moonshot',
-  'zai': '🧠 ZAI / GLM',
-  'minimax': '🎯 MiniMax',
-  'ollama': '🦙 Ollama (Local)',
-  'google-imagen': '🖼️ Google Imagen',
-  'flux': '🎨 FLUX (Image Gen)',
-  'xiaomi': '📱 Xiaomi',
-  'moonshot': '🌙 Moonshot',
-  'qianfan': '⛴️ Qianfan',
-  'together': '🤝 Together AI',
-  'vllm': '🚀 vLLM',
-  'doubao': '🫘 Doubao',
-  'byteplus': '➕ BytePlus',
-  'cloudflare-ai-gateway': '☁️ Cloudflare Gateway',
-  'amazon-bedrock': '🪨 Amazon Bedrock',
-  'kilocode': '💻 Kilocode',
-  'github-copilot': '🐙 GitHub Copilot'
-};
-
-async function loadModels() {
-  try {
-    const r = await authFetch('/api/models');
-    const d = await r.json();
-    
-    // Format the incoming data to match what the UI expects
-    ALL_MODELS = {};
-    if (d.providers) {
-      for (const [prov, models] of Object.entries(d.providers)) {
-        const displayProv = PROV_ICONS[prov.toLowerCase()] || (prov.charAt(0).toUpperCase() + prov.slice(1));
-        const actualProv = prov.toLowerCase().startsWith('openrouter-') ? 'openrouter' : prov.toLowerCase();
-        ALL_MODELS[displayProv] = models.map(m => ({...m, provider: m.provider || actualProv}));
-      }
-    }
-    
-    renderModelGrid();
-    if (typeof populateSettingsProviders === 'function') populateSettingsProviders();
-    if (typeof populatePmoDropdown === 'function') populatePmoDropdown();
-  } catch (e) {
-    console.error('Failed to load models:', e);
-    showToast('Failed to load model list from server', 'error');
-  }
-}
-let currentProvider = '', currentModelId = '';
-
-async function loadOllamaStatus() {
-  try {
-    const r = await authFetch('/api/ollama_status');
-    const d = await r.json();
-    updateOllamaHealth(d);
-  } catch(e) {}
-}
-
-function updateOllamaHealth(d) {
-  const dot = document.getElementById('ollama-dot');
-  const dot2 = document.getElementById('ollama-health-dot');
-  const lbl = document.getElementById('ollama-health');
-  const cnt = document.getElementById('ollama-model-count');
-  const topLbl = document.getElementById('ollama-label');
-  if (d.healthy) {
-    [dot, dot2].forEach(el => el && (el.className = 'status-dot'));
-    if (lbl) lbl.textContent = '🠂 Ollama Online — ' + d.base_url;
-    if (cnt) cnt.textContent = d.model_count + ' models';
-    if (topLbl) topLbl.textContent = 'Ollama: ' + d.model_count + ' models';
-  } else {
-    [dot, dot2].forEach(el => el && (el.className = 'status-dot offline'));
-    if (lbl) { lbl.textContent = '🔴 Ollama Offline'; lbl.style.color = 'var(--red)'; }
-  }
-  if (d.models && d.models.length) renderOllamaModels(d.models);
-}
-
-function renderOllamaModels(models) {
-  const ollamaKey = Object.keys(ALL_MODELS).find(k => k.toLowerCase().includes('ollama')) || '🦙 Ollama (Local)';
-  ALL_MODELS[ollamaKey] = models.map(m => ({name: m + ' 🦙', id: m, provider: 'ollama'}));
-  renderModelGrid();
-  if (typeof populateSettingsProviders === 'function') populateSettingsProviders();
-  if (typeof populatePmoDropdown === 'function') populatePmoDropdown();
-  // Re-load settings values so dropdowns reflect the actual config (e.g. Ollama as primary)
-  if (typeof loadSettingsValues === 'function') loadSettingsValues();
-}
-
-async function refreshOllama() {
-  await loadOllamaStatus();
-  const r = await authFetch('/api/ollama_models');
-  const d = await r.json();
-  if (d.models) renderOllamaModels(d.models);
-}
-
-let currentSortMode = 'default';
-
-function getModelMetrics(modelId, provider) {
-  const m = String(modelId || '').toLowerCase();
-  const p = String(provider || '').toLowerCase();
-  let price = 2, power = 2, speed = 2;
-  if (m.includes('opus') || m.includes('405b') || m.includes('o1') || m.includes('3.1-pro') || m.includes('reasoner') || m.includes('gpt-5.4') || m.includes('gpt-5.3') || m.includes('gpt-4.5')) price = 3;
-  if (m.includes('haiku') || m.includes('8b') || m.includes('flash-lite') || m.includes('small') || m.includes('free') || p.includes('ollama')) price = 1;
-  if (m.includes('opus') || m.includes('405b') || m.includes('o1') || m.includes('3.1-pro') || m.includes('480b') || m.includes('r1') || m.includes('gpt-5.4') || m.includes('gpt-5.3')) power = 3;
-  if (m.includes('haiku') || m.includes('8b') || m.includes('flash-lite') || m.includes('small') || m.includes('distill')) power = 1;
-  if (m.includes('flash') || m.includes('haiku') || m.includes('small') || m.includes('8b') || m.includes('nitro') || m.includes('lightning') || m.includes('turbo') || m.includes('lite')) speed = 3;
-  if (m.includes('pro') || m.includes('opus') || m.includes('405b') || m.includes('reasoner') || m.includes('o1') || m.includes('gpt-5.4') || m.includes('gpt-5.3')) speed = 1;
-  return { price, power, speed };
-}
-
-function setSortMode(mode, btn) {
-  currentSortMode = mode;
-  document.querySelectorAll('.sort-btn').forEach(b => b.classList.remove('active'));
-  if (btn) btn.classList.add('active');
-  renderModelGrid();
-}
-
-function renderModelGrid() {
-  const root = document.getElementById('model-grid-root');
-  if (!root) return;
-  root.innerHTML = '';
-
-  // ── Sorting Controls ─────────────────────────────────────────────────────
-  const sortRow = document.createElement('div');
-  sortRow.style = 'display:flex;gap:8px;margin-bottom:16px;padding:8px;background:var(--bg3);border:1px solid var(--border);border-radius:10px;align-items:center';
-  sortRow.innerHTML = `
-    <div style="font-size:0.75em;color:var(--dim);font-weight:600;margin-right:4px">SORT BY:</div>
-    <button class="sort-btn ${currentSortMode==='default'?'active':''}" onclick="setSortMode('default', this)">Default</button>
-    <button class="sort-btn ${currentSortMode==='price'?'active':''}" onclick="setSortMode('price', this)">Price</button>
-    <button class="sort-btn ${currentSortMode==='power'?'active':''}" onclick="setSortMode('power', this)">Power</button>
-    <button class="sort-btn ${currentSortMode==='speed'?'active':''}" onclick="setSortMode('speed', this)">Speed</button>
-  `;
-  root.appendChild(sortRow);
-
-
-  // ── Aliases category (separate) ──────────────────────────────────────────
-  if (typeof ALIASES !== 'undefined' && Array.isArray(ALIASES) && ALIASES.length) {
-    const sec = document.createElement('div');
-    sec.className = 'provider-section';
-    sec.id = 'aliases-section';
-    
-    sec.innerHTML = `
-      <div class="provider-label">🚀 Nitro Aliases & Shortcuts</div>
-      <div class="model-grid" id="aliases-favorites"></div>
-      <details style="margin-top: 12px; padding: 6px; background: rgba(255,255,255,0.02); border-radius: 8px; border: 1px solid var(--border);">
-        <summary style="cursor: pointer; color: var(--dim); font-size: 0.85em; user-select: none; list-style: none;">Show all aliases (${ALIASES.length}) ...</summary>
-        <div class="model-grid" id="aliases-all" style="margin-top: 10px;"></div>
-      </details>
-    `;
-    const favGrid = sec.querySelector('#aliases-favorites');
-    const allGrid = sec.querySelector('#aliases-all');
-
-    const items = [...ALIASES].sort((a,b) => {
-      if (currentSortMode !== 'default') {
-        const ma = getModelMetrics(a.model || a.id || a.target, a.provider);
-        const mb = getModelMetrics(b.model || b.id || b.target, b.provider);
-        return mb[currentSortMode] - ma[currentSortMode];
-      }
-      const an = (a.is_nitro ? 0 : 1);
-      const bn = (b.is_nitro ? 0 : 1);
-      if (an !== bn) return an - bn;
-      return String(a.alias || a.name || '').toLowerCase().localeCompare(String(a.alias || a.name || '').toLowerCase());
-    });
-
-    items.forEach(m => {
-      const modelId = m.model || m.id || m.target || '';
-      const rawAlias = m.alias || m.name || modelId || '(alias)';
-      let targetLabel = m.target || modelId;
-      
-      const nitroOnly = document.getElementById('nitro-only-toggle')?.checked;
-      
-      // Filter Aliases: If Nitro Only is ON, only show Nitrogen aliases or OpenRouter targets
-      if (nitroOnly && !m.is_nitro && !targetLabel.includes('/')) return;
-
-      // Visual indicator for Nitro
-      if (nitroOnly && (m.is_nitro || targetLabel.includes('/'))) {
-        if (!targetLabel.includes(':nitro')) targetLabel += ':nitro';
-      }
-      
-      // Use the centralized aliasEmoji function for consistent icons
-      const icon = aliasEmoji(rawAlias, targetLabel, m.is_nitro);
-
-      const safeAlias = escHtml(rawAlias);
-      const safeTarget = escHtml(targetLabel);
-      
-      // Create button for Favorites grid
-      const btn = document.createElement('button');
-      btn.className = 'model-btn' + (modelId === currentModelId ? ' active' : '');
-      btn.innerHTML = `
-        <div style="display:flex;align-items:center;gap:6px;margin-bottom:4px;pointer-events:none">
-          <span style="font-size:1.1em;pointer-events:none">${icon}</span>
-          <span style="font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;pointer-events:none">${safeAlias}</span>
-        </div>
-        <div style="font-size:0.65em;color:var(--dim);line-height:1.3;word-break:break-all;opacity:0.8;pointer-events:none">${safeTarget}</div>
-      `;
-      btn.onclick = (e) => { e.stopPropagation(); switchModel(m.provider, modelId, btn); };
-      
-      // Create button for All grid (clone logic but fresh element)
-      const btnClone = document.createElement('button');
-      btnClone.className = btn.className;
-      btnClone.innerHTML = btn.innerHTML;
-      btnClone.onclick = (e) => { e.stopPropagation(); switchModel(m.provider, modelId, btnClone); };
-      
-      allGrid.appendChild(btnClone);
-
-      // Show Nitro models in favorites, plus first 3 others
-      if (m.is_nitro || favGrid.children.length < 3) {
-        favGrid.appendChild(btn);
-      }
-    });
-
-    root.appendChild(sec);
-  }
-
-  // ── Normal provider presets ─────────────────────────────────────────────
-  const nitroOnly = document.getElementById('nitro-only-toggle')?.checked;
-  for (const [provName, models] of Object.entries(ALL_MODELS)) {
-    const sec = document.createElement('div');
-    sec.className = 'provider-section';
-    if (provName.includes('Ollama')) sec.id = 'ollama-section';
-    sec.innerHTML = `<div class="provider-label">${provName}</div><div class="model-grid"></div>`;
-    const grid = sec.querySelector('.model-grid');
-    if (!models.length) {
-      grid.innerHTML = `<div style="color:var(--dim);font-size:0.8em;padding:4px">No models discovered</div>`;
-    } else {
-      const sortedModels = [...models].sort((a,b) => {
-        if (currentSortMode === 'default') return 0;
-        const ma = getModelMetrics(a.id, a.provider);
-        const mb = getModelMetrics(b.id, b.provider);
-        return mb[currentSortMode] - ma[currentSortMode];
-      });
-      sortedModels.forEach(m => {
-        const nitroOnly = document.getElementById('nitro-only-toggle')?.checked;
-        let displayName = m.name;
-        let modelId = m.id;
-
-        if (nitroOnly && provName.toLowerCase().includes('openrouter')) {
-          if (!displayName.includes(':nitro')) displayName += ' 🚀';
-          if (!modelId.includes(':nitro')) modelId += ':nitro';
-        }
-
-        const btn = document.createElement('button');
-        btn.className = 'model-btn' + (modelId === currentModelId ? ' active' : '');
-        btn.textContent = displayName;
-        btn.onclick = () => switchModel(m.provider, modelId, btn);
-        grid.appendChild(btn);
-      });
-    }
-    root.appendChild(sec);
-  }
-}
-
-let pendingKeySwitch = null;
-
-async function switchModel(provider, modelId, btn) {
-  const r = await authFetch('/api/switch_model', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({provider, model: modelId})});
-  const d = await r.json();
-  if (d.ok) {
-    currentProvider = provider;
-    currentModelId = modelId;
-    document.querySelectorAll('.model-btn').forEach(b => b.classList.remove('active'));
-    if (btn) btn.classList.add('active');
-    document.getElementById('model-badge').textContent = modelId.split('/').pop().substring(0,24);
-    document.getElementById('cfg-provider').value = provider;
-    document.getElementById('cfg-model').value = modelId;
-    addLog(`[Web] Switched model: ${provider}/${modelId}`);
-  } else if (d.needs_key) {
-    pendingKeySwitch = {provider, modelId, btn};
-    const pName = provider.charAt(0).toUpperCase() + provider.slice(1);
-    document.getElementById('key-modal-title').textContent = '\ud83d\udd11 ' + pName + ' API Key Required';
-    document.getElementById('key-modal-desc').textContent = 'No API key configured for ' + pName + '. Enter your key to activate ' + modelId + '.';
-    document.getElementById('key-modal-label').textContent = pName + ' API Key';
-    document.getElementById('key-input').value = '';
-    document.getElementById('key-modal').classList.add('open');
-    setTimeout(() => document.getElementById('key-input').focus(), 100);
-  }
-}
-
-async function submitApiKey() {
-  const key = document.getElementById('key-input').value.trim();
-  if (!key) { document.getElementById('key-input').style.borderColor = 'var(--red)'; return; }
-  if (!pendingKeySwitch) return;
-  const r = await authFetch('/api/save_key', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({provider: pendingKeySwitch.provider, api_key: key})});
-  const d = await r.json();
-  if (d.ok) {
-    document.getElementById('key-modal').classList.remove('open');
-    addLog('[Web] API key saved for ' + pendingKeySwitch.provider);
-    await switchModel(pendingKeySwitch.provider, pendingKeySwitch.modelId, pendingKeySwitch.btn);
-    pendingKeySwitch = null;
-  } else {
-    document.getElementById('key-input').style.borderColor = 'var(--red)';
-    addLog('[Error] Failed to save key: ' + (d.error || 'Unknown'));
-  }
-}
-
-async function applyModelOverride() {
-  const provider = document.getElementById('cfg-provider').value;
-  const model = document.getElementById('cfg-model').value.trim();
-  if (!model) return alert('Enter a model ID');
-  await switchModel(provider, model, null);
-  renderModelGrid();
-}
-
-function updateModelList() {
-  const p = document.getElementById('cfg-provider').value;
-  const presets = {
-    google: 'gemini-2.5-flash', anthropic: 'claude-opus-4-6',
-    openai: 'gpt-4o', xai: 'grok-4', groq: 'llama-4-scout-17b-16e-instruct',
-    mistral: 'mistral-small-latest', cerebras: 'llama3.3-70b',
-    openrouter: 'google/gemini-3.1-pro-preview', huggingface: 'Qwen/Qwen3-235B-A22B',
-    kimi: 'kimi-k2.5', zai: 'glm-4-plus', minimax: 'MiniMax-Text-01',
-    nvidia: 'deepseek-ai/deepseek-v3.2', ollama: 'qwen3:8b'
-  };
-  document.getElementById('cfg-model').value = presets[p] || '';
-}
-
-async function applyModelConfig() {
-  const maxTokens = document.getElementById('cfg-max-tokens').value.trim();
-  const contextWindow = document.getElementById('cfg-context-window').value.trim();
-  try {
-    const r = await authFetch('/api/model_config', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({max_tokens: maxTokens || 0, context_window: contextWindow || 0})});
-    const d = await r.json();
-    if (d.ok) {
-      addLog('[Web] Token config saved — max_tokens: ' + (d.max_tokens || 'default') + ', context_window: ' + (d.context_window || 'auto'));
-    } else {
-      addLog('[Web] Token config error: ' + (d.error || 'unknown'));
-    }
-  } catch(e) { addLog('[Web] Token config error: ' + e.message); }
-}
-
-async function saveNitroOnly(enabled) {
-  try {
-    const r = await authFetch('/api/model_config', {
-      method: 'POST', headers: {'Content-Type':'application/json'},
-      body: JSON.stringify({nitro_only: !!enabled})
-    });
-    const d = await r.json();
-    if (d.ok) {
-      addLog('[Web] OpenRouter Nitro mode: ' + (enabled ? 'ENABLED' : 'DISABLED'));
-      renderModelGrid();
-    }
-  } catch(e) { addLog('[Web] Nitro toggle error: ' + e.message); }
-}
-
-// ── Per-Model Overrides ────────────────────────────────────────────────────────
-async function pmoLoad() {
-  try {
-    const r = await authFetch('/api/model_overrides');
-    const d = await r.json();
-    pmoRender(d.overrides || {});
-  } catch(e) { console.error('pmoLoad:', e); }
-}
-
-function pmoRender(overrides) {
-  const el = document.getElementById('pmo-list');
-  if (!el) return;
-  const keys = Object.keys(overrides);
-  if (!keys.length) {
-    el.innerHTML = '<div style="color:var(--dim);font-size:0.8em;padding:6px 0">No per-model overrides set.</div>';
-    return;
-  }
-  let html = '<table style="width:100%;border-collapse:collapse;font-size:0.82em">';
-  html += '<tr style="color:var(--dim);border-bottom:1px solid var(--border)"><th style="text-align:left;padding:4px 6px">Model</th><th style="text-align:right;padding:4px 6px">Max Tokens</th><th style="text-align:right;padding:4px 6px">Context Window</th><th style="padding:4px 6px"></th></tr>';
-  for (const model of keys) {
-    const entry = overrides[model] || {};
-    const mt = entry.max_tokens || 0;
-    const cw = entry.context_window || 0;
-    html += `<tr style="border-bottom:1px solid rgba(255,255,255,0.04)">
-      <td style="padding:5px 6px;font-family:monospace;color:var(--cyan)">${escHtml(model)}</td>
-      <td style="text-align:right;padding:5px 6px;color:${mt?'var(--text)':'var(--dim)'}">${mt || '<span style="color:var(--dim)">global</span>'}</td>
-      <td style="text-align:right;padding:5px 6px;color:${cw?'var(--text)':'var(--dim)'}">${cw || '<span style="color:var(--dim)">global</span>'}</td>
-      <td style="padding:5px 6px;text-align:right">
-        <button onclick="pmoEdit('${escHtml(model)}',${mt},${cw})" style="padding:2px 8px;background:var(--bg3);border:1px solid var(--border);border-radius:4px;color:var(--text);cursor:pointer;font-size:0.85em;margin-right:4px">Edit</button>
-        <button onclick="pmoDelete('${escHtml(model)}')" style="padding:2px 8px;background:var(--bg3);border:1px solid #f55;border-radius:4px;color:#f77;cursor:pointer;font-size:0.85em">✕</button>
-      </td>
-    </tr>`;
-  }
-  html += '</table>';
-  el.innerHTML = html;
-}
-
-function pmoEdit(model, maxTokens, contextWindow) {
-  // Try to select in dropdown first, fall back to custom input
-  const sel = document.getElementById('pmo-model');
-  const custom = document.getElementById('pmo-model-custom');
-  sel.value = model;
-  if (sel.value !== model && custom) {
-    sel.value = '';
-    custom.value = model;
-  } else if (custom) {
-    custom.value = '';
-  }
-  document.getElementById('pmo-max-tokens').value = maxTokens || '';
-  document.getElementById('pmo-context-window').value = contextWindow || '';
-}
-
-async function pmoSave() {
-  // Get model from dropdown OR custom input
-  let model = document.getElementById('pmo-model').value.trim();
-  const custom = document.getElementById('pmo-model-custom');
-  if (!model && custom) model = custom.value.trim();
-  if (!model) { addLog('[Web] Per-model override: model name required'); return; }
-  const maxTokens = parseInt(document.getElementById('pmo-max-tokens').value) || 0;
-  const contextWindow = parseInt(document.getElementById('pmo-context-window').value) || 0;
-  try {
-    const r = await authFetch('/api/model_overrides', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({model, max_tokens: maxTokens, context_window: contextWindow})});
-    const d = await r.json();
-    if (d.ok) {
-      addLog(`[Web] Override saved for ${model}: max_tokens=${maxTokens||'global'}, context_window=${contextWindow||'global'}`);
-      document.getElementById('pmo-model').value = '';
-      if (custom) custom.value = '';
-      document.getElementById('pmo-max-tokens').value = '';
-      document.getElementById('pmo-context-window').value = '';
-      pmoLoad();
-    } else {
-      addLog('[Web] Override error: ' + (d.error || 'unknown'));
-    }
-  } catch(e) { addLog('[Web] Override error: ' + e.message); }
-}
-
-async function pmoDelete(model) {
-  try {
-    const r = await authFetch('/api/model_overrides', {method:'DELETE', headers:{'Content-Type':'application/json'}, body: JSON.stringify({model})});
-    const d = await r.json();
-    if (d.ok) {
-      addLog(`[Web] Override removed for ${model}`);
-      pmoLoad();
-    }
-  } catch(e) { addLog('[Web] Override delete error: ' + e.message); }
-}
-
-// Browser
-async function browserNav() {
-  const url = document.getElementById('browser-url').value.trim();
-  if (!url) return;
-  setBrowserStatus('Navigating to ' + url + '...');
-  const r = await authFetch('/api/browser_cmd', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({command:'navigate', args:{url}})});
-  const d = await r.json();
-  setBrowserStatus(JSON.stringify(d.result || d.error));
-}
-
-async function browserCmd(cmd, extraArgs) {
-  setBrowserStatus('Running: ' + cmd + '...');
-  try {
-    const r = await authFetch('/api/browser_cmd', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({command: cmd, args: extraArgs || {}})});
-    const d = await r.json();
-    if (cmd === 'screenshot_quick' && d.result?.path) {
-      const img = document.getElementById('browser-screenshot');
-      img.src = '/api/file?path=' + encodeURIComponent(d.result.path) + '&t=' + Date.now();
-      img.style.display = 'block';
-    }
-    setBrowserStatus(typeof d.result === 'string' ? d.result : JSON.stringify(d.result || d.error, null, 2));
-  } catch(e) { setBrowserStatus('Error: ' + e.message); }
-}
-
-function setBrowserStatus(msg) {
-  document.getElementById('browser-status').textContent = msg;
-}
-
-// ── Toast Notification System ──────────────────────────────────────────
-function showToast(message, type='info', duration=6000) {
-  const container = document.getElementById('toast-container');
-  if (!container) return;
-  const toast = document.createElement('div');
-  toast.className = `toast ${type}`;
-  toast.textContent = message;
-  container.appendChild(toast);
-  setTimeout(() => {
-    toast.classList.add('fadeout');
-    setTimeout(() => toast.remove(), 500);
-  }, duration);
-}
-
-// ── Status ────────────────────────────────────────────────────────────
-async function refreshStatus() {
-  try {
-    const r = await authFetch('/api/status');
-    const d = await r.json();
-
-    // Section 1: System Overview
-    const el = id => document.getElementById(id);
-    el('st-uptime').textContent = d.uptime_formatted || '--';
-    el('st-version').textContent = d.version ? 'v'+d.version : '--';
-    el('st-personality').textContent = d.personality || '--';
-    el('st-tin').textContent = (d.tokens_in||0).toLocaleString();
-    el('st-tout').textContent = (d.tokens_out||0).toLocaleString();
-    el('st-tools').textContent = d.tool_count || '--';
-
-    // Section 2: Model & AI
-    const modelName = (d.model?.model||'--').split('/').pop();
-    el('st-model').textContent = modelName.substring(0, 22);
-    el('st-provider').textContent = d.model?.provider || '--';
-    const mode = d.model?.mode || 'primary';
-    el('st-mode').textContent = mode.toUpperCase();
-    el('st-mode').style.color = mode === 'primary' ? 'var(--green)' : 'var(--yellow)';
-    if (el('st-ctx-used')) el('st-ctx-used').textContent = d.model?.context_used != null ? Number(d.model.context_used).toLocaleString() : '--';
-    if (el('st-ctx-max')) el('st-ctx-max').textContent = d.model?.context_max ? Number(d.model.context_max).toLocaleString() : 'Auto';
-
-    // Populate token settings UI
-    const mt = document.getElementById('cfg-max-tokens');
-    if (mt && !mt.dataset.loaded) {
-      mt.value = d.global_max_tokens != null && d.global_max_tokens != 0 ? d.global_max_tokens : '';
-      document.getElementById('cfg-context-window').value = d.global_context_window != null && d.global_context_window != 0 ? d.global_context_window : '';
-      if (document.getElementById('nitro-only-toggle')) document.getElementById('nitro-only-toggle').checked = !!d.nitro_only;
-      mt.dataset.loaded = "true";
-    }
-    if (document.getElementById('set-nitro-only')) document.getElementById('set-nitro-only').checked = !!d.nitro_only;
-    el('st-primary').textContent = d.primary_model || '--';
-    el('st-fallback').textContent = d.fallback_model || '--';
-
-    // Init thinking level buttons
-    if (d.thinking_level) {
-      document.querySelectorAll('#thinking-level-btns .think-btn').forEach(btn => {
-        if (btn.dataset.level === d.thinking_level) {
-          btn.classList.add('active');
-          btn.style.background = 'linear-gradient(135deg,var(--cyan),var(--green))';
-          btn.style.color = '#000';
-          btn.style.fontWeight = '700';
-        } else {
-          btn.classList.remove('active');
-          btn.style.background = 'var(--bg3)';
-          btn.style.color = 'var(--dim)';
-          btn.style.fontWeight = '600';
-        }
-      });
-    }
-
-    // Update topbar
-    currentModelId = d.model?.model || '';
-    currentProvider = d.model?.provider || '';
-    el('model-badge').textContent = modelName.substring(0, 24) || 'No model';
-    if (d.version) el('version-badge').textContent = 'v' + d.version;
-
-
-
-    // Section 3: Connections
-    const connEl = el('st-connections');
-    if (connEl) {
-      const bridges = [
-        {name:'Telegram', ok:d.telegram?.configured, detail:d.telegram?.admin_chat_id ? 'Chat: '+d.telegram.admin_chat_id : ''},
-        {name:'Discord', ok:d.discord?.configured, detail:''},
-        {name:'Gmail', ok:d.gmail?.configured, detail:d.gmail?.email && d.gmail.email !== '--' ? d.gmail.email : ''},
-        {name:'WhatsApp', ok:d.whatsapp?.configured, detail:''},
-        {name:'Ollama', ok:d.ollama?.online !== false, detail:(d.ollama?.model_count||0)+' models'},
-      ];
-      connEl.innerHTML = bridges.map(b => {
-        const icon = b.ok ? '<span style="color:var(--green)">✓</span>' : '<span style="color:var(--red)">✗</span>';
-        const sub = b.detail ? `<div style="font-size:0.72em;color:var(--dim);margin-top:2px">${b.detail}</div>` : '';
-        return `<div class="stat-card" style="text-align:left;padding:12px 16px"><div style="display:flex;align-items:center;gap:8px;font-size:0.92em">${icon} <strong>${b.name}</strong></div>${sub}</div>`;
-      }).join('');
-    }
-
-    // Section 4: Providers
-    const provEl = el('st-providers');
-    if (provEl && d.providers_configured) {
-      const health = d.provider_health || {};
-      provEl.innerHTML = Object.entries(d.providers_configured).map(([name, hasKey]) => {
-        const h = health[name];
-        let dot = hasKey ? '🟢' : '⚫';
-        if (h && h.cooldown_until) dot = '🟡';
-        if (h && h.failures > 2) dot = '🔴';
-        const label = hasKey ? 'Key set' : 'No key';
-        const labelColor = hasKey ? 'var(--green)' : 'var(--dim)';
-        return `<div class="stat-card" style="text-align:left;padding:12px 16px"><div style="display:flex;align-items:center;gap:8px;font-size:0.88em">${dot} <strong style="text-transform:capitalize">${name}</strong></div><div style="font-size:0.72em;color:${labelColor};margin-top:3px">${label}</div></div>`;
-      }).join('');
-    }
-
-    // Section 5: Plugins
-    const pl = el('status-plugins-list');
-    if (pl && d.plugins) {
-      pl.innerHTML = '';
-      for (const [name, enabled] of Object.entries(d.plugins)) {
-        pl.innerHTML += `<div style="display:flex;align-items:center;gap:10px;padding:7px 12px;background:var(--bg3);border-radius:6px;margin-bottom:5px;font-size:0.83em"><span style="color:${enabled?'var(--green)':'var(--red)'}">${enabled?'●':'○'}</span><span>${name}</span><span style="margin-left:auto;color:var(--dim);font-size:0.75em">${enabled?'ACTIVE':'PAUSED'}</span></div>`;
-      }
-      if (d.scheduled_tasks !== undefined) {
-        pl.innerHTML += `<div style="display:flex;align-items:center;gap:10px;padding:7px 12px;background:var(--bg3);border-radius:6px;margin-bottom:5px;font-size:0.83em"><span style="color:var(--cyan)">◆</span><span>Scheduler</span><span style="margin-left:auto;color:var(--dim);font-size:0.75em">${d.scheduled_tasks} tasks</span></div>`;
-      }
-    }
-
-    // Section 6: Ollama
-    el('st-ollama-status').textContent = (d.ollama?.online !== false) ? 'ONLINE' : 'OFFLINE';
-    el('st-ollama-status').style.color = (d.ollama?.online !== false) ? 'var(--green)' : 'var(--red)';
-    el('st-ollama-models').textContent = d.ollama?.model_count ?? '--';
-
-    // Refresh cost dashboard
-    refreshCostDashboard();
-  } catch(e) { console.error('Status refresh error:', e); }
-}
-
-// ── Cost Dashboard ───────────────────────────────────────────────────
-const EXCHANGE_RATES = {
-  USD:1, EUR:0.92, GBP:0.79, CAD:1.44,
-  AUD:1.57, JPY:149.5, INR:83.1, BRL:5.05, KRW:1345
-};
-const CURRENCY_SYMBOLS = {
-  USD:'$', EUR:'€', GBP:'£', CAD:'CA$', AUD:'AU$', JPY:'¥', INR:'₹', BRL:'R$', KRW:'₩'
-};
-let _costDashBusy = false;
-
-function getCurrency() {
-  try { return localStorage.getItem('gal_currency') || 'USD'; } catch(e) { return 'USD'; }
-}
-function saveCurrency() {
-  const c = document.getElementById('cost-currency').value;
-  try { localStorage.setItem('gal_currency', c); } catch(e) {}
-}
-function fmtCost(usd, decimals) {
-  const cur = getCurrency();
-  const rate = EXCHANGE_RATES[cur] || 1;
-  const val = usd * rate;
-  const sym = CURRENCY_SYMBOLS[cur] || cur;
-  if (decimals === undefined) {
-    if (val === 0) return 'FREE';
-    if (val < 0.01) return sym + val.toFixed(4);
-    if (val < 1) return sym + val.toFixed(3);
-    if (val < 100) return sym + val.toFixed(2);
-    return sym + val.toLocaleString(undefined, {maximumFractionDigits:0});
-  }
-  return sym + val.toFixed(decimals);
-}
-function costColor(usd) {
-  if (usd === 0) return 'var(--green)';
-  if (usd < 0.01) return 'var(--green)';
-  if (usd < 0.10) return 'var(--yellow)';
-  return 'var(--red)';
-}
-
-async function refreshCostDashboard() {
-  if (_costDashBusy) return;
-  _costDashBusy = true;
-  try {
-    const r = await authFetch('/api/cost-stats');
-    if (!r.ok) return;
-    const d = await r.json();
-    if (d.error) return;
-
-    const sel = document.getElementById('cost-currency');
-    if (sel) sel.value = getCurrency();
-
-    const setCard = (id, usd) => {
-      const e = document.getElementById(id);
-      if (!e) return;
-      e.textContent = fmtCost(usd);
-      e.style.color = costColor(usd);
-    };
-    setCard('cost-session', d.session_cost);
-    setCard('cost-today', d.today_cost);
-    setCard('cost-week', d.week_cost);
-    setCard('cost-month', d.month_cost);
-    setCard('cost-last', d.last_request_cost);
-    setCard('cost-avg', d.avg_per_message);
-
-    // Free models note
-    const freeNote = document.getElementById('cost-free-note');
-    if (freeNote && d.free_models_used && d.free_models_used.length > 0) {
-      const names = d.free_models_used.map(m => m.split('/').pop()).join(', ');
-      freeNote.textContent = 'Also used (free): ' + names;
-    } else if (freeNote) {
-      freeNote.textContent = '';
-    }
-  } catch(e) { console.error('Cost dashboard error:', e); }
-  finally { _costDashBusy = false; }
-}
-
-// ── Settings Tab ──────────────────────────────────────────────────────
-
-// Build a flat list of {provider, id, name} from ALL_MODELS for dropdown use
-function _flatModels() {
-  const flat = [];
-  for (const [group, models] of Object.entries(ALL_MODELS)) {
-    models.forEach(m => flat.push(m));
-  }
-  return flat;
-}
-
-// Get unique provider list from ALL_MODELS (excluding image-only providers)
-function _modelProviders() {
-  const IMAGE_ONLY = ['Google Imagen', 'FLUX'];
-  const provs = new Map();
-  for (const [group, models] of Object.entries(ALL_MODELS)) {
-    if (IMAGE_ONLY.some(x => group.includes(x))) continue;
-    models.forEach(m => {
-      if (!provs.has(m.provider)) provs.set(m.provider, group);
-    });
-  }
-  return provs;
-}
-
-function populateSettingsProviders() {
-  const provs = _modelProviders();
-  // ALWAYS include all known providers — ollama loads async so it may not be in ALL_MODELS yet
-  const fallbackOrder = [
-    'google','anthropic','openai','xai','groq','mistral','cerebras',
-    'openrouter','huggingface','kimi','zai','minimax','nvidia','ollama','deepseek',
-    'together','vllm','moonshot','qianfan','doubao','byteplus',
-    'cloudflare-ai-gateway','amazon-bedrock','xiaomi','kilocode','github-copilot'
-  ];
-
-  ['primary', 'fallback', 'planner', 'planner_fallback'].forEach(role => {
-    const sel = document.getElementById(`set-${role}-provider`);
-    if (!sel) return;
-    const prev = sel.value;  // Preserve current selection
-    sel.innerHTML = '';
-
-    // Start with fallbackOrder, then add any extras from ALL_MODELS not already included
-    const list = fallbackOrder.slice();
-    for (const prov of provs.keys()) {
-      if (!list.includes(prov)) list.push(prov);
-    }
-
-    list.forEach(prov => {
-      const opt = document.createElement('option');
-      opt.value = prov;
-      opt.textContent = prov.charAt(0).toUpperCase() + prov.slice(1);
-      sel.appendChild(opt);
-    });
-
-    // Restore previous selection if it still exists, otherwise default
-    if (prev && Array.from(sel.options).some(o => o.value === prev)) {
-      sel.value = prev;
-    } else if (!sel.value && sel.options.length) {
-      sel.value = sel.options[0].value;
-    }
-    updateSettingsModelList(role);
-  });
-}
-
-function updateSettingsModelList(role) {
-  const provSel = document.getElementById(`set-${role}-provider`);
-  const modSel = document.getElementById(`set-${role}-model`);
-  const prov = provSel.value;
-  modSel.innerHTML = '';
-  const flat = _flatModels();
-  const provModels = flat.filter(m => m.provider === prov);
-  
-  provModels.forEach(m => {
-    const opt = document.createElement('option');
-    opt.value = m.id;
-    opt.textContent = m.name.replace(/\[LATEST\]/g, '').trim();
-    modSel.appendChild(opt);
-  });
-
-  // ⭐ FIX: Inject Aliases (Nitro models) into OpenRouter dropdown
-  if (prov === 'openrouter' && typeof ALIASES !== 'undefined' && Array.isArray(ALIASES) && ALIASES.length) {
-    // Add a separator
-    const sep = document.createElement('option');
-    sep.disabled = true;
-    sep.textContent = '─── Nitro Aliases ───';
-    modSel.appendChild(sep);
-
-    ALIASES.forEach(m => {
-      const modelId = m.model || m.id || m.target || '';
-      const rawAlias = m.alias || m.name || modelId || '(alias)';
-      // Reuse the emoji logic from renderModelGrid for consistency
-      let icon = '📌';
-      const lowAlias = String(rawAlias).toLowerCase();
-      if(m.is_nitro || lowAlias.includes('nitro') || lowAlias.includes('fast')) icon = '🚀';
-      else if(lowAlias.includes('gpt') || lowAlias.includes('o1') || lowAlias.includes('o3')) icon = '🧠';
-      else if(lowAlias.includes('claude') || lowAlias.includes('sonnet')) icon = '🤖';
-      else if(lowAlias.includes('gemini')) icon = '🌐';
-      
-      const opt = document.createElement('option');
-      opt.value = modelId;
-      opt.textContent = `${icon} ${rawAlias}`;
-      modSel.appendChild(opt);
-    });
-  }
-
-  // If Ollama, add discovered models
-  if (prov === 'ollama') {
-    const ollamaKey = Object.keys(ALL_MODELS).find(k => k.includes('Ollama'));
-    if (ollamaKey) {
-      ALL_MODELS[ollamaKey].forEach(m => {
-        if (!provModels.find(x => x.id === m.id)) {
-          const opt = document.createElement('option');
-          opt.value = m.id;
-          opt.textContent = m.name;
-          modSel.appendChild(opt);
-        }
-      });
-    }
-  }
-}
-
-function populatePmoDropdown() {
-  const sel = document.getElementById('pmo-model');
-  if (!sel || sel.tagName !== 'SELECT') return;
-
-  // ── Preserve current user selections before rebuilding ──
-  const savedSel = sel.value;
-  const savedCustom = (document.getElementById('pmo-model-custom') || {}).value || '';
-  const savedMaxTok = (document.getElementById('pmo-max-tokens') || {}).value || '';
-  const savedCtxWin = (document.getElementById('pmo-context-window') || {}).value || '';
-
-  sel.innerHTML = '<option value="">-- select model --</option>';
-  const IMAGE_ONLY = ['Google Imagen', 'FLUX'];
-  for (const [group, models] of Object.entries(ALL_MODELS)) {
-    if (IMAGE_ONLY.some(x => group.includes(x))) continue;
-    if (!models.length) continue;
-    const optGroup = document.createElement('optgroup');
-    optGroup.label = group;
-    models.forEach(m => {
-      const opt = document.createElement('option');
-      opt.value = m.id;
-      opt.textContent = m.name.replace(/\[LATEST\]/g, '').trim();
-      optGroup.appendChild(opt);
-    });
-    sel.appendChild(optGroup);
-  }
-
-  // ── Restore previous selections after rebuild ──
-  if (savedSel) sel.value = savedSel;
-  const customEl = document.getElementById('pmo-model-custom');
-  if (customEl && savedCustom) customEl.value = savedCustom;
-  const maxTokEl = document.getElementById('pmo-max-tokens');
-  if (maxTokEl && savedMaxTok) maxTokEl.value = savedMaxTok;
-  const ctxWinEl = document.getElementById('pmo-context-window');
-  if (ctxWinEl && savedCtxWin) ctxWinEl.value = savedCtxWin;
-}
-
-async function loadSettingsValues() {
-  try {
-    const r = await authFetch('/api/status');
-    const d = await r.json();
-    // Model settings
-    const prim = (d.primary_model || '/').split('/');
-    const fb = (d.fallback_model || '/').split('/');
-    const pl = (d.planner_model || '/').split('/');
-    const plf = (d.planner_fallback_model || '/').split('/');
-    
-    const primProv = prim.length > 1 ? prim[0] : '';
-    const primModel = prim.length > 1 ? prim.slice(1).join('/') : prim[0];
-    const fbProv = fb.length > 1 ? fb[0] : '';
-    const fbModel = fb.length > 1 ? fb.slice(1).join('/') : fb[0];
-    const plProv = pl.length > 1 ? pl[0] : '';
-    const plModel = pl.length > 1 ? pl.slice(1).join('/') : pl[0];
-    const plfProv = plf.length > 1 ? plf[0] : '';
-    const plfModel = plf.length > 1 ? plf.slice(1).join('/') : plf[0];
-
-    const setProv = (role, val) => {
-      const sel = document.getElementById(`set-${role}-provider`);
-      if (sel) { sel.value = val; updateSettingsModelList(role); }
-    };
-    const setModel = (role, val) => {
-      const sel = document.getElementById(`set-${role}-model`);
-      if (sel) sel.value = val;
-    };
-    setProv('primary', primProv); setModel('primary', primModel);
-    setProv('fallback', fbProv); setModel('fallback', fbModel);
-    setProv('planner', plProv); setModel('planner', plModel);
-    setProv('planner_fallback', plfProv); setModel('planner_fallback', plfModel);
-
-    // Toggles
-    const el = id => document.getElementById(id);
-    if (el('set-streaming')) el('set-streaming').checked = d.streaming !== false;
-    if (el('set-nitro-only')) el('set-nitro-only').checked = !!d.nitro_only;
-
-    // Voice
-    if (d.voice && el('set-voice')) el('set-voice').value = d.voice;
-    if (d.voice && el('quick-voice-select')) el('quick-voice-select').value = d.voice;
-
-    // System
-    if (d.update_check_interval !== undefined && el('set-update-interval'))
-      el('set-update-interval').value = String(d.update_check_interval);
-    if (d.speak_timeout && el('set-speak-timeout')) el('set-speak-timeout').value = d.speak_timeout;
-    if (d.max_turns && el('set-max-turns')) el('set-max-turns').value = d.max_turns;
-  } catch(e) { console.error('loadSettingsValues:', e); }
-}
-
-async function saveModelSettings() {
-  const primProv = document.getElementById('set-primary-provider').value;
-  const primModel = document.getElementById('set-primary-model').value;
-  const fbProv = document.getElementById('set-fallback-provider').value;
-  const fbModel = document.getElementById('set-fallback-model').value;
-  const plProv = document.getElementById('set-planner-provider').value;
-  const plModel = document.getElementById('set-planner-model').value;
-  const plfProv = document.getElementById('set-planner_fallback-provider')?.value || '';
-  const plfModel = document.getElementById('set-planner_fallback-model')?.value || '';
-  
-  if (!primProv || !primModel) { showToast('Select a primary model', 'error', 3000); return; }
-  if (!fbProv || !fbModel) { showToast('Select a fallback model', 'error', 3000); return; }
-  try {
-    const r = await authFetch('/api/settings/models', {
-      method: 'POST', headers: {'Content-Type':'application/json'},
-      body: JSON.stringify({
-        primary_provider: primProv, primary_model: primModel,
-        fallback_provider: fbProv, fallback_model: fbModel,
-        planner_provider: plProv, planner_model: plModel,
-        planner_fallback_provider: plfProv, planner_fallback_model: plfModel,
-        streaming: document.getElementById('set-streaming').checked,
-        nitro_only: document.getElementById('set-nitro-only')?.checked || false,
-      })
-    });
-    const d = await r.json();
-    if (d.ok) {
-      showToast('Model settings saved!', 'success', 3000);
-      refreshStatus();
-    } else {
-      showToast(d.error || 'Failed to save', 'error', 4000);
-    }
-  } catch(e) { showToast('Error: ' + e.message, 'error', 4000); }
-}
-
-async function saveVoiceSettings() {
-  const voice = document.getElementById('set-voice').value;
-  try {
-    const r = await authFetch('/api/settings/voice', {
-      method: 'POST', headers: {'Content-Type':'application/json'},
-      body: JSON.stringify({voice})
-    });
-    const d = await r.json();
-    if (d.ok) {
-      showToast(`Voice set to ${voice}`, 'success', 3000);
-      // Sync the Quick Tools voice selector
-      const qs = document.getElementById('quick-voice-select');
-      if (qs) qs.value = voice;
-    }
-  } catch(e) { showToast('Error: ' + e.message, 'error', 4000); }
-}
-
-async function saveQuickVoice(voice) {
-  try {
-    await authFetch('/api/settings/voice', {
-      method: 'POST', headers: {'Content-Type':'application/json'},
-      body: JSON.stringify({voice})
-    });
-    showToast(`Voice changed to ${voice}`, 'success', 3000);
-    // Sync Settings tab voice selector
-    const sv = document.getElementById('set-voice');
-    if (sv) sv.value = voice;
-  } catch(e) {}
-}
-
-function testVoice() {
-  const voice = document.getElementById('set-voice').value;
-  const msg = 'Hello! I am ' + voice + ', your AI assistant voice.';
-  showToast('Generating voice preview...', 'info', 3000);
-  authFetch('/api/tts', {
-    method: 'POST', headers: {'Content-Type':'application/json'},
-    body: JSON.stringify({text: msg, voice: voice})
-  }).then(r => {
-    if (!r.ok) return r.json().then(d => { throw new Error(d.error || 'TTS failed'); });
-    return r.blob();
-  }).then(blob => {
-    const url = URL.createObjectURL(blob);
-    const audio = new Audio(url);
-    audio.onended = () => URL.revokeObjectURL(url);
-    audio.play().then(() => {
-      showToast('Playing voice preview', 'success', 3000);
-    }).catch(e => showToast('Browser blocked audio playback. Click anywhere first.', 'error', 4000));
-  }).catch(e => showToast('Error: ' + e.message, 'error', 4000));
-}
-
-// ── Voice Input (Microphone) ──────────────────────────────────────────
-let _voiceRecorder = null;
-let _voiceChunks = [];
-let _voiceRecording = false;
-
-let _liveCallMode = false;
-let _currentLiveAudio = null;
-
-function toggleLiveCall() {
-  const btn = document.getElementById('live-call-btn');
-  _liveCallMode = !_liveCallMode;
-  if (_liveCallMode) {
-    btn.classList.add('active');
-    btn.style.background = 'var(--green)';
-    btn.style.color = '#fff';
-    btn.style.borderColor = 'var(--green)';
-    showToast('Live Call Mode active. Click mic to speak. Responses will auto-play.', 'success', 5000);
-  } else {
-    btn.classList.remove('active');
-    btn.style.background = 'var(--bg3)';
-    btn.style.color = 'var(--dim)';
-    btn.style.borderColor = 'var(--border)';
-    if (_currentLiveAudio) _currentLiveAudio.pause();
-    showToast('Live Call Mode deactivated.', 'info', 3000);
-  }
-}
-
-function toggleVoiceInput() {
-  if (_liveCallMode && _currentLiveAudio && !_currentLiveAudio.paused) {
-    _currentLiveAudio.pause();
-    showToast('AI interrupted. Listening...', 'info', 2000);
-  }
-  if (_voiceRecording) { stopVoiceInput(); return; }
-  startVoiceInput();
-}
-
-async function startVoiceInput() {
-  const btn = document.getElementById('voice-btn');
-  // MediaRecorder requires a secure context (HTTPS or localhost).
-  if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
-    showToast('Mic unavailable: requires secure context (HTTPS or localhost).', 'error', 4000);
-    return;
-  }
-  try {
-    const stream = await navigator.mediaDevices.getUserMedia({audio: true});
-    _voiceChunks = [];
-    _voiceRecorder = new MediaRecorder(stream, {mimeType: MediaRecorder.isTypeSupported('audio/webm') ? 'audio/webm' : 'audio/mp4'});
-    _voiceRecorder.ondataavailable = e => { if (e.data.size > 0) _voiceChunks.push(e.data); };
-    _voiceRecorder.onstop = () => {
-      stream.getTracks().forEach(t => t.stop());
-      if (_voiceChunks.length > 0) sendVoiceForTranscription();
-    };
-    _voiceRecorder.start();
-    _voiceRecording = true;
-    btn.classList.add('recording');
-    btn.style.background = 'var(--red)';
-    btn.style.color = '#fff';
-    btn.style.borderColor = 'var(--red)';
-    btn.title = 'Click to stop recording';
-    showToast('Recording... click mic to stop', 'info', 10000);
-  } catch(e) {
-    showToast('Microphone access denied: ' + e.message, 'error', 4000);
-  }
-}
-
-function stopVoiceInput() {
-  const btn = document.getElementById('voice-btn');
-  if (_voiceRecorder && _voiceRecorder.state !== 'inactive') _voiceRecorder.stop();
-  _voiceRecording = false;
-  btn.classList.remove('recording');
-  btn.style.background = 'var(--bg3)';
-  btn.style.color = 'var(--dim)';
-  btn.style.borderColor = 'var(--border)';
-  btn.title = 'Voice input (click to record)';
-}
-
-async function sendVoiceForTranscription() {
-  const btn = document.getElementById('voice-btn');
-  btn.textContent = '...';
-  showToast('Transcribing...', 'info', 5000);
-  try {
-    const blob = new Blob(_voiceChunks, {type: _voiceChunks[0]?.type || 'audio/webm'});
-    const form = new FormData();
-    form.append('audio', blob, 'recording.webm');
-    const r = await authFetch('/api/stt', {method: 'POST', body: form});
-    const d = await r.json();
-    if (d.text) {
-      const inp = document.getElementById('chat-input-main');
-      if (_liveCallMode) {
-        inp.value = d.text;
-        sendChatMain();
-      } else {
-        inp.value = inp.value ? inp.value + ' ' + d.text : d.text;
-        inp.focus();
-        autoResize(inp);
-        showToast('Transcribed!', 'success', 2000);
-      }
-    } else {
-      showToast(d.error || 'Transcription failed', 'error', 4000);
-    }
-  } catch(e) {
-    showToast('STT error: ' + e.message, 'error', 4000);
-  }
-  btn.textContent = '\uD83C\uDFA4';
-}
-
-async function saveSystemSettings() {
-  try {
-    const r = await authFetch('/api/settings/system', {
-      method: 'POST', headers: {'Content-Type':'application/json'},
-      body: JSON.stringify({
-        update_check_interval: parseInt(document.getElementById('set-update-interval').value) || 21600,
-        speak_timeout: parseInt(document.getElementById('set-speak-timeout').value) || 600,
-        max_turns: parseInt(document.getElementById('set-max-turns').value) || 50,
-      })
-    });
-    const d = await r.json();
-    if (d.ok) showToast('System settings saved!', 'success', 3000);
-    else showToast(d.error || 'Failed to save', 'error', 4000);
-  } catch(e) { showToast('Error: ' + e.message, 'error', 4000); }
-}
-
-// ── Thinking Level ────────────────────────────────────────────────────
-async function setThinkingLevel(level) {
-  // Update button visuals
-  document.querySelectorAll('#thinking-level-btns .think-btn').forEach(btn => {
-    if (btn.dataset.level === level) {
-      btn.classList.add('active');
-      btn.style.background = 'linear-gradient(135deg,var(--cyan),var(--green))';
-      btn.style.color = '#000';
-      btn.style.fontWeight = '700';
-    } else {
-      btn.classList.remove('active');
-      btn.style.background = 'var(--bg3)';
-      btn.style.color = 'var(--dim)';
-      btn.style.fontWeight = '600';
-    }
-  });
-  // Save to server
-  try {
-    const r = await authFetch('/api/settings/thinking', {
-      method: 'POST', headers: {'Content-Type':'application/json'},
-      body: JSON.stringify({level})
-    });
-    const d = await r.json();
-    if (d.ok) showToast(`Thinking: ${level.toUpperCase()}`, 'success', 2000);
-    else showToast(d.error || 'Failed', 'error', 3000);
-  } catch(e) { showToast('Error: ' + e.message, 'error', 3000); }
-}
-
-// ── Update Banner ─────────────────────────────────────────────────────
-function showUpdateBanner(info) {
-  if (document.getElementById('update-banner')) return;
-  const banner = document.createElement('div');
-  banner.id = 'update-banner';
-  banner.style.cssText = 'padding:10px 20px;background:rgba(0,160,255,0.12);border-bottom:1px solid rgba(0,200,255,0.3);display:flex;align-items:center;gap:12px;font-size:0.85em;flex-shrink:0';
-  banner.innerHTML = `<span style="font-size:1.2em">🆕</span><span><strong>Galactic AI v${info.latest}</strong> is available <span style="color:var(--dim)">(you have v${info.current})</span></span><code style="padding:3px 8px;background:var(--bg);border-radius:5px;font-size:0.85em">./update.ps1</code><button onclick="this.parentElement.remove()" style="margin-left:auto;background:none;border:1px solid var(--border);border-radius:5px;color:var(--text);padding:3px 10px;cursor:pointer;font-size:0.85em">Dismiss</button>`;
-  const topbar = document.getElementById('topbar');
-  if (topbar) topbar.after(banner);
-}
-
-// Memory
-async function loadFileList() {
-  try {
-    const r = await authFetch('/api/files');
-    const d = await r.json();
-    const sel = document.getElementById('mem-file-select');
-    sel.innerHTML = '<option value="">-- select file --</option>';
-    (d.files || []).forEach(f => {
-      // f may be a string OR an object {name, size}
-      const fname = (typeof f === 'string') ? f : (f.name || f);
-      const label = (typeof f === 'object' && f.size !== undefined) ? fname + ' (' + f.size + 'b)' : fname;
-      const opt = document.createElement('option');
-      opt.value = fname;
-      opt.textContent = label;
-      sel.appendChild(opt);
-    });
-  } catch(e) { console.error('loadFileList error:', e); }
-}
-async function loadMemFile(name) {
-  if (!name) return;
-  try {
-    const r = await authFetch('/api/file?name=' + encodeURIComponent(name));
-    const d = await r.json();
-    if (d.error) { document.getElementById('mem-editor').value = '// Error: ' + d.error; return; }
-    document.getElementById('mem-editor').value = d.content || '';
-    addLog('[Web] Loaded: ' + name);
-  } catch(e) { document.getElementById('mem-editor').value = '// Load error: ' + e.message; }
-}
-async function saveMemFile() {
-  const name = document.getElementById('mem-file-select').value;
-  const content = document.getElementById('mem-editor').value;
-  if (!name) return alert('Select a file first');
-  try {
-    await authFetch('/api/file', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({name, content})});
-    addLog('[Web] Saved: ' + name);
-  } catch(e) { alert('Save failed: ' + e.message); }
-}
-
-// Logs — newest at top
-function addLog(msg) {
-  allLogs.push(msg);
-  const filterVal = document.getElementById('log-filter').value || '';
-  if (!filterVal || msg.toLowerCase().includes(filterVal.toLowerCase())) {
-    const el = document.getElementById('logs-scroll');
-    const div = document.createElement('div');
-    div.className = 'log-line' + (msg.includes('ERROR')||msg.includes('Error') ? ' err' : msg.includes('✅')||msg.includes('ONLINE') ? ' ok' : msg.includes('⚠️')||msg.includes('WARN') ? ' warn' : '');
-    div.textContent = msg;
-    el.append(div);
-    if (window.logAutoScroll) el.scrollTop = el.scrollHeight;
-    // Trim DOM for performance — keep max 500 visible entries
-    while (el.children.length > 500) el.removeChild(el.firstChild);
-  }
-}
-
-function filterLogs(q2) {
-  const el = document.getElementById('logs-scroll');
-  el.innerHTML = '';
-  const filtered = allLogs.filter(l => !q2 || l.toLowerCase().includes(q2.toLowerCase()));
-  // Render oldest→newest (chronological), limit to 500
-  filtered.slice(-500).forEach(l => {
-    const div = document.createElement('div');
-    div.className = 'log-line';
-    div.textContent = l;
-    el.appendChild(div);
-  });
-}
-
-function clearLogs() { allLogs = []; document.getElementById('logs-scroll').innerHTML = ''; }
-
-function toggleAutoScroll() {
-  autoScroll = !autoScroll;
-  document.getElementById('log-auto-scroll-btn').textContent = 'Auto-scroll: ' + (autoScroll ? 'ON' : 'OFF');
-}
-
-// Tabs
-function switchTab(name) {
-  document.querySelectorAll('.tab-pane').forEach(p => p.classList.remove('active'));
-  document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
-  document.querySelectorAll('.sidebar-item').forEach(s => s.classList.remove('active'));
-  const pane = document.getElementById('tab-' + name);
-  if (pane) pane.classList.add('active');
-  document.querySelectorAll('.tab-btn').forEach(b => { if (b.textContent.toLowerCase().includes(name)) b.classList.add('active'); });
-  document.querySelectorAll('.sidebar-item').forEach(s => { if (s.textContent.toLowerCase().includes(name)) s.classList.add('active'); });
-  if (name === 'status') {
-    refreshStatus();
-    // Force token counter sync from Status API data immediately
-    const r = authFetch('/api/status').then(r => r.json()).then(d => {
-      document.getElementById('token-counter').textContent = '↑' + (d.tokens_in||0) + ' ↓' + (d.tokens_out||0) + ' tokens';
-    }).catch(console.error);
-  }
-  if (name === 'models') { loadOllamaStatus(); pmoLoad(); }
-  if (name === 'plugins') loadPlugins();
-  if (name === 'terminal') { initTerminal(); connectTerminalWS(); }
-  if (name === 'thinking') {
-    const tBtn = document.getElementById('thinking-tab-btn');
-    if (tBtn) { tBtn.style.color = ''; tBtn.style.textShadow = ''; }
-    loadRuns();
-  }
-  // Scroll to bottom when switching to content tabs (newest-last layout)
-  if (name === 'chat') {
-    requestAnimationFrame(() => {
-      const el = document.getElementById('chat-log');
-      if (el) el.scrollTop = el.scrollHeight;
-    });
-  }
-  if (name === 'logs') {
-    requestAnimationFrame(() => {
-      const el = document.getElementById('logs-scroll');
-      if (el) el.scrollTop = el.scrollHeight;
-    });
-  }
-  if (name === 'thinking') {
-    requestAnimationFrame(() => {
-      const el = document.getElementById('thinking-scroll');
-      if (el) el.scrollTop = el.scrollHeight;
-    });
-  }
-  try { localStorage.setItem('gal_activeTab', name); } catch(e) {}
-}
-
-// Utility
-function escHtml(s) {
-  return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
-}
-
-function formatMsg(text) {
-  // Render markdown-ish formatting for chat bubbles
-  let s = String(text);
-  // Fenced code blocks (```lang\n...\n``` or ```\n...\n```)
-  s = s.replace(/```(\w*)\n?([\s\S]*?)```/g, function(_, lang, code) {
-    const label = lang ? '<span style="font-size:0.7em;color:var(--dim);display:block;margin-bottom:4px">' + escHtml(lang) + '</span>' : '';
-    return '<pre style="background:#0d0d14;border:1px solid var(--border);border-radius:7px;padding:10px 12px;overflow-x:auto;margin:6px 0;font-size:0.82em;line-height:1.6">' + label + escHtml(code.trimEnd()) + '</pre>';
-  });
-  // Inline code `...`
-  s = s.replace(/`([^`\n]+)`/g, '<code style="background:rgba(255,255,255,0.07);border-radius:4px;padding:1px 5px;font-size:0.88em">$1</code>');
-  // Bold **text**
-  s = s.replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>');
-  // Italic *text* (single star, not double)
-  s = s.replace(/(?<!\*)\*(?!\*)(.+?)(?<!\*)\*(?!\*)/g, '<em>$1</em>');
-  // Headers ### ## #
-  s = s.replace(/^###\s+(.+)$/gm, '<div style="font-weight:700;font-size:0.95em;color:var(--cyan);margin:8px 0 2px">$1</div>');
-  s = s.replace(/^##\s+(.+)$/gm, '<div style="font-weight:700;font-size:1em;color:var(--cyan);margin:10px 0 3px">$1</div>');
-  s = s.replace(/^#\s+(.+)$/gm, '<div style="font-weight:800;font-size:1.05em;color:var(--cyan);margin:12px 0 4px">$1</div>');
-  // Bullet lists - line
-  s = s.replace(/^[ \t]*[-*]\s+(.+)$/gm, '<div style="padding-left:14px;margin:1px 0">• $1</div>');
-  // Numbered lists
-  s = s.replace(/^[ \t]*(\d+)\.\s+(.+)$/gm, '<div style="padding-left:14px;margin:1px 0">$1. $2</div>');
-  // Newlines to <br> (after block-level replacements)
-  s = s.replace(/\n/g, '<br>');
-  return s;
-}
-function handleKey(e) { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendChatMain(); } }
-function sendChat() { sendChatMain(); }
-
-// ── THINKING TAB ────────────────────────────────────────────────────────────
-let traceAutoScroll = true;
-let traceSessions = {};   // session_id -> { el, body, turnEls, maxTurn }
-let traceAllEntries = []; // flat list for filter replay
-
-function handleAgentTrace(data) {
-  const sid   = data.session_id || 'anon';
-  const turn  = data.turn  || 0;
-  const phase = data.phase || 'unknown';
-  const scroll = document.getElementById('thinking-scroll');
-  if (!scroll) return;
-
-  // ── SESSION START ──
-  if (phase === 'session_start') {
-    startOrb();
-    const sEl = document.createElement('div');
-    sEl.className = 'trace-session';
-    sEl.dataset.sid = sid;
-    const query = (data.query || '').substring(0, 140);
-    sEl.innerHTML =
-      '<div class="trace-session-header" onclick="this.parentElement.classList.toggle(\'collapsed\')">' +
-        '<span class="trace-sid">#' + escHtml(sid) + '</span>' +
-        '<span class="trace-query">' + escHtml(query) + '</span>' +
-        '<span class="trace-toggle">&#9660;</span>' +
-      '</div>' +
-      '<div class="trace-session-body"></div>';
-    scroll.append(sEl);
-    traceSessions[sid] = { el: sEl, body: sEl.querySelector('.trace-session-body'), turnEls: {}, maxTurn: 0 };
-    if (window.traceAutoScroll) scroll.scrollTop = scroll.scrollHeight;
-    return;
-  }
-
-  // ── Ensure session container exists (joined mid-session) ──
-  if (!traceSessions[sid]) {
-    const sEl = document.createElement('div');
-    sEl.className = 'trace-session';
-    sEl.dataset.sid = sid;
-    sEl.innerHTML =
-      '<div class="trace-session-header" onclick="this.parentElement.classList.toggle(\'collapsed\')">' +
-        '<span class="trace-sid">#' + escHtml(sid) + '</span>' +
-        '<span class="trace-query">(mid-session)</span>' +
-        '<span class="trace-toggle">&#9660;</span>' +
-      '</div>' +
-      '<div class="trace-session-body"></div>';
-    scroll.append(sEl);
-    traceSessions[sid] = { el: sEl, body: sEl.querySelector('.trace-session-body'), turnEls: {}, maxTurn: 0 };
-  }
-  const sess = traceSessions[sid];
-
-  // ── TURN START ──
-  if (phase === 'turn_start') {
-    const tEl = document.createElement('div');
-    tEl.className = 'trace-turn';
-    tEl.dataset.turn = turn;
-    tEl.innerHTML =
-      '<div class="trace-turn-header" onclick="this.parentElement.classList.toggle(\'collapsed\')">TURN ' + turn + ' &#9660;</div>' +
-      '<div class="trace-turn-entries"></div>';
-    sess.body.append(tEl);
-    sess.turnEls[turn] = tEl;
-    if (turn > sess.maxTurn) {
-      sess.maxTurn = turn;
-      const ctr = document.getElementById('thinking-turn-counter');
-      if (ctr) ctr.textContent = 'Turns: ' + turn;
-    }
-    if (window.traceAutoScroll) scroll.scrollTop = scroll.scrollHeight;
-    return;
-  }
-
-  // ── Get or create turn container ──
-  let turnEl = sess.turnEls[turn];
-  if (!turnEl) {
-    turnEl = document.createElement('div');
-    turnEl.className = 'trace-turn';
-    turnEl.dataset.turn = turn;
-    turnEl.innerHTML =
-      '<div class="trace-turn-header" onclick="this.parentElement.classList.toggle(\'collapsed\')">TURN ' + turn + ' &#9660;</div>' +
-      '<div class="trace-turn-entries"></div>';
-    sess.body.append(turnEl);
-    sess.turnEls[turn] = turnEl;
-  }
-  const entries = turnEl.querySelector('.trace-turn-entries');
-
-  // ── Build entry ──
-  const entry = document.createElement('div');
-  let cls = 'trace-entry phase-' + phase;
-  if (phase === 'tool_result' && data.success === false) cls += ' error';
-  entry.className = cls;
-
-  const ts = data.ts ? new Date(data.ts * 1000).toLocaleTimeString() : '';
-
-  let label = phase.replace(/_/g, ' ').toUpperCase();
-  let html  = '';
-
-  if (phase === 'thinking') {
-    html = escHtml(data.content || '');
-  } else if (phase === 'llm_response') {
-    const txt = (data.content || '').substring(0, 1500);
-    html = escHtml(txt) + ((data.content || '').length > 1500 ? '\n...(truncated)' : '');
-  } else if (phase === 'tool_call') {
-    label = 'TOOL CALL';
-    const argsStr = (typeof data.args === 'object') ? JSON.stringify(data.args, null, 2) : String(data.args || '');
-    html = '<span class="trace-tool-badge">' + escHtml(data.tool || '') + '</span>\n' + escHtml(argsStr);
-  } else if (phase === 'tool_result') {
-    label = data.success ? 'TOOL RESULT' : 'TOOL ERROR';
-    html = '<span class="trace-tool-badge">' + escHtml(data.tool || '') + '</span>\n' + escHtml(data.result || '');
-    if (data.success === false) stopOrb();
-  } else if (phase === 'session_abort') {
-    stopOrb();
-    resetOrb(); // Force aggressive stop on abort
-    label = 'ABORTED';
-    let reasonText = escHtml(data.reason || 'max turns exceeded');
-    if (data.details) {
-      reasonText += '<pre style="margin-top:8px;font-size:0.85em;color:var(--red);background:rgba(255,0,0,0.1);padding:8px;border-radius:4px;overflow-x:auto;">' + escHtml(data.details) + '</pre>';
-    }
-    html = reasonText;
-  } else if (phase === 'final_answer') {
-    stopOrb();
-    resetOrb(); // Force aggressive stop on final answer
-    label = 'FINAL ANSWER';
-    html = escHtml((data.content || '').substring(0, 2000));
-  } else if (phase === 'error' || data.success === false) {
-    stopOrb();
-  } else {
-    html = escHtml(JSON.stringify(data).substring(0, 500));
-  }
-
-  // Double check cleanup if error class attached
-  if (cls.includes('error')) stopOrb();
-
-  entry.innerHTML =
-    '<span class="trace-ts">' + ts + '</span>' +
-    '<div class="trace-label">' + label + '</div>' +
-    '<div class="trace-content">' + html + '</div>';
-
-  // Add expand toggle for long content
-  const contentEl = entry.querySelector('.trace-content');
-  if (contentEl && (html.length > 300 || html.includes('\n'))) {
-    const btn = document.createElement('span');
-    btn.className = 'trace-expand-btn';
-    btn.textContent = contentEl.scrollHeight > 180 ? 'show more' : '';
-    btn.onclick = function() {
-      contentEl.classList.toggle('expanded');
-      this.textContent = contentEl.classList.contains('expanded') ? 'show less' : 'show more';
-    };
-    entry.appendChild(btn);
-    // Set button text after render
-    setTimeout(() => { if (contentEl.scrollHeight > 180) btn.textContent = 'show more'; else btn.remove(); }, 50);
-  }
-
-  traceAllEntries.push({ el: entry, phase, sid, turn });
-  entries.appendChild(entry);
-  applyTraceEntryFilter(entry);
-
-  if (traceAutoScroll) scroll.scrollTop = scroll.scrollHeight;
-}
-
-function applyTraceEntryFilter(entry) {
-  const fText  = (document.getElementById('thinking-filter').value || '').toLowerCase();
-  const fPhase = document.getElementById('thinking-phase-filter').value;
-  let show = true;
-  if (fPhase && !entry.classList.contains('phase-' + fPhase)) show = false;
-  if (fText && !entry.textContent.toLowerCase().includes(fText)) show = false;
-  entry.style.display = show ? '' : 'none';
-}
-
-function filterTraces() {
-  traceAllEntries.forEach(t => applyTraceEntryFilter(t.el));
-}
-
-function clearTraces() {
-  traceAllEntries = [];
-  traceSessions   = {};
-  document.getElementById('thinking-scroll').innerHTML = '';
-  document.getElementById('thinking-turn-counter').textContent = 'Turns: 0';
-}
-
-function toggleThinkingAutoScroll() {
-  traceAutoScroll = !traceAutoScroll;
-  document.getElementById('thinking-auto-scroll-btn').textContent = 'Auto-scroll: ' + (traceAutoScroll ? 'ON' : 'OFF');
-}
-
-// ─── RESUMABLE WORKFLOWS ───────────────────────────────────────────────────
-async function loadRuns() {
-  try {
-    const r = await authFetch('/api/runs');
-    const runs = await r.json();
-    const sel = document.getElementById('runs-list');
-    sel.innerHTML = '';
-    if (!runs || !runs.length) {
-      sel.innerHTML = '<option value="">-- No runs found --</option>';
-      return;
-    }
-    runs.forEach(run => {
-      const dt = new Date(run.mtime * 1000).toLocaleString();
-      const opt = document.createElement('option');
-      opt.value = run.uuid;
-      opt.textContent = `[${dt}] Turn ${run.turn_count} - ${run.plan_preview}`;
-      sel.appendChild(opt);
-    });
-  } catch (e) {
-    console.error('Error loading runs:', e);
-  }
-}
-
-async function resumeWorkflow() {
-  const sel = document.getElementById('runs-list');
-  const uuid = sel.value;
-  if (!uuid) return;
-  if (!confirm(`Are you sure you want to resume workflow ${uuid}?`)) return;
-  
-  try {
-    const r = await authFetch(`/api/resume/${uuid}`, { method: 'POST' });
-    const data = await r.json();
-    if (data.ok) {
-      showToast('Resume triggered. Watch the traces...', 'success', 3000);
-      switchTab('thinking');
-    } else {
-      showToast(data.error || 'Failed to resume', 'error', 3000);
-    }
-  } catch (e) {
-    showToast('Error resuming workflow', 'error', 3000);
-  }
-}
-
-// ── SUBAGENTS / HIVE MIND ──────────────────────────────────────────────────
-async function refreshSubagents() {
-  try {
-    const r = await authFetch('/api/subagents');
-    const dict = await r.json();
-    if (dict.error) {
-      document.getElementById('subagents-list').innerHTML = `<div style="padding:10px;color:var(--red);font-size:0.85em;">${dict.error}</div>`;
-      return;
-    }
-    
-    const list = Object.values(dict);
-    list.sort((a,b) => b.start_time - a.start_time);
-    
-    renderSubagents(list);
-  } catch(e) { console.error('refreshSubagents error:', e); }
-}
-
-function renderSubagents(list) {
-  const container = document.getElementById('subagents-list');
-  if (!list.length) {
-    container.innerHTML = `<div style="color:var(--dim); font-size:0.85rem; text-align:center; margin-top:20px;">No active subagents.</div>`;
-    return;
-  }
-  
-  let html = '';
-  for (const s of list) {
-    const logText = (s.log_lines || []).join('\n');
-    let chainInfo = '';
-    if (s.chain_id) {
-      chainInfo = `<div style="font-size:0.75rem; color:var(--pink); margin-bottom:5px;">⛓️ Chain ${s.chain_id.substring(0,6)} - Step ${s.chain_step + 1}</div>`;
-    }
-    
-    html += `
-      <div class="subagent-card" id="subagent-${s.session_id}">
-        <div class="header">
-          <div class="sid">${s.session_id.substring(0,8)}</div>
-          <div class="status ${s.status}">${s.status}</div>
-        </div>
-        ${chainInfo}
-        <div class="task">${escHtml(s.task)}</div>
-        <div style="height:4px; background:rgba(255,255,255,0.05); border-radius:2px; margin:8px 0; overflow:hidden;">
-          <div style="width:${s.progress_percent || 0}%; height:100%; background:var(--cyan); transition:width 0.3s ease;"></div>
-        </div>
-        <div class="progress">Progress: ${escHtml(s.progress || 'Initializing...')}</div>
-        <div class="logs" id="slog-${s.session_id}">${escHtml(logText)}</div>
-        <div class="actions">
-          ${s.status === 'running' ? `<button class="btn secondary" style="padding:4px 8px; font-size:0.75rem;" onclick="cancelSubagent('${s.session_id}')">Cancel</button>` : ''}
-        </div>
-      </div>
-    `;
-  }
-  container.innerHTML = html;
-  
-  // auto-scroll logs
-  list.forEach(s => {
-    const l = document.getElementById(`slog-${s.session_id}`);
-    if (l) l.scrollTop = l.scrollHeight;
-  });
-}
-
-function updateSubagentUI(s) {
-  // If the pane isn't visible, don't spam DOM updates.
-  const pane = document.getElementById('hive-mind-pane');
-  if (pane && pane.offsetParent !== null) {
-      refreshSubagents();
-  }
-}
-
-async function cancelSubagent(id) {
-  showToast('Cancelling subagent...', 'info');
-  try {
-    await authFetch('/api/subagents/' + id, {method: 'DELETE'});
-    setTimeout(refreshSubagents, 500);
-  } catch(e) { console.error(e); }
-}
-
-// ── CHAIN BUILDER ────────────────────────────────────────────────────────
-let chainStepCount = 0;
-
-function openChainModal() {
-  document.getElementById('chain-modal').style.display = 'flex';
-  document.getElementById('chain-steps-container').innerHTML = '';
-  chainStepCount = 0;
-  addChainStep();
-}
-
-function addChainStep() {
-  chainStepCount++;
-  const div = document.createElement('div');
-  div.className = 'chain-step';
-  div.id = `chain-step-${chainStepCount}`;
-  const modelOpts = (window._subagentModels || []).map(m =>
-    `<option value="${m.id}">${m.label}</option>`
-  ).join('');
-  div.innerHTML = `
-    <div class="chain-step-remove" onclick="this.parentElement.remove()">&times;</div>
-    <div style="font-weight:bold; color:var(--cyan); margin-bottom:8px; font-size:0.85rem;">STEP <span class="step-num">${chainStepCount}</span></div>
-    <label style="display:block; font-size:0.75rem; color:var(--dim); margin-bottom:4px;">Task Definition (Prompt):</label>
-    <textarea class="step-task" rows="3" style="width:100%; padding:8px; border-radius:6px; background:var(--bg3); border:1px solid var(--border); color:var(--text); resize:vertical; font-family:var(--font); font-size:0.85rem;" placeholder="e.g. Research the latest news on..."></textarea>
-    <label style="display:block; font-size:0.75rem; color:var(--dim); margin-top:8px; margin-bottom:4px;">Model Override <span style="color:var(--dim);font-size:0.85em">(optional)</span>:</label>
-    <select class="step-model" style="width:100%; padding:6px 9px; background:var(--bg3); border:1px solid var(--border); border-radius:6px; color:var(--text); font-size:0.82rem;">
-      <option value="">— Use default —</option>
-      ${modelOpts}
-    </select>
-  `;
-  document.getElementById('chain-steps-container').appendChild(div);
-  updateStepNumbers();
-}
-
-function updateStepNumbers() {
-  const steps = document.querySelectorAll('.chain-step .step-num');
-  steps.forEach((el, idx) => el.textContent = idx + 1);
-}
-
-async function submitChain() {
-  const stepEls = document.querySelectorAll('.chain-step');
-  const steps = Array.from(stepEls).map(el => ({
-    task: el.querySelector('.step-task')?.value.trim() || '',
-    model: el.querySelector('.step-model')?.value.trim() || null,
-  })).filter(s => s.task);
-  if (!steps.length) {
-    showToast('Add at least one step with a task description.', 'error');
-    return;
-  }
-  try {
-    const res = await authFetch('/api/subagents/chain', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ steps })
-    });
-    const data = await res.json();
-    if (data.ok) {
-      document.getElementById('chain-modal').style.display = 'none';
-      showToast(`Chain spawned: ${data.chain_id}`, 'success');
-      setTimeout(refreshSubagents, 500);
-    } else {
-      showToast('Chain failed: ' + data.error, 'error');
-    }
-  } catch(e) {
-    console.error(e);
-    showToast('Error spawning chain.', 'error');
-  }
-}
-
-// ── SYSTEM NOTICE (sub-agent event bubbles in chat) ────────────────────
-function appendSystemNotice(msg) {
-  const log = document.getElementById('chat-log');
-  const sb = document.getElementById('stream-bubble');
-  const div = document.createElement('div');
-  div.className = 'msg system';
-  div.innerHTML = `<div class="bubble">${msg}</div>`;
-  log.insertBefore(div, sb);
-  if (autoScroll) div.scrollIntoView({block:'end',behavior:'smooth'});
-}
-
-// ── SUBAGENT DEFAULT MODEL SELECTOR ─────────────────────────────────────
-async function loadSubagentModels() {
-  try {
-    const [modelsRes, defaultRes] = await Promise.all([
-      authFetch('/api/subagents/models'),
-      authFetch('/api/subagents/default_model')
-    ]);
-    const models = await modelsRes.json();
-    const {model: currentModel} = await defaultRes.json();
-    window._subagentModels = models;
-    const sel = document.getElementById('subagent-default-model');
-    if (!sel) return;
-    // Clear existing options except the first (Same as main)
-    while (sel.options.length > 1) sel.remove(1);
-    for (const m of models) {
-      const opt = document.createElement('option');
-      opt.value = m.id;
-      opt.textContent = m.label;
-      sel.appendChild(opt);
-    }
-    if (currentModel) sel.value = currentModel;
-  } catch(e) { console.warn('Could not load subagent models:', e); }
-}
-
-async function saveSubagentModel() {
-  const sel = document.getElementById('subagent-default-model');
-  const model = sel ? sel.value : '';
-  try {
-    const res = await authFetch('/api/subagents/default_model', {
-      method: 'POST',
-      headers: {'Content-Type':'application/json'},
-      body: JSON.stringify({model})
-    });
-    const d = await res.json();
-    if (d.ok) showToast(model ? `Sub-agent model set: ${model}` : 'Sub-agent model reset to default', 'success');
-    else showToast('Failed to save: ' + d.error, 'error');
-  } catch(e) { showToast('Error saving model', 'error'); }
-}
-
-// ─── POWER CONTROLS ─────────────────────────────────────────────────────────
-function confirmRestart() {
-  if (!confirm('⚠️ Restart Galactic AI?\\n\\nAll active sessions will be interrupted. The system will reload and reconnect automatically.')) return;
-  showToast('🔄 Restarting Galactic AI...', 'info', 8000);
-  authFetch('/api/restart', { method: 'POST' }).catch(() => {});
-  // Poll for reconnection after a few seconds
-  setTimeout(() => {
-    const poll = setInterval(async () => {
-      try {
-        const r = await fetch('/api/status');
-        if (r.ok) { clearInterval(poll); location.reload(); }
-      } catch(_) {}
-    }, 2000);
-    // Stop polling after 60s
-    setTimeout(() => clearInterval(poll), 60000);
-  }, 3000);
-}
-
-function confirmShutdown() {
-  if (!confirm('⚠️ Shutdown Galactic AI?\\n\\nThis will stop the entire process. You will need to manually restart the application.')) return;
-  showToast('⏻ Shutting down Galactic AI...', 'warning', 10000);
-  authFetch('/api/shutdown', { method: 'POST' }).catch(() => {});
-}
-
-async function triggerUpdate(force) {
-  const msg = force 
-    ? "⚠️ Run SMART REPAIR?\\n\\nThis will re-verify all dependencies and force a re-installation of core files. Highly recommended if things are acting weird."
-    : "🚀 Run SOFTWARE UPDATE?\\n\\nThis will download the latest version from GitHub and apply it. The application will restart automatically.";
-  
-  if (!confirm(msg)) return;
-  
-  showToast(force ? '🛠️ Preparing Smart Repair...' : '🚀 Triggering Update...', 'info', 10000);
-  
-  try {
-    const res = await authFetch('/api/update', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ force: !!force })
-    });
-    const data = await res.json();
-    if (data.ok) {
-      showToast('✅ Update engine started! Check your terminal for progress. UI will disconnect shortly.', 'success', 15000);
-    } else {
-      showToast('❌ Update failed to start: ' + (data.error || 'Unknown error'), 'error', 5000);
-    }
-  } catch(e) {
-    showToast('❌ Connection error during update trigger.', 'error', 5000);
-  }
-}
-
-async function checkUpdate() {
-  const statusText = document.getElementById('update-status-text');
-  const updateBtn = document.getElementById('update-btn-status');
-  if (statusText) statusText.textContent = "Checking for updates...";
-  
-  try {
-    const res = await authFetch('/api/status'); // Re-using status to get update info if backend has it, or just a dummy check
-    // In reality, the WS broadcast 'update_available' usually handles this, 
-    // but for manual check we can ping a specific endpoint if we had one.
-    // For now, we'll just toast.
-    showToast('🔍 Checking GitHub releases...', 'info', 2000);
-    setTimeout(() => {
-        if (statusText) statusText.textContent = "Up to date (v1.6.8)";
-    }, 1500);
-  } catch(e) {}
-}
-
-function showUpdateBanner(u) {
-  const statusText = document.getElementById('update-status-text');
-  const updateBtn = document.getElementById('update-btn-status');
-  const hint = document.getElementById('update-version-hint');
-  
-  if (statusText) statusText.textContent = `New Version Available: v${u.latest}`;
-  if (hint) hint.textContent = `Current: v${u.current || '1.6.8'}`;
-  if (updateBtn) updateBtn.style.display = 'block';
-}
-
-// ─── DISPLAY SETTINGS ───────────────────────────────────────────────────────
-const DS_FS_KEY   = 'gal_fontSize';
-const DS_CRT_KEY  = 'gal_crt';
-const DS_GLOW_KEY = 'gal_glow';
-const GLOW_LABELS = ['Off', 'Medium', 'Max'];
-
-function applyFontSize(px) {
-  px = Math.min(26, Math.max(13, parseInt(px)));
-  document.documentElement.style.setProperty('--fs', px + 'px');
-  const lbl = document.getElementById('fs-label');
-  if (lbl) lbl.textContent = px + 'px';
-  const sl = document.getElementById('fs-slider');
-  if (sl) sl.value = px;
-  try { localStorage.setItem(DS_FS_KEY, px); } catch(e) {}
-}
-
-function applyCRT(on) {
-  document.body.classList.toggle('crt', !!on);
-  const tog = document.getElementById('crt-toggle');
-  if (tog) tog.checked = !!on;
-  try { localStorage.setItem(DS_CRT_KEY, on ? '1' : '0'); } catch(e) {}
-}
-
-function applyGlow(level) {
-  level = parseInt(level);
-  document.body.classList.remove('glow-off', 'glow-max');
-  if (level === 0) document.body.classList.add('glow-off');
-  else if (level === 2) document.body.classList.add('glow-max');
-  const lbl = document.getElementById('glow-label');
-  if (lbl) lbl.textContent = GLOW_LABELS[level] || 'Medium';
-  const sl = document.getElementById('glow-slider');
-  if (sl) sl.value = level;
-  try { localStorage.setItem(DS_GLOW_KEY, level); } catch(e) {}
-}
-
-function openDisplaySettings() {
-  // Sync controls to current values before showing
-  try {
-    const fs   = parseInt(localStorage.getItem(DS_FS_KEY)) || 17;
-    const crt  = localStorage.getItem(DS_CRT_KEY) === '1';
-    const glow = parseInt(localStorage.getItem(DS_GLOW_KEY) ?? '1');
-    applyFontSize(fs);
-    applyCRT(crt);
-    applyGlow(glow);
-  } catch(e) {}
-  document.getElementById('display-modal').style.display = 'flex';
-}
-
-function closeDisplaySettings() {
-  document.getElementById('display-modal').style.display = 'none';
-}
-
-function resetDisplaySettings() {
-  applyFontSize(17);
-  applyCRT(false);
-  applyGlow(1);
-}
-
-// Apply saved display settings on page load
-(function() {
-  try {
-    const fs   = localStorage.getItem(DS_FS_KEY);
-    const crt  = localStorage.getItem(DS_CRT_KEY);
-    const glow = localStorage.getItem(DS_GLOW_KEY);
-    if (fs)   applyFontSize(parseInt(fs));
-    if (crt)  applyCRT(crt === '1');
-    if (glow != null) applyGlow(parseInt(glow));
-  } catch(e) {}
-})();
-
-// Close display modal on backdrop click
-document.getElementById('display-modal').addEventListener('click', function(e) {
-  if (e.target === this) closeDisplaySettings();
-});
-
-// Real-time data: refresh current tab's data when window regains focus
-function refreshCurrentTab() {
-  const active = document.querySelector('.tab-pane.active');
-  if (!active) return;
-  const id = active.id;
-  if (id === 'tab-status') refreshStatus();
-  else if (id === 'tab-models') { loadOllamaStatus(); pmoLoad(); }
-  else if (id === 'tab-plugins') loadPlugins();
-  else if (id === 'tab-ollama') loadOllamaStatus();
-  else if (id === 'tab-logs') loadLogHistory();
-  else if (id === 'tab-memory') loadFileList();
-}
-
-document.addEventListener('visibilitychange', () => {
-  if (!document.hidden) refreshCurrentTab();
-});
-
-// Periodic refresh: keep Status and token counter current every 15s
-setInterval(() => {
-  if (!document.hidden) refreshCurrentTab();
-}, 15000);
-
-// Restore saved currency on load
-try {
-  const saved = localStorage.getItem('gal_currency');
-  if (saved) { const sel = document.getElementById('cost-currency'); if (sel) sel.value = saved; }
-} catch(e) {}
-</script>
-</body>
-</html>"""
-        return web.Response(text=html, content_type='text/html')
+        filename = file_map.get(theme, 'deck_modern.html')
+
+        filepath = os.path.join(os.path.dirname(os.path.abspath(__file__)), filename)
+        if not os.path.exists(filepath):
+            filepath = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'deck_modern.html')
+
+        if not os.path.exists(filepath):
+            return web.Response(status=500, text='Deck HTML file missing — reinstall or restore deck_modern.html')
+
+        cache = getattr(self, '_index_cache', None)
+        if cache is None:
+            cache = self._index_cache = {}
+        try:
+            mtime = os.path.getmtime(filepath)
+            hit = cache.get(filepath)
+            if hit and hit[0] == mtime:
+                return web.Response(text=hit[1], content_type='text/html')
+
+            loop = asyncio.get_running_loop()
+            def _read():
+                with open(filepath, 'r', encoding='utf-8') as f:
+                    return f.read()
+            html = await loop.run_in_executor(None, _read)
+            cache[filepath] = (mtime, html)
+            return web.Response(text=html, content_type='text/html')
+        except Exception as e:
+            return web.Response(status=500, text=f'Failed to load deck: {e}')
 
     async def handle_aliases(self, request):
         """GET /api/aliases — return config.yaml -> aliases mapping.
@@ -4688,6 +447,24 @@ try {
             status = {"healthy": False, "base_url": "unknown", "models": [], "model_count": 0}
         return web.json_response(status)
 
+    async def handle_serve_audio(self, request):
+        """GET /api/audio/{filename} - serve a generated audio from the logs directory."""
+        import mimetypes
+        filename = request.match_info.get('filename', '')
+        filename = os.path.basename(filename)
+        logs_dir = os.path.abspath(self.core.config.get('paths', {}).get('logs', './logs'))
+        path = os.path.abspath(os.path.join(logs_dir, filename))
+        
+        # Security: verify path is within logs_dir
+        if not path.startswith(logs_dir + os.sep) and path != logs_dir:
+            return web.Response(status=403, text='Forbidden')
+            
+        if not os.path.exists(path):
+            return web.Response(status=404, text='Not found')
+            
+        mt, _ = mimetypes.guess_type(path)
+        return web.FileResponse(path, headers={'Content-Type': mt or 'audio/mpeg'})
+
     async def handle_serve_video(self, request):
         """GET /api/video/{filename} — serve a generated video."""
         filename = request.match_info.get('filename', '')
@@ -4723,9 +500,10 @@ try {
         if not os.path.exists(path):
             return web.Response(status=404, text='Image not found')
         mime = mimetypes.guess_type(filename)[0] or 'image/jpeg'
-        with open(path, 'rb') as f:
-            data = f.read()
-        return web.Response(body=data, content_type=mime)
+        return web.FileResponse(path, headers={
+            'Content-Type': mime,
+            'Cache-Control': 'public, max-age=86400',
+        })
 
     async def handle_serve_image_sub(self, request):
         """GET /api/images/{subfolder}/{filename} — serve from images/<subfolder>/"""
@@ -4745,9 +523,10 @@ try {
         if not os.path.exists(candidate):
             return web.Response(status=404, text='Image not found')
         mime = mimetypes.guess_type(filename)[0] or 'application/octet-stream'
-        with open(candidate, 'rb') as f:
-            data = f.read()
-        return web.Response(body=data, content_type=mime)
+        return web.FileResponse(candidate, headers={
+            'Content-Type': mime,
+            'Cache-Control': 'public, max-age=86400',
+        })
 
     async def handle_chat(self, request):
         """POST /api/chat — send message to the AI and get response.
@@ -4812,6 +591,11 @@ try {
             else:
                 data = await request.json()
                 user_msg = data.get('message', '').strip()
+                verbose_req = data.get('verbose', None)
+                if verbose_req is not None:
+                    # Update gateway streaming verbosity config temporarily for this request
+                    self.core.gateway._current_request_verbose = bool(verbose_req)
+                
                 # Images sent as JSON: [{name, data (data URL), mime}]
                 for img in data.get('images', []):
                     data_url = img.get('data', '')
@@ -4832,9 +616,83 @@ try {
                 return web.json_response({'error': 'No message'}, status=400)
 
             # ── Command Interception ──
+            cmd_parts = user_msg.strip().split()
+            cmd_base = cmd_parts[0].lower() if cmd_parts else ""
             cmd = user_msg.strip().lower()
+            # Voice Command Interception for Personality Switch
+            import re
+            m = re.search(r"(?:change|switch|swap)(?:\s+the)?\s+(?:personality|persona|character)\s+(?:to\s+)?([a-z0-9_ -]+)[.!]*", cmd, re.IGNORECASE)
+            if m:
+                target_mode = m.group(1).strip().lower()
+                # Aliases mapping
+                if 'homer' in target_mode: target_mode = 'homer'
+                elif 'generic' in target_mode: target_mode = 'generic'
+                elif 'byte' in target_mode or 'bite' in target_mode: target_mode = 'byte'
+                else: target_mode = target_mode.replace(" ", "_")
+                
+                cfg = self.core.config
+                if 'personality' not in cfg:
+                    cfg['personality'] = {}
+                cfg['personality']['mode'] = target_mode
+                
+                try:
+                    self._save_config(cfg)
+                    from personality import GalacticPersonality
+                    self.core.gateway.personality = GalacticPersonality(
+                        cfg, cfg.get('paths', {}).get('workspace')
+                    )
+                    
+                    p_name = getattr(self.core.gateway.personality, 'display_name', self.core.gateway.personality.name)
+                    await self.core.log(f"🧠 Personality changed to {p_name} via Voice/Chat command", priority=2)
+                    
+                    return web.json_response({
+                        'response': f"Acknowledged. Personality matrix successfully swapped to {p_name}. How can I assist you?",
+                        'model': 'Command Interceptor',
+                        'tokens': {'prompt_tokens': 0, 'completion_tokens': 0, 'total_tokens': 0},
+                        'time': 0,
+                    })
+                except Exception as e:
+                    return web.json_response({'error': str(e)}, status=500)
+
+            if cmd_base in ("/help", "/commands", "/?"):
+                return web.json_response({'response': (
+                    "🛠️ **Chat commands**\n\n"
+                    "- `/help` — this list\n"
+                    "- `/context` — token usage of the active model\n"
+                    "- `/compact` — summarize & archive old history to free context\n"
+                    "- `/clear` — wipe the current conversation\n"
+                    "- `/rewind [n]` — undo the last *n* messages (default 2)\n"
+                    "- `switch personality to <name>` — hot-swap persona (e.g. byte, homer, generic)\n\n"
+                    "💡 The topbar **CTX** chip shows live context usage; the 👂 button toggles wake-word listening; "
+                    "the 🗂️ Session bar saves/switches named chats."
+                )})
+
+            if cmd_base == "/rewind":
+                n = 2
+                if len(cmd_parts) > 1:
+                    try:
+                        n = int(cmd_parts[1])
+                    except ValueError:
+                        pass
+                history = self.core.gateway.history
+                if not history:
+                    return web.json_response({'response': "⚠️ History is already empty."})
+                n = min(n, len(history))
+                new_history = history[:-n]
+                del history[-n:]
+                h_file = getattr(self.core.gateway, 'history_file', None)
+                if h_file and os.path.exists(h_file):
+                    try:
+                        with open(h_file, 'w', encoding='utf-8') as f:
+                            for msg in new_history:
+                                f.write(json.dumps(msg, ensure_ascii=False) + "\n")
+                    except Exception as e:
+                        await self.core.log(f"⚠️ Failed to overwrite chat history file: {e}", priority=1)
+                await self.core.log(f"⏪ Rewound conversation by {n} message(s).", priority=2)
+                return web.json_response({'response': f"⏪ **Rewound conversation by {n} message(s).**"})
+
             if cmd == "/clear":
-                self.core.gateway.history = []
+                self.core.gateway.history.clear()
                 # Remove the chat_history.jsonl file so it doesn't reload on refresh
                 h_file = getattr(self.core.gateway, 'history_file', None)
                 if h_file and os.path.exists(h_file):
@@ -4859,19 +717,7 @@ try {
 
             if cmd == "/context":
                 gw = self.core.gateway
-                ctx_max = 0
-                if hasattr(gw, '_get_context_window_for_model'):
-                    ctx_max = gw._get_context_window_for_model(0)
-                if not ctx_max and hasattr(self.core, 'ollama_manager') and gw.llm.provider == 'ollama':
-                    ctx_max = self.core.ollama_manager.get_context_window(gw.llm.model) or 0
-                
-                # Estimate current usage based on char count if tokens aren't fresh
-                char_count = sum(len(str(m.get('content', ''))) for m in self.core.gateway.history)
-                est_tokens = char_count // 4
-                
-                last_tokens = getattr(gw, '_last_usage', {}).get('prompt_tokens', 0) if getattr(gw, '_last_usage', None) else 0
-                usage = max(last_tokens, est_tokens)
-                
+                usage, ctx_max = self._context_usage()
                 pct = (usage / ctx_max * 100) if ctx_max > 0 else 0
                 rem = max(0, ctx_max - usage)
                 
@@ -4901,7 +747,21 @@ try {
                 await self.core.relay.emit(3, "chat_from_extension", {"data": user_msg or '(no text)'})
 
             # Non-blocking chat: if the main agent is busy, route to a quick-reply model
-            if getattr(self.core.gateway, '_speaking', False):
+            isolated = False
+            if 'multipart/form-data' not in content_type:
+                isolated = data.get('isolated', False)
+
+            if isolated:
+                try:
+                    # Execute in isolation to prevent polluting the history
+                    response = await self.core.gateway.speak_isolated(
+                        full_msg,
+                        context="You are a helpful programming assistant. Provide a brief, direct, and concise answer to this side question.",
+                        skip_planning=True
+                    )
+                except Exception as e:
+                    response = f"Error in isolated execution: {e}"
+            elif getattr(self.core.gateway, '_speaking', False):
                 busy_task = getattr(self.core.gateway, '_current_task_desc', 'a background task')
                 quick_ctx  = (
                     f"The main AI agent is currently busy working on: {busy_task}. "
@@ -4924,7 +784,11 @@ try {
             else:
                 response = await self.core.gateway.speak(full_msg)
 
-            await self.core.log(f"[Core] Byte: {response}", priority=2)
+            # Reset the temporary verbose flag
+            if hasattr(self.core.gateway, '_current_request_verbose'):
+                del self.core.gateway._current_request_verbose
+
+            await self.core.log(f"[Core] {getattr(self.core.gateway.personality, 'display_name', self.core.gateway.personality.name)}: {response}", priority=2)
 
             # Deliver any generated image inline — fix path for new images/ subfolders
             resp_data = {'response': response}
@@ -4972,6 +836,17 @@ try {
                     f"[Video Delivery] serving {fname}",
                     priority=3
                 )
+            # Audio delivery
+            voice_file = getattr(self.core.gateway, 'last_voice_file', None)
+            if voice_file and os.path.exists(voice_file):
+                fname = os.path.basename(voice_file)
+                resp_data['audio_url'] = f'/api/audio/{fname}'
+                self.core.gateway.last_voice_file = None
+                await self.core.log(
+                    f"[Voice Delivery] serving {fname}",
+                    priority=3
+                )
+
 
             return web.json_response(resp_data)
         except Exception as e:
@@ -5023,7 +898,7 @@ try {
                 'provider': gw.llm.provider,
                 'model': gw.llm.model,
                 'mode': mm.current_mode,
-                'context_used': getattr(gw, '_last_usage', {}).get('prompt_tokens', 0) if getattr(gw, '_last_usage', None) else 0,
+                'context_used': self._context_usage()[0],
                 'context_max': ctx_max,
             }
 
@@ -5056,9 +931,10 @@ try {
             # Core stats
             'uptime': uptime,
             'uptime_formatted': _fmt_uptime(uptime),
-            'version': self.core.config.get('system', {}).get('version', '0.9.2'),
+            'version': self.core.config.get('system', {}).get('version', '2.1.0'),
             'system_name': self.core.config.get('system', {}).get('name', 'Galactic AI'),
-            'personality': getattr(self.core.gateway, 'personality', None).name if getattr(self.core.gateway, 'personality', None) else self.core.config.get('personality', {}).get('name', '--'),
+            'personality': (lambda p: getattr(p, 'display_name', None) or getattr(p, 'name', '--') if p else self.core.config.get('personality', {}).get('name', '--'))(getattr(self.core.gateway, 'personality', None)),
+            'personality_mode': getattr(self.core.gateway, 'personality', None).mode if getattr(self.core.gateway, 'personality', None) else self.core.config.get('personality', {}).get('mode', 'byte'),
             'tokens_in': self.core.gateway.total_tokens_in,
             'tokens_out': self.core.gateway.total_tokens_out,
 
@@ -5068,15 +944,17 @@ try {
             'fallback_model': f"{mm.fallback_provider}/{mm.fallback_model}" if mm else '--',
             'planner_model': f"{models_cfg.get('planner_provider', 'openrouter')}/{models_cfg.get('planner_model', 'openai/gpt-5.2')}",
             'planner_fallback_model': f"{models_cfg.get('planner_fallback_provider', 'openrouter')}/{models_cfg.get('planner_fallback_model', 'openai/gpt-5.2-codex')}",
+            'summarizer_model': f"{models_cfg.get('summarizer_provider', 'ollama')}/{models_cfg.get('summarizer_model', 'qwen3.6:27b')}",
             'auto_fallback': mm.auto_fallback_enabled if mm else False,
             'smart_routing': models_cfg.get('smart_routing', False),
             'streaming': models_cfg.get('streaming', True),
             'max_turns': models_cfg.get('max_turns', 50),
             'speak_timeout': models_cfg.get('speak_timeout', 600),
+            'autonomous_coding': self.core.config.get('coding_agent', {}).get('autonomous', False),
             'thinking_level': getattr(self.core.gateway, 'thinking_level', models_cfg.get('thinking_level', 'low')),
             
             'memory': {
-                'vector_count': self.core.gateway.galactic_memory.db_conn.execute("SELECT COUNT(*) FROM episodic_memories").fetchone()[0] if getattr(self.core.gateway, 'galactic_memory', None) else 0,
+                'vector_count': self._memory_row_count(),
                 'auto_recall_enabled': any(getattr(s, 'skill_name', '') == 'conversation_auto_recall' for s in self.core.skills),
                 'indexer_progress': getattr(indexer, 'progress', 0) if indexer else 0,
                 'is_indexing': getattr(indexer, 'is_scanning', False) if indexer else False,
@@ -5120,7 +998,10 @@ try {
             'tool_count': len(self.core.gateway.tools) if hasattr(self.core, 'gateway') else 0,
 
             # Voice + update check (for Settings tab)
-            'voice': self.core.config.get('elevenlabs', {}).get('voice', 'Guy'),
+            'voice': self.core.config.get('voice_agent', {}).get('engine', 'edge-tts') if self.core.config.get('voice_agent', {}).get('engine', 'edge-tts') in ['piper', 'pyttsx3', 'gtts', 'chatterbox', 'fish-speech'] else self.core.config.get('elevenlabs', {}).get('voice', 'Guy'),
+            'reference_audio': self.core.config.get('voice_agent', {}).get('reference_audio', ''),
+            'wake_word_enabled': bool(self.core.config.get('voice_agent', {}).get('wake_word_enabled', True)),
+            'wake_word_listening': bool(getattr(self._get_voice_agent_skill(), 'listening', False)),
             'update_check_interval': self.core.config.get('system', {}).get('update_check_interval', 21600),
         })
 
@@ -5230,35 +1111,6 @@ try {
                     await self.core.model_manager._save_config()
                 except Exception:
                     pass  # Prevent file lock recursion loops
-            # Security Guard: If system is already configured, require valid JWT
-            is_setup = True
-            try:
-                import os, yaml
-                if os.path.exists("config.yaml"):
-                    with open("config.yaml", "r") as f:
-                        cfg = yaml.safe_load(f)
-                        if cfg.get("system", {}).get("password_hash"):
-                            is_setup = True
-                        else:
-                            is_setup = False
-                else:
-                    is_setup = False
-            except:
-                is_setup = True
-
-            if is_setup:
-                # Check for valid JWT
-                auth_header = request.headers.get("Authorization")
-                if not auth_header or not auth_header.startswith("Bearer "):
-                    return web.json_response({"status": "error", "message": "Unauthorized. Update requires login."}, status=401)
-                
-                token = auth_header.split(" ")[1]
-                # Assuming verify_jwt is available in the scope or imported
-                # For this change, we'll assume it's a placeholder and not add an import
-                # If it's not defined, this will cause a NameError.
-                # The user's original request implies it should be available.
-                if not self.core.verify_jwt(token): # Assuming verify_jwt is a method of self.core
-                    return web.json_response({"status": "error", "message": "Invalid session."}, status=401)
             # Check if API key is actually configured
             current_key = getattr(self.core.gateway.llm, 'api_key', '')
             if provider not in ('ollama',) and (not current_key or current_key == 'NONE'):
@@ -5314,6 +1166,8 @@ try {
             plm = data.get('planner_model', '').strip()
             plfp = data.get('planner_fallback_provider', '').strip()
             plfm = data.get('planner_fallback_model', '').strip()
+            sp = data.get('summarizer_provider', '').strip()
+            sm = data.get('summarizer_model', '').strip()
 
             if pp and pm:
                 await mm.set_primary(pp, pm)
@@ -5334,6 +1188,11 @@ try {
                 if cfg['models'].get('planner_fallback_provider') != plfp or cfg['models'].get('planner_fallback_model') != plfm:
                     cfg['models']['planner_fallback_provider'] = plfp
                     cfg['models']['planner_fallback_model'] = plfm
+                    toggle_changed = True
+            if sp and sm:
+                if cfg['models'].get('summarizer_provider') != sp or cfg['models'].get('summarizer_model') != sm:
+                    cfg['models']['summarizer_provider'] = sp
+                    cfg['models']['summarizer_model'] = sm
                     toggle_changed = True
                     
             if 'auto_fallback' in data:
@@ -5368,13 +1227,64 @@ try {
             return web.json_response({'error': 'voice is required'}, status=400)
 
         cfg = self.core.config
+        if 'voice_agent' not in cfg:
+            cfg['voice_agent'] = {}
         if 'elevenlabs' not in cfg:
             cfg['elevenlabs'] = {}
-        cfg['elevenlabs']['voice'] = voice
+            
+        local_engines = ['piper', 'pyttsx3', 'chatterbox', 'fish-speech']
+        edge_voices = ['Guy', 'Aria', 'Jenny', 'Steffan']
+        eleven_voices = ['Nova', 'Byte']
+
+        if 'reference_audio' in data:
+            cfg['voice_agent']['reference_audio'] = data['reference_audio'].strip()
+
+        if voice in local_engines:
+            cfg['voice_agent']['engine'] = voice
+            # Note: We don't change the character voice name for local engines here,
+            # as they often have fixed models or read from defaults.
+        else:
+            # It's a specific character voice
+            cfg['elevenlabs']['voice'] = voice
+            
+            if voice in edge_voices:
+                cfg['voice_agent']['engine'] = 'edge-tts'
+            elif voice in eleven_voices:
+                cfg['voice_agent']['engine'] = 'elevenlabs'
+            elif voice == 'gtts':
+                cfg['voice_agent']['engine'] = 'gtts'
+
         try:
             self._save_config(cfg)
-            await self.core.log(f"🔊 Voice set to {voice} via Settings", priority=2)
+            engine_name = cfg['voice_agent'].get('engine', 'unknown')
+            await self.core.log(f"🔊 Voice set to {voice} (Engine: {engine_name}) via Settings", priority=2)
             return web.json_response({'ok': True, 'voice': voice})
+        except Exception as e:
+            return web.json_response({'ok': False, 'error': str(e)})
+
+    async def handle_settings_personality(self, request):
+        """POST /api/settings/personality — save active personality."""
+        try:
+            data = await request.json()
+        except Exception:
+            return web.json_response({'error': 'Invalid JSON'}, status=400)
+        persona = (data.get('personality') or '').strip().lower()
+        if not persona:
+            return web.json_response({'error': 'personality is required'}, status=400)
+
+        cfg = self.core.config
+        if 'personality' not in cfg:
+            cfg['personality'] = {}
+        cfg['personality']['mode'] = persona
+        try:
+            self._save_config(cfg)
+            # Live reload personality without touching files
+            from personality import GalacticPersonality
+            self.core.gateway.personality = GalacticPersonality(
+                cfg, cfg.get('paths', {}).get('workspace')
+            )
+            await self.core.log(f"🧠 Personality changed to {persona.title()} via Settings", priority=2)
+            return web.json_response({'ok': True, 'personality': persona})
         except Exception as e:
             return web.json_response({'ok': False, 'error': str(e)})
 
@@ -5408,6 +1318,11 @@ try {
                 cfg['models']['max_turns'] = int(data['max_turns'])
             except (TypeError, ValueError):
                 pass
+
+        if 'autonomous_coding' in data:
+            if 'coding_agent' not in cfg:
+                cfg['coding_agent'] = {}
+            cfg['coding_agent']['autonomous'] = bool(data['autonomous_coding'])
 
         try:
             self._save_config(cfg)
@@ -5447,6 +1362,79 @@ try {
             return web.json_response({'ok': True, 'level': level})
         except Exception as e:
             return web.json_response({'ok': False, 'error': str(e)})
+
+    async def handle_doctor(self, request):
+        """GET /api/doctor — on-demand health check (same checks as boot preflight)."""
+        try:
+            checks = await self.core.diagnostics()
+            summary = {
+                'ok': sum(1 for c in checks if c['status'] == 'ok'),
+                'warn': sum(1 for c in checks if c['status'] == 'warn'),
+                'info': sum(1 for c in checks if c['status'] == 'info'),
+            }
+            return web.json_response({'checks': checks, 'summary': summary,
+                                      'healthy': summary['warn'] == 0})
+        except Exception as e:
+            return web.json_response({'error': str(e)}, status=500)
+
+    async def handle_config_full(self, request):
+        import config_loader
+        data = config_loader.load_config(getattr(self.core, 'config_path', None))
+        return web.json_response(data or {})
+
+    async def handle_config_update(self, request):
+        try:
+            payload = await request.json()
+            key_path = payload.get("key")
+            value = payload.get("value")
+            if not key_path:
+                return web.json_response({"error": "No key provided"}, status=400)
+            
+            import config_loader
+            cfg = config_loader.load_config(getattr(self.core, 'config_path', None)) or {}
+                
+            parts = key_path.split(".")
+            d = cfg
+            for p in parts[:-1]:
+                if p not in d or not isinstance(d[p], dict):
+                    d[p] = {}
+                d = d[p]
+                
+            existing = d.get(parts[-1])
+            if existing is not None:
+                try:
+                    if isinstance(existing, bool):
+                        if str(value).lower() in ("true", "1", "yes"): value = True
+                        elif str(value).lower() in ("false", "0", "no"): value = False
+                        else: value = bool(value)
+                    elif isinstance(existing, int):
+                        value = int(value)
+                    elif isinstance(existing, float):
+                        value = float(value)
+                except Exception:
+                    pass
+                    
+            d[parts[-1]] = value
+            self._save_config(cfg)
+            return web.json_response({"status": "success", "key": key_path, "value": value})
+        except Exception as e:
+            return web.json_response({"error": str(e)}, status=500)
+
+    async def handle_cli_sync(self, request):
+        try:
+            payload = await request.json()
+            key = payload.get("key")
+            value = payload.get("value")
+            
+            # Broadcast to CLI via websockets
+            msg = json.dumps({"type": "cli_settings_sync", "data": {"key": key, "value": value}})
+            for adapter in self.core.clients:
+                if hasattr(adapter, 'ws') and not adapter.ws.closed:
+                    asyncio.create_task(adapter.ws.send_str(msg))
+                    
+            return web.json_response({"status": "broadcasted"})
+        except Exception as e:
+            return web.json_response({"error": str(e)}, status=500)
 
     async def handle_restart(self, request):
         """POST /api/restart — restart the Galactic AI process."""
@@ -5853,19 +1841,18 @@ try {
         return web.json_response({'ok': True, 'max_tokens': cfg['models'].get('max_tokens', 0), 'context_window': cfg['models'].get('context_window', 0)})
 
     def _save_config(self, cfg):
-        """Safely merge in-memory config into config.yaml (read-modify-write).
-        
+        """Safely merge in-memory config into config.local.yaml (read-modify-write).
+
         Uses deep_merge_safe to prevent memory placeholders from erasing disk values.
+        All writes land in the gitignored overlay — the tracked config.yaml
+        template is never modified.
         """
-        import yaml
+        import config_loader
         cfg_path = getattr(self.core, 'config_path', None)
-        if not cfg_path:
-            cfg_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'config.yaml')
-            
-        # 1. Read existing config from disk to preserve all keys
+
+        # 1. Read existing merged config (template + overlay) to preserve all keys
         try:
-            with open(cfg_path, 'r', encoding='utf-8') as f:
-                on_disk = yaml.safe_load(f) or {}
+            on_disk = config_loader.load_config(cfg_path)
         except Exception:
             on_disk = {}
 
@@ -5890,8 +1877,10 @@ try {
                     is_placeholder = isinstance(value, str) and (
                         value in PLACEHOLDERS or value.startswith("YOUR_") or "API_KEY" in value.upper()
                     )
-                    has_real_value = key in destination and destination[key] and destination[key] not in PLACEHOLDERS
                     
+                    has_real_value = key in destination and destination[key]
+                    if has_real_value and isinstance(destination[key], str) and destination[key] in PLACEHOLDERS:
+                        has_real_value = False
                     if is_placeholder and has_real_value:
                         continue # Keep the real value on disk
                     destination[key] = value
@@ -5918,9 +1907,8 @@ try {
                 'fallback_model': mm.fallback_model
             })
 
-        # 5. Write back safely
-        with open(cfg_path, 'w', encoding='utf-8') as f:
-            yaml.dump(on_disk, f, default_flow_style=False, allow_unicode=True, sort_keys=False)
+        # 5. Write back safely — to the overlay only
+        config_loader.save_config(on_disk, cfg_path)
 
     async def handle_get_model_overrides(self, request):
         """GET /api/model_overrides — return all per-model overrides."""
@@ -5981,7 +1969,10 @@ try {
     async def handle_chrome_bridge_ws(self, request):
         """WebSocket endpoint for the Galactic Browser Chrome extension."""
         ws = web.WebSocketResponse(heartbeat=30)
-        await ws.prepare(request)
+        try:
+            await ws.prepare(request)
+        except Exception:
+            return ws
 
         token = request.query.get('token')
         # Accept either legacy password hash or JWT token
@@ -6054,7 +2045,10 @@ try {
     async def handle_terminal_ws(self, request):
         """WebSocket endpoint for the Virtual Gemini Terminal."""
         ws = web.WebSocketResponse(heartbeat=30)
-        await ws.prepare(request)
+        try:
+            await ws.prepare(request)
+        except Exception:
+            return ws
 
         # Auth check
         token = request.query.get('token')
@@ -6160,7 +2154,10 @@ try {
 
     async def handle_stream(self, request):
         ws = web.WebSocketResponse()
-        await ws.prepare(request)
+        try:
+            await ws.prepare(request)
+        except Exception:
+            return ws
 
         # Local connections (127.0.0.1, ::1) bypass token auth — matches
         # the middleware pattern in remote_access.py so the Chrome extension
@@ -6182,11 +2179,41 @@ try {
 
         web_deck = self
         class WebAdapter:
+            MAX_QUEUE = 500          # frames; token chunks are small, 500 ≈ seconds of stream
+            OVERFLOW_STRIKES = 3     # consecutive overflows before we give up on the client
+
             def __init__(self, ws):
                 self.ws = ws
+                self._send_queue = asyncio.Queue(maxsize=self.MAX_QUEUE)
+                self._overflows = 0
+                self._send_task = asyncio.create_task(self._send_loop())
+
+            async def _send_loop(self):
+                while not self.ws.closed:
+                    try:
+                        msg = await self._send_queue.get()
+                        if msg is None: break
+                        await self.ws.send_str(msg)
+                        self._send_queue.task_done()
+                    except Exception:
+                        break
+
             def write(self, data):
                 decoded = data.decode()
-                asyncio.create_task(self.ws.send_str(decoded))
+                try:
+                    self._send_queue.put_nowait(decoded)
+                    self._overflows = 0
+                except asyncio.QueueFull:
+                    # Slow/wedged client: drop the oldest frame to make room so
+                    # the newest state wins. Repeated overflow = dead client.
+                    self._overflows += 1
+                    try:
+                        self._send_queue.get_nowait()
+                        self._send_queue.put_nowait(decoded)
+                    except Exception:
+                        pass
+                    if self._overflows >= self.OVERFLOW_STRIKES * self.MAX_QUEUE:
+                        asyncio.ensure_future(self.ws.close(code=1011))
                 try:
                     msg = json.loads(decoded.strip())
                     if msg.get('type') == 'agent_trace' and msg.get('data'):
@@ -6209,6 +2236,7 @@ try {
                         "sniper": next((p.enabled for p in self.core.plugins if "Sniper" in p.name), False),
                         "watchdog": next((p.enabled for p in self.core.plugins if "Watchdog" in p.name), False)
                     }
+                    _ctx_used, _ctx_max = self._context_usage()
                     telemetry = {
                         "type": "telemetry",
                         "data": {
@@ -6217,6 +2245,8 @@ try {
                             "tin": self.core.gateway.total_tokens_in,
                             "tout": self.core.gateway.total_tokens_out,
                             "uptime": uptime,
+                            "ctx_used": _ctx_used,
+                            "ctx_max": _ctx_max,
                             "plugins": plugins_status
                         }
                     }
@@ -6241,7 +2271,7 @@ try {
                     if payload.get('type') == 'chat':
                         response = await self.core.gateway.speak(payload['data'])
                         await self.core.log(f"[Web] User: {payload['data']}", priority=3)
-                        await self.core.log(f"[Core] Byte: {response}", priority=3)
+                        await self.core.log(f"[Core] {getattr(self.core.gateway.personality, 'display_name', self.core.gateway.personality.name)}: {response}", priority=3)
                     elif payload.get('type') == 'switch_model':
                         prov = payload['provider']
                         mod = payload['model']
@@ -6284,6 +2314,7 @@ try {
                     break
         finally:
             update_task.cancel()
+            adapter._send_task.cancel()
             self.core.clients.remove(adapter)
             
         return ws
@@ -6308,6 +2339,149 @@ try {
             return web.json_response({'messages': entries})
         except Exception as e:
             return web.json_response({'messages': [], 'error': str(e)})
+
+    async def handle_history_load(self, request):
+        """POST /api/history/load - overwrite the current session history with provided data."""
+        try:
+            import json as _json
+            data = await request.json()
+            history = data.get('history', [])
+            
+            # Overwrite memory history array
+            self.core.gateway.history = history
+            
+            # Overwrite history file on disk
+            history_file = getattr(self.core.gateway, 'history_file', '')
+            if history_file:
+                with open(history_file, 'w', encoding='utf-8') as f:
+                    for msg in history:
+                        f.write(_json.dumps(msg, ensure_ascii=False) + '\n')
+                        
+            await self.core.log(f"Session context synced from CLI load ({len(history)} messages).", priority=2)
+            return web.json_response({'ok': True})
+        except Exception as e:
+            return web.json_response({'ok': False, 'error': str(e)}, status=500)
+
+    # ── Named chat sessions ─────────────────────────────────────────────────────
+
+    def _sessions_dir(self):
+        logs = self.core.config.get('paths', {}).get('logs', './logs')
+        d = os.path.join(logs, 'sessions')
+        os.makedirs(d, exist_ok=True)
+        return d
+
+    @staticmethod
+    def _safe_session_name(name):
+        import re
+        n = re.sub(r'[^A-Za-z0-9 _\-]+', '', (name or '').strip())
+        return n[:60].strip()
+
+    async def handle_sessions_list(self, request):
+        """GET /api/sessions — list saved sessions with message count + mtime."""
+        import json as _json
+        d = self._sessions_dir()
+        out = []
+        try:
+            for fn in os.listdir(d):
+                if not fn.endswith('.jsonl'):
+                    continue
+                path = os.path.join(d, fn)
+                try:
+                    with open(path, 'r', encoding='utf-8') as f:
+                        count = sum(1 for line in f if line.strip())
+                except Exception:
+                    count = 0
+                out.append({
+                    'name': fn[:-6],
+                    'messages': count,
+                    'updated': int(os.path.getmtime(path)),
+                })
+            out.sort(key=lambda s: s['updated'], reverse=True)
+        except Exception as e:
+            return web.json_response({'sessions': [], 'error': str(e)})
+        return web.json_response({'sessions': out})
+
+    async def handle_session_save(self, request):
+        """POST /api/sessions/save — {name} — snapshot the current chat to a named session."""
+        try:
+            data = await request.json()
+        except Exception:
+            return web.json_response({'error': 'Invalid JSON'}, status=400)
+        name = self._safe_session_name(data.get('name'))
+        if not name:
+            return web.json_response({'error': 'A valid session name is required'}, status=400)
+        import json as _json
+        dest = os.path.join(self._sessions_dir(), name + '.jsonl')
+        history_file = getattr(self.core.gateway, 'history_file', '')
+        try:
+            if history_file and os.path.exists(history_file):
+                import shutil
+                shutil.copyfile(history_file, dest)
+            else:
+                # Fall back to the in-memory history
+                with open(dest, 'w', encoding='utf-8') as f:
+                    for msg in (self.core.gateway.history or []):
+                        f.write(_json.dumps(msg, ensure_ascii=False) + '\n')
+            with open(dest, 'r', encoding='utf-8') as f:
+                count = sum(1 for line in f if line.strip())
+            await self.core.log(f"💾 Chat session saved: '{name}' ({count} messages)", priority=2)
+            return web.json_response({'ok': True, 'name': name, 'messages': count})
+        except Exception as e:
+            return web.json_response({'ok': False, 'error': str(e)}, status=500)
+
+    async def handle_session_switch(self, request):
+        """POST /api/sessions/switch — {name} — load a saved session as the live chat."""
+        try:
+            data = await request.json()
+        except Exception:
+            return web.json_response({'error': 'Invalid JSON'}, status=400)
+        name = self._safe_session_name(data.get('name'))
+        src = os.path.join(self._sessions_dir(), name + '.jsonl')
+        if not name or not os.path.exists(src):
+            return web.json_response({'error': 'Session not found'}, status=404)
+        import json as _json
+        try:
+            entries = []
+            with open(src, 'r', encoding='utf-8') as f:
+                for line in f:
+                    line = line.strip()
+                    if not line:
+                        continue
+                    try:
+                        entries.append(_json.loads(line))
+                    except Exception:
+                        pass
+            # Rebuild the gateway's in-memory context (role/content only, recent tail)
+            norm = [{'role': e['role'], 'content': e['content']}
+                    for e in entries if e.get('role') and e.get('content') is not None]
+            self.core.gateway.history = norm[-20:]
+            # Make it the persistent live history so a restart restores it too.
+            history_file = getattr(self.core.gateway, 'history_file', '')
+            if history_file:
+                with open(history_file, 'w', encoding='utf-8') as f:
+                    for e in entries:
+                        f.write(_json.dumps(e, ensure_ascii=False) + '\n')
+            await self.core.log(f"🔀 Switched to chat session '{name}' ({len(norm)} messages).", priority=2)
+            return web.json_response({'ok': True, 'name': name, 'messages': entries})
+        except Exception as e:
+            return web.json_response({'ok': False, 'error': str(e)}, status=500)
+
+    async def handle_session_delete(self, request):
+        """POST /api/sessions/delete — {name} — remove a saved session file."""
+        try:
+            data = await request.json()
+        except Exception:
+            return web.json_response({'error': 'Invalid JSON'}, status=400)
+        name = self._safe_session_name(data.get('name'))
+        src = os.path.join(self._sessions_dir(), name + '.jsonl')
+        if not name or not os.path.exists(src):
+            return web.json_response({'error': 'Session not found'}, status=404)
+        try:
+            os.remove(src)
+            await self.core.log(f"🗑️ Deleted chat session '{name}'.", priority=2)
+            return web.json_response({'ok': True})
+        except Exception as e:
+            return web.json_response({'ok': False, 'error': str(e)}, status=500)
 
     async def handle_logs(self, request):
         """GET /api/logs — return last N log lines for UI restore on page refresh.
@@ -6349,23 +2523,56 @@ try {
         return web.json_response({'traces': self.trace_buffer[-500:]})
 
     async def handle_list_files(self, request):
-        """List workspace files — auto-creates missing .md files with starter templates."""
+        """List workspace files — auto-creates missing .md files with starter templates and personality scoping."""
         try:
             workspace = self.core.config.get('paths', {}).get('workspace', '')
             if not workspace:
                 workspace = os.path.join(os.path.dirname(os.path.abspath(__file__)), '..')
+            os.makedirs(workspace, exist_ok=True)
+            mode = self.core.config.get('personality', {}).get('mode', 'byte')
 
             # Auto-create missing .md files with defaults
             DEFAULTS = {
-                'USER.md': '# User Profile\n\nTell your AI about yourself here.\n',
                 'MEMORY.md': '# Memory\n\nThe AI will store important things here.\n',
                 'IDENTITY.md': '# Identity\n\nDefine who your AI is here.\n',
                 'SOUL.md': '# Soul\n\nDefine your AI\'s core values and personality here.\n',
+            }
+
+            GLOBAL_DEFAULTS = {
+                'USER.md': '# User Profile\n\nTell your AI about yourself here.\n',
                 'TOOLS.md': '# Tools\n\nNotes about available tools and workflows.\n',
                 'VAULT.md': '# VAULT — Personal Credentials & Private Data\n\nStore login credentials, API keys, and personal info here.\nThe AI loads this file into every prompt for automation tasks.\n**Never share this file publicly.**\n',
             }
-            os.makedirs(workspace, exist_ok=True)
+
+            active_files = []
+            
             for fname, default_content in DEFAULTS.items():
+                base, ext = os.path.splitext(fname)
+                mode_fname = f"{base}_{mode}{ext}"
+                
+                fpath_mode = os.path.join(workspace, mode_fname)
+                fpath_generic = os.path.join(workspace, fname)
+                
+                if os.path.exists(fpath_mode):
+                    active_files.append(mode_fname)
+                else:
+                    # Auto-create mode file by cloning generic file or using default
+                    content_to_write = default_content
+                    if os.path.exists(fpath_generic):
+                        try:
+                            with open(fpath_generic, 'r', encoding='utf-8') as gf:
+                                content_to_write = gf.read()
+                        except Exception:
+                            pass
+                    try:
+                        with open(fpath_mode, 'w', encoding='utf-8') as f:
+                            f.write(content_to_write)
+                        active_files.append(mode_fname)
+                    except Exception:
+                        active_files.append(fname)
+
+            # Global files that shouldn't be duplicated per-personality
+            for fname, default_content in GLOBAL_DEFAULTS.items():
                 fpath = os.path.join(workspace, fname)
                 if not os.path.exists(fpath):
                     try:
@@ -6373,10 +2580,14 @@ try {
                             f.write(default_content)
                     except Exception:
                         pass
+                active_files.append(fname)
+                
+            if os.path.exists(os.path.join(workspace, 'HEARTBEAT.md')):
+                active_files.append('HEARTBEAT.md')
 
             files = []
             workspace_abs = os.path.abspath(workspace)
-            for f in ['MEMORY.md', 'USER.md', 'SOUL.md', 'IDENTITY.md', 'TOOLS.md', 'VAULT.md', 'HEARTBEAT.md']:
+            for f in active_files:
                 path = os.path.abspath(os.path.join(workspace_abs, f))
                 # Security: verify path is within workspace
                 if not path.startswith(workspace_abs + os.sep) and path != workspace_abs:
@@ -6444,7 +2655,241 @@ try {
         await self.core.log(f"File saved via Web Deck: {filename}", priority=2)
         return web.json_response({'success': True})
 
+    # ── Executable Smart Artifacts ─────────────────────────────────────────────
+
+    async def handle_artifact_run(self, request):
+        """POST /api/artifact/run — execute code from a Smart Artifact card.
+        Accepts {code: str, language: str}. Returns {output: str, exit_code: int}.
+        """
+        try:
+            data = await request.json()
+            code = data.get('code', '').strip()
+            language = data.get('language', 'python').lower()
+            if not code:
+                return web.json_response({'error': 'No code provided', 'exit_code': 1}, status=400)
+
+            await self.core.log(f"[Artifact Run] Executing {language} code ({len(code)} chars)...", priority=2)
+
+            if language == 'python':
+                result = await self.core.gateway.tool_execute_python({'code': code, 'timeout': 60})
+            elif language in ('powershell', 'shell', 'bash', 'cmd', 'sh'):
+                # Find the shell executor skill
+                shell_skill = next((s for s in self.core.skills if getattr(s, 'skill_name', '') == 'shell_executor'), None)
+                if shell_skill:
+                    result = await shell_skill.execute(code, timeout=60)
+                else:
+                    result = await self.core.gateway.tool_execute_python({
+                        'code': f'import subprocess; r = subprocess.run({repr(code)}, shell=True, capture_output=True, text=True, timeout=60); print(r.stdout); print(r.stderr)',
+                        'timeout': 65
+                    })
+            else:
+                return web.json_response({'error': f'Unsupported language: {language}', 'exit_code': 1}, status=400)
+
+            # Parse exit code from result if present
+            exit_code = 0
+            result_str = str(result)
+            if 'EXIT CODE:' in result_str:
+                import re
+                m = re.search(r'EXIT CODE:\s*(\d+)', result_str)
+                if m: exit_code = int(m.group(1))
+            elif '[ERROR]' in result_str or '[Timeout]' in result_str:
+                exit_code = 1
+
+            await self.core.log(f"[Artifact Run] Done (exit={exit_code})", priority=2)
+            return web.json_response({'output': result_str, 'exit_code': exit_code})
+
+        except Exception as e:
+            return web.json_response({'error': str(e), 'exit_code': 1}, status=500)
+
+    # ── Memory API Endpoints (CLI /recall + /compact) ───────────────────────────
+
+    async def handle_memory_search(self, request):
+        """POST /api/memory/search — {query, top_k} → [{score, content, category}]"""
+        try:
+            data = await request.json()
+        except Exception:
+            return web.json_response({'error': 'Invalid JSON'}, status=400)
+        query = (data.get('query') or '').strip()
+        if not query:
+            return web.json_response({'error': 'query is required'}, status=400)
+        top_k = max(1, min(int(data.get('top_k') or 5), 25))
+        memory = getattr(self.core, 'memory', None)
+        if not memory:
+            return web.json_response({'error': 'Memory system unavailable'}, status=503)
+        try:
+            hits = await memory.query_memory(query, n_results=top_k) or []
+            results = []
+            for h in hits:
+                dist = h.get('distance')
+                score = round(1.0 - dist, 3) if isinstance(dist, (int, float)) else None
+                results.append({
+                    'score': score,
+                    'content': h.get('content', ''),
+                    'category': (h.get('metadata') or {}).get('category', ''),
+                })
+            return web.json_response(results)
+        except Exception as e:
+            return web.json_response({'error': str(e)}, status=500)
+
+    async def handle_memory_list(self, request):
+        """GET /api/memory/list?limit=&category= — recent memories (with vector_id)."""
+        memory = getattr(self.core, 'memory', None)
+        if not memory:
+            return web.json_response({'error': 'Memory system unavailable'}, status=503)
+        try:
+            limit = max(1, min(int(request.query.get('limit', 50)), 200))
+        except (TypeError, ValueError):
+            limit = 50
+        category = request.query.get('category') or None
+        try:
+            items = await memory.list_memories(limit=limit, category=category)
+            return web.json_response({'items': items, 'count': len(items)})
+        except Exception as e:
+            return web.json_response({'error': str(e)}, status=500)
+
+    async def handle_memory_stats(self, request):
+        """GET /api/memory/stats — per-category counts."""
+        memory = getattr(self.core, 'memory', None)
+        if not memory:
+            return web.json_response({'error': 'Memory system unavailable'}, status=503)
+        try:
+            counts = await memory.category_counts()
+            return web.json_response({'categories': counts, 'total': sum(counts.values())})
+        except Exception as e:
+            return web.json_response({'error': str(e)}, status=500)
+
+    async def handle_memory_delete(self, request):
+        """POST /api/memory/delete — {vector_id} — remove one memory."""
+        memory = getattr(self.core, 'memory', None)
+        if not memory:
+            return web.json_response({'error': 'Memory system unavailable'}, status=503)
+        try:
+            data = await request.json()
+        except Exception:
+            return web.json_response({'error': 'Invalid JSON'}, status=400)
+        vector_id = (data.get('vector_id') or '').strip()
+        if not vector_id:
+            return web.json_response({'error': 'vector_id is required'}, status=400)
+        try:
+            ok = await memory.delete_memory(vector_id)
+            if ok:
+                await self.core.log(f"🗑️ Memory deleted via Control Deck ({vector_id[:8]}…)", priority=2)
+            return web.json_response({'ok': ok})
+        except Exception as e:
+            return web.json_response({'error': str(e)}, status=500)
+
+    async def handle_memory_compact(self, request):
+        """POST /api/memory/compact — manually compact the main chat history."""
+        try:
+            gw = self.core.gateway
+            history = gw.history
+            before_msgs = len(history)
+            before_chars = sum(len(str(m.get('content', ''))) for m in history)
+            if before_msgs <= 4:
+                return web.json_response({'ok': True, 'message': 'History too small to compact',
+                                          'messages': before_msgs, 'chars': before_chars})
+            target = max(4000, before_chars // 2)
+            compacted = await gw._compact_history(list(history), target)
+            history.clear()
+            history.extend(compacted)
+            after_chars = sum(len(str(m.get('content', ''))) for m in history)
+            await self.core.log(
+                f"🧼 Manual compaction: {before_msgs}→{len(history)} messages, "
+                f"{before_chars}→{after_chars} chars", priority=2)
+            return web.json_response({'ok': True, 'messages_before': before_msgs,
+                                      'messages_after': len(history),
+                                      'chars_before': before_chars, 'chars_after': after_chars})
+        except Exception as e:
+            return web.json_response({'error': str(e)}, status=500)
+
     # ── Voice API Endpoints ─────────────────────────────────────────────────────
+
+    async def handle_voice_stop(self, request):
+        """POST /api/voice/stop — stops TTS playback if active."""
+        try:
+            for s in self.core.skills:
+                if s.skill_name == 'voice_agent' and getattr(s, 'enabled', False):
+                    s._abort_speaking = True
+                    return web.json_response({'ok': True, 'message': 'TTS playback stopped'})
+            return web.json_response({'ok': False, 'message': 'Voice Agent skill not loaded/enabled'})
+        except Exception as e:
+            return web.json_response({'error': str(e)}, status=500)
+
+    def _get_voice_agent_skill(self):
+        return next((s for s in self.core.skills if getattr(s, 'skill_name', '') == 'voice_agent'), None)
+
+    def _memory_row_count(self):
+        """Total stored memories. Works with the semantic engine (SQLite) and
+        the Lite keyword engine (no db_conn)."""
+        mem = getattr(self.core.gateway, 'galactic_memory', None) or getattr(self.core, 'memory', None)
+        if not mem:
+            return 0
+        try:
+            conn = getattr(mem, 'db_conn', None)
+            if conn is not None:
+                return conn.execute("SELECT COUNT(*) FROM episodic_memories").fetchone()[0]
+            return len(getattr(mem, '_rows', []) or [])
+        except Exception:
+            return 0
+
+    def _context_usage(self):
+        """(used_tokens, max_tokens) for the active model. Prefers real token
+        counts from the last LLM call; falls back to a chars/4 estimate of the
+        in-memory history so the meter is never stuck at 0."""
+        gw = self.core.gateway
+        ctx_max = 0
+        try:
+            if hasattr(gw, '_get_context_window_for_model'):
+                ctx_max = gw._get_context_window_for_model(0) or 0
+            if not ctx_max and hasattr(self.core, 'ollama_manager') and gw.llm.provider == 'ollama':
+                ctx_max = self.core.ollama_manager.get_context_window(gw.llm.model) or 0
+        except Exception:
+            ctx_max = 0
+        try:
+            char_count = sum(len(str(m.get('content', ''))) for m in (gw.history or []))
+        except Exception:
+            char_count = 0
+        est_tokens = char_count // 4
+        last = getattr(gw, '_last_usage', None) or {}
+        usage = max(int(last.get('prompt_tokens') or 0), est_tokens)
+        return usage, int(ctx_max or 0)
+
+    async def handle_wakeword_get(self, request):
+        """GET /api/voice/wakeword — current state of always-on wake-word listening."""
+        skill = self._get_voice_agent_skill()
+        return web.json_response({
+            'enabled': bool(self.core.config.get('voice_agent', {}).get('wake_word_enabled', True)),
+            'listening': bool(getattr(skill, 'listening', False)),
+            'available': skill is not None,
+        })
+
+    async def handle_wakeword_set(self, request):
+        """POST /api/voice/wakeword — {enabled: bool} — turn the always-on
+        wake-word mic on/off. Persists to config.yaml and starts/stops the
+        listener live (no restart needed)."""
+        try:
+            data = await request.json()
+        except Exception:
+            return web.json_response({'error': 'Invalid JSON'}, status=400)
+        enabled = bool(data.get('enabled'))
+
+        cfg = self.core.config
+        cfg.setdefault('voice_agent', {})['wake_word_enabled'] = enabled
+        try:
+            self._save_config(cfg)
+        except Exception as e:
+            return web.json_response({'ok': False, 'error': f'Config save failed: {e}'}, status=500)
+
+        skill = self._get_voice_agent_skill()
+        if skill:
+            if enabled and not skill.listening:
+                asyncio.create_task(skill.run())
+            elif not enabled and skill.listening:
+                skill.stop()
+        await self.core.log(
+            f"{'👂 Wake-word listening ENABLED — mic is live' if enabled else '🙉 Wake-word listening DISABLED — mic released'} (via Control Deck)",
+            priority=2)
+        return web.json_response({'ok': True, 'enabled': enabled, 'available': skill is not None})
 
     async def handle_tts(self, request):
         """POST /api/tts — text-to-speech via server-side engines. Returns MP3 audio."""
@@ -6460,14 +2905,17 @@ try {
             result = await self.core.gateway.tool_text_to_speech({'text': text, 'voice': voice})
             if '[VOICE]' in str(result):
                 import re
-                m = re.search(r'Generated speech.*?:\s*(.+\.mp3)', str(result))
+                m = re.search(r'Generated speech.*?:\s*(.+\.(?:mp3|wav))', str(result))
                 if m:
                     audio_path = m.group(1).strip()
                     if os.path.exists(audio_path):
                         with open(audio_path, 'rb') as f:
                             audio_data = f.read()
-                        return web.Response(body=audio_data, content_type='audio/mpeg',
-                                           headers={'Content-Disposition': 'inline; filename="tts.mp3"'})
+                        is_wav = audio_path.lower().endswith('.wav')
+                        ctype = 'audio/wav' if is_wav else 'audio/mpeg'
+                        fname = 'tts.wav' if is_wav else 'tts.mp3'
+                        return web.Response(body=audio_data, content_type=ctype,
+                                           headers={'Content-Disposition': f'inline; filename="{fname}"'})
             return web.json_response({'error': 'TTS generation failed', 'detail': str(result)}, status=500)
         except Exception as e:
             return web.json_response({'error': str(e)}, status=500)
@@ -6497,21 +2945,37 @@ try {
                 f.write(audio_data)
 
             transcription = None
+            error_msg = 'no Whisper API key configured'
             try:
+                # Local-first: faster-whisper keeps audio on this machine.
+                _va_cfg = self.core.config.get('voice_agent', {})
+                if _va_cfg.get('local_stt', True):
+                    try:
+                        import local_stt
+                        local_stt.configure(_va_cfg.get('stt_model'))
+                        local_text = await asyncio.to_thread(local_stt.transcribe_path, temp_path)
+                        if local_text:
+                            transcription = local_text
+                            error_msg = None
+                    except Exception as e:
+                        error_msg = f'Local STT error: {e}'
+
                 # Try OpenAI Whisper
                 openai_key = self.core.config.get('providers', {}).get('openai', {}).get('apiKey', '')
-                if openai_key:
+                if not transcription and openai_key:
                     import httpx
                     async with httpx.AsyncClient(timeout=30) as client:
                         with open(temp_path, 'rb') as af:
                             resp = await client.post(
                                 'https://api.openai.com/v1/audio/transcriptions',
-                                headers={'Authorization': f'Bearer {openai_key}'},
+                                headers={'Authorization': f'Bearer {openai_key}', 'User-Agent': 'Mozilla/5.0'},
                                 files={'file': (filename, af, 'audio/wav')},
                                 data={'model': 'whisper-1'}
                             )
                         if resp.status_code == 200:
                             transcription = resp.json().get('text', '')
+                        else:
+                            error_msg = f'OpenAI Error: {resp.status_code} {resp.text}'
                 # Fallback: Groq Whisper
                 if not transcription:
                     groq_key = self.core.config.get('providers', {}).get('groq', {}).get('apiKey', '')
@@ -6521,12 +2985,34 @@ try {
                             with open(temp_path, 'rb') as af:
                                 resp = await client.post(
                                     'https://api.groq.com/openai/v1/audio/transcriptions',
-                                    headers={'Authorization': f'Bearer {groq_key}'},
+                                    headers={'Authorization': f'Bearer {groq_key}', 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)'},
                                     files={'file': (filename, af, 'audio/wav')},
                                     data={'model': 'whisper-large-v3'}
                                 )
                             if resp.status_code == 200:
                                 transcription = resp.json().get('text', '')
+                            else:
+                                error_msg = f'Groq Error: {resp.status_code} {resp.text}'
+                                
+                # Fallback: Local Whisper
+                if not transcription:
+                    try:
+                        import whisper
+                        if not hasattr(self.core, '_local_whisper_model'):
+                            await self.core.log("Loading local Whisper model ('base') for STT... This will take a few seconds on first run.", priority=1)
+                            # Load synchronously for the first time
+                            self.core._local_whisper_model = whisper.load_model('base')
+                            
+                        def run_whisper():
+                            return self.core._local_whisper_model.transcribe(temp_path)
+                            
+                        result = await asyncio.to_thread(run_whisper)
+                        transcription = result.get('text', '').strip()
+                        error_msg = None
+                    except ImportError:
+                        pass
+                    except Exception as e:
+                        error_msg += f" (Local Whisper error: {e})"
             finally:
                 try:
                     os.remove(temp_path)
@@ -6535,7 +3021,8 @@ try {
 
             if transcription:
                 return web.json_response({'text': transcription})
-            return web.json_response({'error': 'Transcription failed — no Whisper API key configured'}, status=500)
+            return web.json_response({'error': f'Transcription failed — {error_msg}'}, status=500)
+
         except Exception as e:
             return web.json_response({'error': str(e)}, status=500)
 
@@ -6549,6 +3036,23 @@ try {
             except Exception:
                 pass
 
+    async def _start_site(self, site):
+        """Start the TCP site with a human-readable failure instead of a
+        stack trace when the port is already taken (usually a second
+        Galactic AI instance)."""
+        try:
+            await site.start()
+            return True
+        except OSError as e:
+            if getattr(e, 'errno', None) in (48, 98, 10048) or 'address' in str(e).lower():
+                await self.core.log(
+                    f"❌ Control Deck port {self.port} is already in use — another Galactic AI "
+                    f"instance (or app) is listening there. Close it and restart, or change "
+                    f"web.port in config.local.yaml. Core keeps running (Telegram/CLI still work).",
+                    priority=1)
+                return False
+            raise
+
     async def run(self):
         runner = web.AppRunner(self.app, access_log=None)
         self._runner = runner  # Store for cleanup on shutdown
@@ -6561,7 +3065,8 @@ try {
             # so we skip it for LAN use. Auth is handled by JWT + password.
 
             site = web.TCPSite(runner, '0.0.0.0', self.port, ssl_context=None)
-            await site.start()
+            if not await self._start_site(site):
+                return
 
             # Detect LAN IP for the log message
             try:
@@ -6579,4 +3084,7 @@ try {
             )
         else:
             site = web.TCPSite(runner, self.host, self.port)
-            await site.start()
+            if not await self._start_site(site):
+                return
+
+

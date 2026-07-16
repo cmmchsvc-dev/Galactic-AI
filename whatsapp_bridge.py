@@ -79,7 +79,7 @@ class WhatsAppBridge:
             return False
         try:
             _, sig = signature_header.split('=', 1)
-            expected = hmac.new(
+            expected = hmac.HMAC(
                 self.webhook_secret.encode('utf-8'),
                 body,
                 hashlib.sha256
@@ -707,7 +707,7 @@ class WhatsAppBridge:
                     with open(audio_path, 'rb') as f:
                         r = await client.post(
                             'https://api.openai.com/v1/audio/transcriptions',
-                            headers={'Authorization': f'Bearer {openai_key}'},
+                            headers={'Authorization': f'Bearer {openai_key}', 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)'},
                             files={'file': (os.path.basename(audio_path), f, 'audio/ogg')},
                             data={'model': 'whisper-1'}
                         )
@@ -727,17 +727,37 @@ class WhatsAppBridge:
                     with open(audio_path, 'rb') as f:
                         r = await client.post(
                             'https://api.groq.com/openai/v1/audio/transcriptions',
-                            headers={'Authorization': f'Bearer {groq_key}'},
+                            headers={'Authorization': f'Bearer {groq_key}', 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)'},
                             files={'file': (os.path.basename(audio_path), f, 'audio/ogg')},
                             data={'model': 'whisper-large-v3'}
                         )
                     if r.status_code == 200:
-                        text = r.json().get('text', '').strip()
-                        if text:
-                            await self._log(f"[WhatsApp STT] Groq Whisper: {text[:80]}...", priority=2)
-                            return text
+                        transcription = r.json().get('text', '')
+                        if transcription:
+                            await self._log(f"[WhatsApp STT] Groq Whisper: {transcription[:80]}...", priority=2)
+                            return transcription
+                    else:
+                        await self._log(f"[WhatsApp STT] Groq error: {r.status_code} {r.text}", priority=2)
             except Exception as e:
-                await self._log(f"[WhatsApp] Groq STT error: {e}", priority=2)
+                await self._log(f"[WhatsApp] Whisper STT error: {e}", priority=2)
+
+        try:
+            import whisper
+            import asyncio
+            if not hasattr(self, '_local_whisper_model'):
+                await self._log("[WhatsApp STT] Loading local Whisper model ('base')...", priority=2)
+                self._local_whisper_model = whisper.load_model('base')
+            def run_whisper():
+                return self._local_whisper_model.transcribe(audio_path)
+            result = await asyncio.to_thread(run_whisper)
+            text = result.get('text', '').strip()
+            if text:
+                await self._log(f"[WhatsApp STT] Local Whisper: {text[:80]}...", priority=2)
+                return text
+        except ImportError:
+            pass
+        except Exception as e:
+            await self._log(f"[WhatsApp STT] Local Whisper error: {e}", priority=2)
 
         return None
 
@@ -749,7 +769,6 @@ class WhatsAppBridge:
         """Standard authorization headers for WhatsApp Cloud API."""
         return {
             'Authorization': f'Bearer {self.access_token}',
-            'Content-Type': 'application/json'
         }
 
     @staticmethod

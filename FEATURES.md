@@ -1,6 +1,6 @@
 # Galactic AI — Feature Reference
 
-Complete feature reference for Galactic AI Automation Suite **v1.6.9**.
+Complete feature reference for Galactic AI Automation Suite **v2.1.0**. See `CHANGELOG.md` for the full v2.1.0 release notes (local voice, unified TTS, `search_codebase`, memory browser, named sessions, secrets hardening).
 
 ---
 
@@ -148,7 +148,7 @@ The result: the AI builds its own persistent knowledge file automatically. You c
 A local JSON index for storing arbitrary facts, documents, and imprinted knowledge. Searchable via the `memory_search` tool using keyword matching. Survives restarts.
 
 **Layer 4: ChromaDB Vector Memory (Semantic Search)**
-Provided by the `memory_manager` community skill. This layer uses ChromaDB to store text and metadata as embeddings, allowing the AI to perform true semantic searches over its past experiences, research, and generated plans. This provides a massive, queryable long-term context that goes beyond simple keyword matching.
+Provided by `galactic_memory.py` (ChromaDB collection + SQLite episodic log), with a background synthesis daemon that prunes near-duplicates and distills raw memories into durable belief statements. This layer performs true semantic search over past experiences, research, and generated plans — and, as of v2.1.0, `memory_search`/recall **excludes** the `codebase_index` category by default so the Neural Indexer's code chunks can't drown out personal/conversation memories. Browse, search, and delete individual memories from the Control Deck's **Memory** tab.
 
 ### Token Efficiency
 
@@ -408,18 +408,21 @@ system:
 | `generate_video` | Generate a video clip from a text prompt using Google Veo (4s/6s/8s, up to 4K) |
 | `generate_video_from_image` | Animate a still image into a video clip using Google Veo |
 
-### Memory (4 tools)
+### Memory & Code Search (3 tools)
 
 | Tool | Description |
 |---|---|
-| `memory_search` | Keyword search across persistent memory |
+| `memory_search` | Semantic search across persistent memory (personal/conversation — code index excluded) |
 | `memory_imprint` | Store new information — writes to memory_aura.json AND MEMORY.md |
+| `search_codebase` | Semantic search over this project's own indexed source code, scoped to the current workspace |
 
 ### Audio (1 tool)
 
 | Tool | Description |
 |---|---|
-| `text_to_speech` | Convert text to speech via ElevenLabs, OpenAI TTS, edge-tts, or free gTTS |
+| `text_to_speech` | Convert text to speech via the shared `tts_engine.py` (ElevenLabs, Fish Speech clone, edge-tts, Piper, Chatterbox, or free gTTS) |
+
+Speech-to-text (wake-word listening and push-to-talk) runs locally through `faster-whisper` by default, GPU-accelerated when available, with cloud Whisper/Google STT as an optional fallback — not a tool call, but a core voice-agent capability.
 
 ### Clipboard (2 tools)
 

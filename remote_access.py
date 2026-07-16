@@ -4,7 +4,7 @@ remote_access.py — Galactic AI Remote Access Security Module
 Provides TLS certificate generation, JWT authentication, rate limiting,
 and aiohttp middleware for secure remote access to the Control Deck.
 
-v1.5.2
+v2.0.0
 """
 
 import os
@@ -306,7 +306,7 @@ def create_auth_middleware(password_hash: str, jwt_secret: str, rate_limiter: Ra
                 return web.json_response({'error': 'Authentication required for remote access'}, status=401)
             
             token = auth_header.split(' ')[1]
-            if not verify_jwt(token): # Assuming verify_jwt now takes only token or jwt_secret is global
+            if not verify_jwt(token, jwt_secret):
                 return web.json_response({'error': 'Invalid or expired token'}, status=401)
 
         return await handler(request)

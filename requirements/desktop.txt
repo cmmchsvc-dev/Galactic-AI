@@ -1,0 +1,9 @@
+# FEATURE: desktop — Computer control (mouse, keyboard, screenshots, windows)
+# Lets the AI see your screen and control your desktop like a human would.
+# Also enables the native desktop app window (galactic_desktop.py).
+
+pyautogui>=0.9.54            # OS-level mouse/keyboard/screenshot
+pygetwindow>=0.0.9           # Window management
+pyperclip>=1.8.2             # Clipboard access
+pywebview>=5.0.0             # Native desktop window
+opencv-python>=4.8.0         # On-screen template matching (desktop_locate)

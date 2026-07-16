@@ -1,175 +1,72 @@
 #!/usr/bin/env bash
-# Galactic AI - Linux / macOS Installer
-# Run: chmod +x install.sh && ./install.sh
+# Galactic AI installer bootstrap (Linux / macOS).
+#
+# Ensures Python 3.9+ exists, then hands off to install.py which does the real
+# work (feature picking, Lite/Full/Custom, GPU detection, verification).
+# All arguments pass straight through.
+#
+#   ./install.sh                  # guided install
+#   ./install.sh --profile lite   # fast, ~160 MB
+#   ./install.sh --profile full   # everything
+#   ./install.sh --list           # show features
 
-set -e
+set -euo pipefail
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
+CYAN='\033[96m'; GREEN='\033[92m'; YELLOW='\033[93m'; RED='\033[91m'; OFF='\033[0m'
 
 echo ""
-echo "============================================"
-echo "  GALACTIC AI - Automation Suite Installer"
-echo "  v1.6.9"
-echo "============================================"
-# Determine OS
-OS_TYPE=$(uname -s | tr '[:upper:]' '[:lower:]')
-
-# [Step 0/6] Install System Prerequisites
-echo "[0/6] Checking System Prerequisites..."
-if [[ "$OS_TYPE" == "linux" ]]; then
-    if command -v apt-get &>/dev/null; then
-        echo "  Detected Debian/Ubuntu (apt). Installing dependencies..."
-        sudo apt-get update -y && sudo apt-get install -y xclip wmctrl libnotify-bin
-    elif command -v dnf &>/dev/null; then
-        echo "  Detected Fedora/RHEL (dnf). Installing dependencies..."
-        sudo dnf install -y xclip wmctrl libnotify
-    elif command -v pacman &>/dev/null; then
-        echo "  Detected Arch Linux (pacman). Installing dependencies..."
-        sudo pacman -S --noconfirm xclip wmctrl libnotify
-    else
-        echo "  WARNING: Unknown package manager. Please manually install: xclip, wmctrl, libnotify"
-    fi
-elif [[ "$OS_TYPE" == "darwin" ]]; then
-    echo "  Detected macOS."
-    if command -v brew &>/dev/null; then
-        echo "  Homebrew found. Ensuring wmctrl is installed..."
-        brew install wmctrl || echo "  (Optional) wmctrl install failed. Window management may be limited."
-    else
-        echo "  Homebrew not found. Skipping optional system tools."
-    fi
-fi
-echo "  System prerequisites handled."
+echo -e "  ${CYAN}Galactic AI - preparing installer...${OFF}"
 echo ""
 
-# Check Python
-echo "[1/6] Checking Python..."
-if command -v python3 &>/dev/null; then
-    PYTHON=python3
-elif command -v python &>/dev/null; then
-    PYTHON=python
-else
-    echo "  Python not found. Attempting automatic installation..."
-    if [[ "$OS_TYPE" == "linux" ]]; then
-        if command -v apt-get &>/dev/null; then
-            sudo apt-get install -y python3 python3-pip python3-venv
-        elif command -v dnf &>/dev/null; then
-            sudo dnf install -y python3 python3-pip
-        elif command -v pacman &>/dev/null; then
-            sudo pacman -S --noconfirm python python-pip
-        else
-            echo "  ERROR: Cannot auto-install Python. Install Python 3.10+ manually."
-            exit 1
-        fi
-    elif [[ "$OS_TYPE" == "darwin" ]]; then
-        if command -v brew &>/dev/null; then
-            brew install python3
-        else
-            echo "  ERROR: Install Homebrew first (https://brew.sh), then re-run this script."
-            exit 1
-        fi
+# ── Find a suitable Python ───────────────────────────────────────────────────
+PY=""
+for c in python3 python; do
+  if command -v "$c" >/dev/null 2>&1; then
+    if "$c" -c 'import sys; sys.exit(0 if sys.version_info >= (3,9) else 1)' 2>/dev/null; then
+      PY="$c"; break
     fi
-    # Re-check after install
-    if command -v python3 &>/dev/null; then
-        PYTHON=python3
-    else
-        echo "  ERROR: Python installation failed. Install Python 3.10+ from https://www.python.org/downloads/"
-        exit 1
-    fi
-fi
-echo "  Found: $($PYTHON --version)"
+  fi
+done
 
-# [1.5/6] Ensure pip is available
-echo "[2/6] Checking pip..."
-if ! $PYTHON -m pip --version &>/dev/null; then
-    echo "  pip not found. Installing pip..."
-    if [[ "$OS_TYPE" == "linux" ]]; then
-        if command -v apt-get &>/dev/null; then
-            sudo apt-get install -y python3-pip python3-venv
-        elif command -v dnf &>/dev/null; then
-            sudo dnf install -y python3-pip
-        elif command -v pacman &>/dev/null; then
-            sudo pacman -S --noconfirm python-pip
-        else
-            echo "  Trying ensurepip fallback..."
-            $PYTHON -m ensurepip --upgrade || {
-                echo "  ERROR: Could not install pip. Run: sudo apt install python3-pip"
-                exit 1
-            }
-        fi
-    elif [[ "$OS_TYPE" == "darwin" ]]; then
-        $PYTHON -m ensurepip --upgrade || {
-            echo "  ERROR: Could not install pip."
-            exit 1
-        }
-    fi
-    # Verify pip is now available
-    if ! $PYTHON -m pip --version &>/dev/null; then
-        echo "  ERROR: pip installation failed. Install manually: sudo apt install python3-pip"
-        exit 1
-    fi
-fi
-echo "  Found: $($PYTHON -m pip --version)"
-
-# Upgrade pip
-echo "[3/6] Upgrading pip..."
-$PYTHON -m pip install --upgrade pip --quiet
-echo "  pip upgraded."
-
-# Install pip dependencies from requirements.txt
-echo "[4/6] Installing Python dependencies (this may take a few minutes)..."
-$PYTHON -m pip install -r requirements.txt
-echo "  Dependencies installed."
-
-# Install Playwright browser
-echo "[5/6] Installing Chromium browser engine..."
-$PYTHON -m playwright install chromium || echo "  WARNING: Playwright browser install failed. Browser tools will not work."
-echo "  Chromium installed."
-
-# Create workspace directories
-echo "[6/6] Creating workspace directories..."
-mkdir -p logs workspace watch memory
-echo "  Directories created."
-
-# Platform-specific dependency checks
-if [[ "$OSTYPE" == "linux-gnu"* ]]; then
-    echo ""
-    echo "--- Linux System Dependency Check ---"
-    MISSING=()
-    command -v xclip >/dev/null 2>&1 || MISSING+=("xclip")
-    command -v wmctrl >/dev/null 2>&1 || MISSING+=("wmctrl")
-    command -v notify-send >/dev/null 2>&1 || MISSING+=("libnotify-bin")
-
-    if [ ${#MISSING[@]} -ne 0 ]; then
-        echo "  WARNING: Missing system tools for desktop automation: ${MISSING[*]}"
-        echo "  Run: sudo apt update && sudo apt install xclip wmctrl libnotify-bin"
-    else
-        echo "  All system dependencies found."
-    fi
-elif [[ "$OSTYPE" == "darwin"* ]]; then
-    echo ""
-    echo "--- macOS System Note ---"
-    echo "  NOTE: Desktop screenshots/control require 'Accessibility' and"
-    echo "  'Screen Recording' permissions in System Settings for your terminal."
+if [ -z "$PY" ]; then
+  echo -e "  ${YELLOW}Python 3.9+ not found. Attempting to install...${OFF}"
+  if command -v apt-get >/dev/null 2>&1; then
+    sudo apt-get update -qq && sudo apt-get install -y python3 python3-pip python3-venv
+    PY=python3
+  elif command -v dnf >/dev/null 2>&1; then
+    sudo dnf install -y python3 python3-pip && PY=python3
+  elif command -v pacman >/dev/null 2>&1; then
+    sudo pacman -Sy --noconfirm python python-pip && PY=python
+  elif command -v brew >/dev/null 2>&1; then
+    brew install python@3.11 && PY=python3
+  fi
 fi
 
-# Make launch script executable
-chmod +x launch.sh 2>/dev/null || true
-chmod +x scripts/diagnostic.py 2>/dev/null || true
+if [ -z "$PY" ] || ! command -v "$PY" >/dev/null 2>&1; then
+  echo -e "  ${RED}Could not find or install Python 3.9+.${OFF}"
+  echo -e "  Install it, then re-run:  ${CYAN}https://www.python.org/downloads/${OFF}"
+  exit 1
+fi
 
-echo ""
-echo "============================================"
-echo "  Installation complete!"
-echo "  Run 'python3 scripts/diagnostic.py' to verify setup."
-echo "============================================"
-echo ""
-echo "  To start Galactic AI:"
-echo "    ./launch.sh"
-echo ""
-echo "  Then open your browser to:"
-echo "    http://127.0.0.1:17789"
-echo ""
-echo "  The setup wizard will guide you through configuring"
-echo "  API keys for 14+ AI providers."
-echo ""
-echo "  (Optional) For local AI with no API keys:"
-echo "    1. Install Ollama: https://ollama.com/download"
-echo "    2. ollama pull qwen3:8b"
-echo ""
+echo -e "  ${GREEN}$($PY --version) : OK${OFF}"
+
+# Some distros ship Python without pip
+if ! "$PY" -m pip --version >/dev/null 2>&1; then
+  echo -e "  ${YELLOW}pip missing - bootstrapping...${OFF}"
+  "$PY" -m ensurepip --upgrade 2>/dev/null || {
+    echo -e "  ${RED}pip unavailable. Install python3-pip and re-run.${OFF}"; exit 1; }
+fi
+"$PY" -m pip install --upgrade pip --quiet --disable-pip-version-check 2>/dev/null || true
+
+# Audio playback (pygame/TTS) needs SDL on some minimal Linux images
+if [ "$(uname -s)" = "Linux" ] && command -v apt-get >/dev/null 2>&1; then
+  if ! dpkg -s libsdl2-2.0-0 >/dev/null 2>&1; then
+    echo -e "  ${YELLOW}Note:${OFF} if voice output fails later, install SDL + audio headers:"
+    echo -e "        sudo apt-get install -y libsdl2-2.0-0 portaudio19-dev"
+  fi
+fi
+
+# ── Hand off to the real installer ───────────────────────────────────────────
+cd "$ROOT"
+exec "$PY" install.py "$@"

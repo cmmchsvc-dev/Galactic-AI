@@ -291,8 +291,10 @@ class ModelManager:
         )
 
         # Update gateway LLM reference
-        self.core.gateway.llm.provider = fallback['provider']
-        self.core.gateway.llm.model = fallback['model']
+        self.core.gateway.provider = fallback['provider']
+        self.core.gateway.model = fallback['model']
+        self.core.gateway.llm.provider = None
+        self.core.gateway.llm.model = None
         self._set_api_key(fallback['provider'])
         
         # Ensure internally stored provider is normalized for future comparisons
@@ -312,8 +314,10 @@ class ModelManager:
         )
 
         # Update gateway LLM reference
-        self.core.gateway.llm.provider = primary['provider']
-        self.core.gateway.llm.model = primary['model']
+        self.core.gateway.provider = primary['provider']
+        self.core.gateway.model = primary['model']
+        self.core.gateway.llm.provider = None
+        self.core.gateway.llm.model = None
         self._set_api_key(primary['provider'])
 
         # Store the intended provider (may be a segment like openrouter-frontier)
@@ -333,6 +337,7 @@ class ModelManager:
     def _set_api_key(self, provider):
         """Set correct API key for provider by delegating to Gateway logic."""
         key = self.core.gateway._get_provider_api_key(provider)
+        self.core.gateway.api_key = key or "NONE"
         self.core.gateway.llm.api_key = key or "NONE"
 
     async def set_primary(self, provider, model):
@@ -364,9 +369,9 @@ class ModelManager:
                 return
         self._last_save_time = now
         try:
-            # Read current config
-            with open(self.config_path, 'r', encoding='utf-8') as f:
-                config = yaml.safe_load(f)
+            # Read current merged config (template + overlay)
+            import config_loader
+            config = config_loader.load_config(self.config_path)
 
             # Update models section
             if 'models' not in config:
@@ -383,9 +388,8 @@ class ModelManager:
             config['gateway']['provider'] = self.primary_provider
             config['gateway']['model'] = self.primary_model
 
-            # Write back
-            with open(self.config_path, 'w', encoding='utf-8') as f:
-                yaml.dump(config, f, default_flow_style=False, allow_unicode=True, sort_keys=False)
+            # Write back — to the gitignored overlay only
+            config_loader.save_config(config, self.config_path)
 
             # Sync in-memory config so subsequent saves by other code paths
             # (e.g. web_deck toggle saves) don't overwrite with stale values
@@ -476,7 +480,7 @@ class ModelManager:
                         
                         # Format ID for subagent_manager.spawn(): "provider/model"
                         full_id = mid
-                        if provider != 'openrouter' and '/' not in mid:
+                        if not mid.startswith(f"{provider}/"):
                             full_id = f"{provider}/{mid}"
                         
                         all_models.append({
@@ -514,7 +518,7 @@ class ModelManager:
                 mid_l = m['id'].lower()
                 if mid_l == f"ollama/{query_l}":
                     return m['id']
-                if query_l in mid_l and m['provider'] == 'ollama':
+                if query_l in mid_l and mid_l.startswith('ollama/'):
                     return m['id']
             # If not found in all_models, but looks like a full HF path, assume Ollama
             return f"ollama/{query}"

@@ -91,6 +91,7 @@ def sync_versions(new_version):
     print(f"Syncing version tags from {current_version} to {new_version_clean} across source files...")
 
     targets = [
+        "version.py",
         "config.yaml",
         "index.html",
         "README.md",
@@ -222,7 +223,16 @@ def create_workspace_templates():
             f.write(content)
 
 def get_version():
-    """Extract version from config.yaml or fallback to date."""
+    """Extract version from version.py (single source of truth), falling
+    back to config.yaml, then to the date."""
+    try:
+        version_path = os.path.join(ROOT_DIR, "version.py")
+        with open(version_path, 'r', encoding='utf-8') as f:
+            m = re.search(r'VERSION\s*=\s*["\']([^"\']+)["\']', f.read())
+            if m:
+                return m.group(1).lstrip('v')
+    except Exception:
+        pass
     try:
         config_path = os.path.join(ROOT_DIR, "config.yaml")
         with open(config_path, 'r', encoding='utf-8') as f:

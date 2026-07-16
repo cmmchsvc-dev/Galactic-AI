@@ -90,19 +90,38 @@ async function doConnect() {
 
   setConnectingUI();
 
-  const token = await hashPassphrase(passphrase);
+  try {
+    const res = await fetch('http://127.0.0.1:17789/login', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ password: passphrase })
+    });
+    
+    if (res.ok) {
+      const data = await res.json();
+      if (data.success && data.token) {
+        const token = data.token;
+        /* Save token AND passphrase to storage so popup can restore it on reopen */
+        await chrome.storage.local.set({
+          galactic_token: token,
+          galactic_passphrase: passphrase,
+          galactic_auth_failed: false
+        });
 
-  /* Save token AND passphrase to storage so popup can restore it on reopen */
-  await chrome.storage.local.set({
-    galactic_token: token,
-    galactic_passphrase: passphrase,
-    galactic_auth_failed: false
-  });
-
-  /* Tell background to connect */
-  chrome.runtime.sendMessage({ type: 'connect', token }, (_response) => {
-    /* Status will be updated by polling */
-  });
+        /* Tell background to connect */
+        chrome.runtime.sendMessage({ type: 'connect', token }, (_response) => {
+          /* Status will be updated by polling */
+        });
+      } else {
+        setAuthFailedUI();
+      }
+    } else {
+      setAuthFailedUI();
+    }
+  } catch (err) {
+    console.error("Login fetch error:", err);
+    setAuthFailedUI();
+  }
 }
 
 function doDisconnect() {

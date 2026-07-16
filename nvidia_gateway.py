@@ -228,7 +228,9 @@ if __name__ == "__main__":
         import sys
         sys.stdout.reconfigure(encoding='utf-8')
 
-        with open("config.yaml", "r") as f:
+        import os
+        _cfg_file = "config.local.yaml" if os.path.exists("config.local.yaml") else "config.yaml"
+        with open(_cfg_file, "r") as f:
             cfg = yaml.safe_load(f)
 
         print("\n=== NVIDIA Gateway Test Suite ===")
@@ -238,63 +240,68 @@ if __name__ == "__main__":
 
         # Test 1: Llama 3.1 405B
         print("\n[1] Testing meta/llama-3.1-405b-instruct...")
+        gw = make_nvidia_gateway(cfg, "meta/llama-3.1-405b-instruct")
         try:
-            gw = make_nvidia_gateway(cfg, "meta/llama-3.1-405b-instruct")
             resp = await gw.chat([{"role": "user", "content": "Say 'Galactic AI online!' and nothing else."}],
                                  max_tokens=32)
             print(f"Response: {resp}")
             results.append(("llama-3.1-405b", "PASS" if "error" not in resp.lower() else "FAIL", resp[:80]))
-            await gw.close()
         except Exception as e:
             results.append(("llama-3.1-405b", "ERROR", str(e)))
+        finally:
+            await gw.close()
 
         # Test 2: DeepSeek V3
         print("\n[2] Testing deepseek-ai/deepseek-v3.2...")
+        gw = make_nvidia_gateway(cfg, "deepseek-ai/deepseek-v3.2")
         try:
-            gw = make_nvidia_gateway(cfg, "deepseek-ai/deepseek-v3.2")
             resp = await gw.chat([{"role": "user", "content": "What is 2+2? One word answer."}],
                                  max_tokens=16)
             print(f"Response: {resp}")
             results.append(("deepseek-v3.2", "PASS" if "error" not in resp.lower() else "FAIL", resp[:80]))
-            await gw.close()
         except Exception as e:
             results.append(("deepseek-v3.2", "ERROR", str(e)))
+        finally:
+            await gw.close()
 
         # Test 3: Phi-3.5 Vision (text-only mode)
         print("\n[3] Testing microsoft/phi-3.5-vision-instruct (text mode)...")
+        gw = make_nvidia_gateway(cfg, "microsoft/phi-3.5-vision-instruct")
         try:
-            gw = make_nvidia_gateway(cfg, "microsoft/phi-3.5-vision-instruct")
             resp = await gw.chat([{"role": "user", "content": "Describe what you can do with images in one sentence."}],
                                  max_tokens=128)
             print(f"Response: {resp[:200]}")
             results.append(("phi-3.5-vision", "PASS" if "error" not in resp.lower() else "FAIL", resp[:80]))
-            await gw.close()
         except Exception as e:
             results.append(("phi-3.5-vision", "ERROR", str(e)))
+        finally:
+            await gw.close()
 
         # Test 4: Gemma 3 27B
         print("\n[4] Testing google/gemma-3-27b-it...")
+        gw = make_nvidia_gateway(cfg, "google/gemma-3-27b-it")
         try:
-            gw = make_nvidia_gateway(cfg, "google/gemma-3-27b-it")
             resp = await gw.chat([{"role": "user", "content": "What's the meaning of life in 10 words?"}],
                                  max_tokens=32)
             print(f"Response: {resp}")
             results.append(("gemma-3-27b", "PASS" if "error" not in resp.lower() else "FAIL", resp[:80]))
-            await gw.close()
         except Exception as e:
             results.append(("gemma-3-27b", "ERROR", str(e)))
+        finally:
+            await gw.close()
 
         # Test 5: Mistral Large 3
         print("\n[5] Testing mistralai/mistral-large-3-675b-instruct-2512...")
+        gw = make_nvidia_gateway(cfg, "mistralai/mistral-large-3-675b-instruct-2512")
         try:
-            gw = make_nvidia_gateway(cfg, "mistralai/mistral-large-3-675b-instruct-2512")
             resp = await gw.chat([{"role": "user", "content": "Say 'Mistral online!' and nothing else."}],
                                  max_tokens=16)
             print(f"Response: {resp}")
             results.append(("mistral-large-3", "PASS" if "error" not in resp.lower() else "FAIL", resp[:80]))
-            await gw.close()
         except Exception as e:
             results.append(("mistral-large-3", "ERROR", str(e)))
+        finally:
+            await gw.close()
 
         print("\n" + "=" * 50)
         print("RESULTS SUMMARY:")

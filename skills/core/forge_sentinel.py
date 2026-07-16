@@ -2,6 +2,7 @@ import os
 import re
 import json
 import asyncio
+import time
 import traceback
 from skills.base import GalacticSkill
 
@@ -14,7 +15,7 @@ class ForgeSentinel(GalacticSkill):
     
     skill_name   = "forge_sentinel"
     display_name = "Forge Sentinel (Self-Healing)"
-    version      = "1.1.0"
+    version      = "1.2.0"
     author       = "Antigravity"
     description  = "Monitors core logs for errors and proposes repair solutions for user approval."
     category     = "system"
@@ -27,6 +28,9 @@ class ForgeSentinel(GalacticSkill):
         self._busy = False
         # Track recently notified snippets to avoid spam
         self._last_error_hash = None
+        self._last_analysis_time = 0
+        # Minimum seconds between analyses — prevents cascade loops
+        self._cooldown_seconds = 60
 
     async def run(self):
         await self.core.log("🛡️ Forge Sentinel standing guard. Monitoring system_log.txt...", priority=3)
@@ -51,19 +55,35 @@ class ForgeSentinel(GalacticSkill):
         if self._busy:
             return
         
+        # Cooldown — don't analyze more than once per minute
+        now = time.time()
+        if now - self._last_analysis_time < self._cooldown_seconds:
+            return
+        
         with open(self.log_path, 'r', encoding='utf-8', errors='ignore') as f:
             f.seek(self._last_size)
             new_content = f.read()
             
         # Ignore transient or expected errors to prevent notification spam
         if "Traceback" in new_content or "[ERROR]" in new_content:
-            if any(x in new_content for x in ("locations_to_try", "404: Publisher Model", "API errors: 3")):
+            # Skip known transient/model errors — the Sentinel can't fix these and
+            # attempting LLM analysis when the model is crashing just makes things worse.
+            transient_patterns = (
+                "locations_to_try", "404: Publisher Model", "API errors: 3",
+                "Server disconnected", "empty response", "Model returned an empty",
+                "llama-server process has terminated", "num_ctx", "context window",
+                "Forge Sentinel", "Sentinel analysis",  # Don't analyze our own errors
+                "ollama HTTP 500", "ollama HTTP 404",
+            )
+            if any(x in new_content for x in transient_patterns):
                 return
+            
             # Simple hash to avoid duplicate alerts for the same error
             error_hash = hash(new_content[:500])
             if error_hash == self._last_error_hash:
                 return
             self._last_error_hash = error_hash
+            self._last_analysis_time = now
             await self.analyze_and_notify(new_content)
 
     async def analyze_and_notify(self, error_content):

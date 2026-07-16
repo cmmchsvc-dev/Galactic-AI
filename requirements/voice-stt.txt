@@ -1,0 +1,7 @@
+# FEATURE: voice-stt — Speech-to-text (talk to the AI, wake-word listening)
+# faster-whisper transcribes locally on your machine — your voice never
+# leaves the computer. Downloads a ~150 MB model on first use.
+# Requires a microphone.
+
+SpeechRecognition>=3.10.0    # Mic capture + wake-word buffering
+faster-whisper>=1.0.0        # Local Whisper STT (GPU/CPU)

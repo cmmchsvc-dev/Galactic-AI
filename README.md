@@ -2,7 +2,7 @@
 
 **Sovereign. Universal. Fast.**
 
-A powerful, local-first AI automation platform with 188+ built-in tools, an extensible Skills ecosystem, true persistent memory, voice I/O, video generation, Chrome browser extension, social media tools, 14+ AI providers, multi-platform messaging bridges, and a real-time web Control Deck. **v1.6.9**
+A powerful, local-first AI automation platform with 188+ built-in tools, an extensible Skills ecosystem, true persistent memory, local voice I/O (faster-whisper STT + unified TTS), video generation, Chrome browser extension, social media tools, 14+ AI providers, multi-platform messaging bridges, and a real-time web Control Deck. **v2.1.0**
 
 Run fully local with Ollama (no API keys, no cloud, no tracking), or connect to any of 14 cloud providers. Your data stays yours.
 
@@ -40,60 +40,86 @@ Beyond recalling chat history, Galactic AI now has a living memory of your local
 
 ## Quick Start
 
-### 🖥️ Windows — Standalone EXE (Removed)
+The installer is interactive — it asks what you actually want and only downloads that.
 
-> **Note**: As of v1.4.7, the packaged `GalacticAI.exe` has been removed to significantly speed up native Python execution, remove massive bundling overhead, and prevent false-positive Antivirus blocks.
-
-Please use the Python native scripts below to run Galactic AI.
-
-### Windows — Script (Python required)
+**Windows (PowerShell):**
 
 ```powershell
-# Extract the ZIP, open PowerShell in the folder, then:
-.\install.ps1    # Installs all dependencies
-.\launch.ps1     # Starts Galactic AI
-
-# Create a Desktop Shortcut with custom icon:
-.\create_shortcut.ps1
+.\install.ps1        # guided install
+.\launch.ps1         # start Galactic AI
 ```
 
-### macOS / Linux
+**macOS / Linux:**
 
 ```bash
-chmod +x install.sh launch.sh
-./install.sh     # Installs all dependencies
-./launch.sh      # Starts Galactic AI
+chmod +x install.sh && ./install.sh     # guided install
+./launch.sh                             # start Galactic AI
 ```
 
-Then open **<http://127.0.0.1:17789>** — the Setup Wizard walks you through configuration.
+Then open **<http://127.0.0.1:17789>**. The Setup Wizard walks you through API keys — or skip them entirely and run local-only with Ollama.
 
 Press **Ctrl+C** once to shut down cleanly.
 
 ---
 
+## Choose Your Install
+
+You don't have to download 4 GB of machine-learning wheels to chat with an AI. Pick a profile:
+
+| Profile | Size | Time | What you get |
+|---|---|---|---|
+| **Lite** | ~160 MB | ~2 min | Chat, Control Deck, all 14 AI providers, voice output, keyword memory. Runs great on a laptop. |
+| **Full** | ~3.4 GB | 10–20 min | Everything: semantic memory, voice in/out, web browsing, computer control, documents, Discord, OCR. |
+| **Custom** | you decide | — | Toggle features one by one, with live size estimates. |
+
+```bash
+python install.py                  # guided (recommended)
+python install.py --profile lite   # fast path
+python install.py --profile full   # everything
+python install.py --list           # show features + what's installed
+python install.py --add memory     # add a feature later
+python install.py --repair         # reinstall anything missing
+python install.py --dry-run        # show the plan, install nothing
+```
+
+### Feature groups
+
+Core is always installed (chat, Control Deck, providers, scheduler, Telegram + Gmail bridges). Everything else is opt-in:
+
+| Feature | Size | What it unlocks |
+|---|---|---|
+| 🧠 `memory` | ~2.5 GB<br>(~800 MB CPU) | **Semantic** recall — "what did I say about my truck?" finds "1966 F100". Also powers `search_codebase`. |
+| 🔊 `voice-tts` | ~40 MB | The AI talks back. Free Microsoft neural voices, no API key. |
+| 🎙️ `voice-stt` | ~150 MB | Talk to it + wake-word listening. Transcribes **locally** — your voice never leaves the machine. |
+| 🌐 `browser` | ~160 MB | Autonomous web research and automation (Playwright + Chromium). |
+| 🖥️ `desktop` | ~120 MB | Mouse, keyboard, screenshots, window control. |
+| 📄 `documents` | ~90 MB | Read PDFs, Word, Excel, CSV. |
+| 💬 `bridges` | ~25 MB | Discord bot + post to X/Reddit. |
+| 👁️ `ocr` | ~200 MB | Read text out of images and the screen. |
+| ☁️ `vertex` | ~120 MB | Google Vertex AI service accounts (most people don't need this). |
+
+**Smart defaults:** the installer detects your GPU and installs CUDA torch only if you have one — otherwise it grabs the CPU-only wheel and saves you ~2 GB. It also detects Ollama and tells you how to go fully offline.
+
+> **Skipping `memory` is safe.** Galactic AI falls back to a persistent *keyword* memory engine, so it still remembers things across restarts — you just trade meaning-based recall for word matching. Add it anytime with `python install.py --add memory`.
+
+---
+
 ## Prerequisites
 
-- **Python 3.10+** — [python.org/downloads](https://www.python.org/downloads/)
-- **Ollama** (optional, for local models) — [ollama.com/download](https://ollama.com/download)
+- **Python 3.9+** — [python.org/downloads](https://www.python.org/downloads/) (the bootstrap scripts will install it for you on Windows)
+- **Ollama** (optional, for free local models) — [ollama.com/download](https://ollama.com/download)
 
 ---
 
 ## Installation (Manual)
 
-If you prefer to install dependencies manually instead of using the install scripts:
-
-**Windows (PowerShell):**
-
-```powershell
-pip install -r requirements.txt
-playwright install chromium
-```
-
-**Linux / macOS:**
+If you'd rather drive pip yourself:
 
 ```bash
-pip3 install -r requirements.txt
-playwright install chromium
+pip install -r requirements/core.txt        # minimum viable install
+pip install -r requirements/voice-tts.txt   # add features à la carte
+pip install -r requirements.txt             # or absolutely everything
+playwright install chromium                 # only if you installed 'browser'
 ```
 
 ---
@@ -565,8 +591,9 @@ MIT License — see LICENSE file.
 
 | Version | Highlights |
 |---|---|
+| v2.1.0 | **Current Release** | 🔒 Secrets moved to gitignored `config.local.yaml` overlay • 🎙️ Local GPU speech-to-text (faster-whisper) replaces cloud STT by default • 🔊 Unified TTS engine with voice barge-in • 🔎 `search_codebase` semantic code search tool • 🧠 Memory Browser + smarter recall (excludes code chunks) • 🗂️ Named chat sessions • 💬 Discord/Gmail bridges wired up • Fixed think-only response bug, persona name bleed, and several dead routes |
 | v1.6.9 | Tooling | **Loop Reset & Hallucination Defense** • Multi-turn loop detection resets on new input • Browser Hallucination Guard to catch lying models • Hardened provider-aware fallback resilience |
-| v1.6.9 | **Current Release** | Phase 29: Progress Bars & Security Purge • v1.6.9 Standardization across repo • Asteroids v9 integrated |
+| v1.6.9 | Phase 29: Progress Bars & Security Purge • v1.6.9 Standardization across repo • Asteroids v9 integrated |
 | v1.4.8 | Security | **Unified Security Protocol** • Hardened Discord & WhatsApp bridges with "Default Deny" policy • Unified authorization helpers • New `/id` commands for setup. |
 | v1.4.7 | Security | 🛡️ **Security Hardening Update** • Strict "Default Deny" Telegram access control • Callback Query (button) bypass security fix • New `/id` command. |
 | **v1.4.6** | 🔧 **Imagen Fix Update** • Fixed Imagen 4 model IDs (`NOT_FOUND` errors resolved) • Fixed `chrome_navigate` crash (`list.get()` error) • Eliminated AI hallucination loop after image generation • Added embed URL + stop signal to image tool returns • VC++ Redistributable installer UAC fix. |

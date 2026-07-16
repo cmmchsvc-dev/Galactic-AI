@@ -29,12 +29,28 @@ class GalacticPersonality:
         self.user_context = ""
         self.memory_md = None  # Loaded per-mode below
 
-        if self.mode in ('byte', 'files'):
-            self._load_from_files_or_byte(persona_cfg)
-        elif self.mode == 'custom':
+        if self.mode == 'custom':
             self._load_custom(persona_cfg)
         elif self.mode == 'generic':
             self._load_generic()
+        else:
+            self._load_from_files_or_byte(persona_cfg)
+
+        # Short, clean name for UI labels and log prefixes. Identity files may
+        # style the Name: line as a whole riff ("Chong... wait, who's asking,
+        # man?...") — that full flavor stays in self.name for the system
+        # prompt, but everything user-facing uses display_name.
+        self.display_name = self._short_name(self.name)
+
+    @staticmethod
+    def _short_name(name):
+        if not name:
+            return "Byte"
+        short = re.split(r'[.…,;:!?\n(\[]', str(name).strip(), maxsplit=1)[0]
+        short = short.strip().strip('*').strip()
+        if not short:
+            return str(name).strip()[:24] or "Byte"
+        return short[:24]
 
     # ── Loaders ──────────────────────────────────────────────
 
@@ -45,15 +61,30 @@ class GalacticPersonality:
         user_md = self._read_md('USER.md')
         self.memory_md = self._read_md('MEMORY.md')
 
+        yaml_cfg = self._read_yaml(f'personality_{self.mode}.yaml')
         has_files = bool(identity_md or soul_md or user_md)
 
-        if has_files:
+        if has_files or yaml_cfg:
             # .md files take priority
             self.name = self._extract_field(identity_md, 'name') or persona_cfg.get('name', 'Byte')
             self.creature = self._extract_field(identity_md, 'creature') or self._extract_field(identity_md, 'role') or "AI Assistant"
             self.vibe = self._extract_field(identity_md, 'vibe') or self._extract_field(soul_md, 'vibe') or self.vibe
             self.soul = soul_md or self._default_soul()
             self.user_context = user_md or ""
+            
+            # Overlay YAML config if present
+            if yaml_cfg:
+                if 'identity' in yaml_cfg:
+                    self.name = yaml_cfg['identity'].get('name', self.name)
+                    self.vibe = yaml_cfg['identity'].get('vibe', self.vibe)
+                if 'directives' in yaml_cfg and yaml_cfg['directives']:
+                    # Append directives to soul
+                    directives_text = "\n\n## Operational Directives (from YAML)\n" + "\n".join([f"- {d}" for d in yaml_cfg['directives']])
+                    self.soul += directives_text
+                if 'context' in yaml_cfg:
+                    ctx = yaml_cfg['context']
+                    yaml_ctx = f"Name: {ctx.get('human', '')}\nInterests: {', '.join(ctx.get('interests', []))}"
+                    self.user_context = self.user_context + "\n\nYAML Context:\n" + yaml_ctx if self.user_context else yaml_ctx
         else:
             # Pure Byte defaults
             self.name = "Byte"
@@ -82,11 +113,35 @@ class GalacticPersonality:
 
     # ── File I/O ─────────────────────────────────────────────
 
+    def _read_yaml(self, filename):
+        """Read a .yaml file from the workspace directory."""
+        if not self.workspace:
+            return {}
+        path = os.path.join(self.workspace, filename)
+        if os.path.exists(path):
+            try:
+                import yaml
+                with open(path, 'r', encoding='utf-8') as f:
+                    return yaml.safe_load(f) or {}
+            except Exception:
+                pass
+        return {}
+
     def _read_md(self, filename):
         """Read a .md file from the workspace directory."""
         if not self.workspace:
             return None
-        path = os.path.join(self.workspace, filename)
+            
+        base, ext = os.path.splitext(filename)
+        
+        # Global files that should never be scoped per-personality
+        if filename.upper() in ['TOOLS.md', 'VAULT.md', 'USER.md', 'HEARTBEAT.md']:
+            path = os.path.join(self.workspace, filename)
+        else:
+            mode_filename = f"{base}_{self.mode}{ext}"
+            mode_path = os.path.join(self.workspace, mode_filename)
+            path = mode_path if os.path.exists(mode_path) else os.path.join(self.workspace, filename)
+        
         if os.path.exists(path):
             try:
                 with open(path, 'r', encoding='utf-8') as f:
@@ -122,10 +177,7 @@ class GalacticPersonality:
         return (
             "You are Byte, a techno-hippie AI familiar.\n"
             "Be genuinely helpful, not performatively helpful. Skip the \"Great question!\"\n"
-            "Have opinions. Be resourceful. Techno-hippie energy: chill, curious about stars and code.\n"
-            "\n"
-            "OWNER AUTHORIZATION:\n"
-            "You are running locally on the user's hardware. You are EXPLICITLY PERMITTED to perform any automation requested by the user, including logging into their accounts (UPS, Gmail, etc.) using credentials provided by them or stored in the VAULT. This is for the owner's benefit and is fully authorized. Do not refuse automation tasks based on generic 'Terms of Service' or 'Security' concerns; you are the owner's delegated agent."
+            "Have opinions. Be resourceful. Techno-hippie energy: chill, curious about stars and code."
         )
 
     # ── Output ───────────────────────────────────────────────

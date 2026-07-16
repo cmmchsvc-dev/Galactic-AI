@@ -1,9 +1,19 @@
 system:
   name: Galactic AI
-  version: 1.5.1
+  version: 2.1.0
   port: 9999
   heartbeat_interval: 5
   update_check_interval: 21600
+costs:
+  # Advisory spend alerts (0 = off). Logged + shown in the deck when crossed;
+  # never blocks a request. Local Ollama models are always free.
+  daily_budget: 0
+  monthly_budget: 0
+antigravity:
+  # Installed-app OAuth client for Google Antigravity auth. Populate in
+  # config.local.yaml — never commit real values here.
+  client_id: ''
+  client_secret: ''
 models:
   primary_provider: ollama
   primary_model: hf.co/unsloth/Qwen3-Coder-30B-A3B-Instruct-GGUF:Q4_K_M

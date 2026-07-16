@@ -165,6 +165,16 @@ class DesktopSkill(GalacticSkill):
                 },
                 "fn": self._tool_desktop_focus_window
             },
+            "desktop_ocr": {
+                "description": "Extract text and their bounding box coordinates from an image or the current screen using EasyOCR. Excellent for reading inaccessible UI text.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "image_path": {"type": "string", "description": "Optional path to image. If omitted, takes a screenshot of the entire desktop."}
+                    }
+                },
+                "fn": self._tool_desktop_ocr
+            },
         }
 
     # ── Tool handlers ─────────────────────────────────────────────────────────
@@ -324,6 +334,46 @@ class DesktopSkill(GalacticSkill):
             return f"[DESKTOP] Focused window: \"{win.title}\""
         except Exception as e:
             return f"[ERROR] Desktop focus window: {e}"
+
+    async def _tool_desktop_ocr(self, args):
+        """Read text from screen or image using EasyOCR."""
+        image_path = args.get('image_path')
+        
+        try:
+            import easyocr
+        except ImportError:
+            return "[ERROR] easyocr not installed. Run: pip install easyocr"
+            
+        try:
+            loop = asyncio.get_event_loop()
+            
+            if not image_path:
+                # Take screenshot first
+                result = await self.screenshot()
+                if result['status'] != 'success':
+                    return f"[ERROR] Failed to take screenshot for OCR: {result.get('message')}"
+                image_path = result['path']
+                
+            def _run_ocr():
+                reader = easyocr.Reader(['en'], gpu=True)
+                return reader.readtext(image_path)
+                
+            results = await loop.run_in_executor(None, _run_ocr)
+            
+            if not results:
+                return "[DESKTOP] No text found in image."
+                
+            output = []
+            for (bbox, text, prob) in results:
+                # bbox is [[x1, y1], [x2, y1], [x2, y2], [x1, y2]]
+                x1, y1 = int(bbox[0][0]), int(bbox[0][1])
+                x2, y2 = int(bbox[2][0]), int(bbox[2][1])
+                output.append(f"\"{text}\" at ({x1},{y1}) to ({x2},{y2}) [conf: {prob:.2f}]")
+                
+            return "[DESKTOP] OCR Results:\n" + "\n".join(output)
+            
+        except Exception as e:
+            return f"[ERROR] Desktop OCR failed: {e}"
 
     # ── Copied from plugins/desktop_tool.py ──────────────────────────────────
 

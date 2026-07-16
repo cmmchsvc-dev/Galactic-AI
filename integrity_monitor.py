@@ -15,7 +15,10 @@ def write_heartbeat():
 def tail_log():
     try:
         with open(LOG_FILE, 'rb') as f:
-            f.seek(-2048, 2) # Seek to the last 2KB
+            try:
+                f.seek(-2048, 2) # Seek to the last 2KB
+            except OSError:
+                f.seek(0)  # File is smaller than 2048 bytes
             return f.read().decode('utf-8', errors='ignore')
     except Exception:
         return ""
