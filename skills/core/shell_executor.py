@@ -50,7 +50,8 @@ class ShellSkill(GalacticSkill):
         """Execute a shell command and return the combined output and exit code."""
         try:
             cwd = cwd or os.getcwd()
-            await self.core.log(f"🛠️ Executing: {command[:100]}", priority=3)
+            
+            await self.core.log(f"🛠️ Executing Locally: {command[:100]}", priority=3)
 
             # Use powershell.exe on Windows for better compatibility
             if os.name == 'nt':

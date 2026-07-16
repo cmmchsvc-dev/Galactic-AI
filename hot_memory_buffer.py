@@ -41,7 +41,7 @@ def update_hot_buffer():
                     else:
                         # Fallback: keep last 20 messages if no timestamp
                         hot_messages.append(msg)
-                except:
+                except Exception:
                     continue
 
         # Keep only the tail if it's too long

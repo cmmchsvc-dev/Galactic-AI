@@ -5,7 +5,9 @@ import yaml
 
 async def flush():
     try:
-        with open('config.yaml', 'r') as f:
+        import os
+        cfg_file = 'config.local.yaml' if os.path.exists('config.local.yaml') else 'config.yaml'
+        with open(cfg_file, 'r') as f:
             config = yaml.load(f, Loader=yaml.FullLoader)
         
         token = config['telegram']['bot_token']

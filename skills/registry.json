@@ -17,14 +17,6 @@
       "description": "Archives full chat transcripts to logs/conversations and keeps a rolling hot buffer (robust patch that survives restarts)."
     },
     {
-      "module": "boot_recall_banner",
-      "class": "BootRecallBannerSkill",
-      "file": "boot_recall_banner.py",
-      "installed_at": "2026-02-24T05:18:28.745355",
-      "source": "ai_authored",
-      "description": ""
-    },
-    {
       "module": "recent_context_auto_inject",
       "class": "RecentContextAutoInjectSkill",
       "file": "recent_context_auto_inject.py",
@@ -41,28 +33,12 @@
       "description": "Senior Coding Engine powered by Google Gemini (google-genai SDK)."
     },
     {
-      "module": "memory_manager",
-      "class": "MemoryManagerSkill",
-      "file": "memory_manager.py",
-      "installed_at": "2026-02-25T14:00:00.000000",
-      "source": "ai_authored",
-      "description": "Vector database long-term memory using ChromaDB."
-    },
-    {
       "module": "computer_use",
       "class": "ComputerUseSkill",
       "file": "computer_use.py",
       "installed_at": "2026-02-25T16:00:00.000000",
       "source": "ai_authored",
       "description": "Vision-based GUI automation: find and click elements on screen using Gemini."
-    },
-    {
-      "module": "workspace_indexer",
-      "class": "WorkspaceIndexerSkill",
-      "file": "workspace_indexer.py",
-      "installed_at": "2026-02-25T18:00:00.000000",
-      "source": "ai_authored",
-      "description": "Automatically indexes files in workspace/ for fast semantic search (RAG)."
     },
     {
       "module": "gemini_cli_bridge",
@@ -127,6 +103,30 @@
       "installed_at": "2026-03-08T08:20:00.000000",
       "source": "ai_authored",
       "description": "Senior-tier coding engine with interactive plan/apply stages and autonomous mode."
+    },
+    {
+      "module": "magic_docs",
+      "class": "MagicDocsSkill",
+      "file": "magic_docs.py",
+      "installed_at": "2026-07-02T16:39:29.662529",
+      "source": "ai_authored",
+      "description": "Automatically builds and maintains a project architecture map (.galactic_map.md) for context mapping."
+    },
+    {
+      "module": "lsp_tooling",
+      "class": "NativeLSPSkill",
+      "file": "lsp_tooling.py",
+      "installed_at": "2026-07-02T16:39:29.662529",
+      "source": "ai_authored",
+      "description": "Provides AST-based python code intelligence (find definitions, extract symbols) for precise codebase navigation."
+    },
+    {
+      "module": "vcr_thinkback",
+      "class": "VCRThinkbackSkill",
+      "file": "vcr_thinkback.py",
+      "installed_at": "2026-07-02T16:39:29.662529",
+      "source": "ai_authored",
+      "description": "Provides a VCR tape-like backup, list, and restoration mechanism to undo file operations during risky codebase operations."
     }
   ]
 }

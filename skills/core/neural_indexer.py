@@ -21,10 +21,31 @@ class NeuralIndexer(GalacticSkill):
 
     def __init__(self, core):
         super().__init__(core)
-        self.indexed_files = {} # path -> md5
         self.progress = 0 # 0-100 percentage
         self.is_scanning = False
         self._mtime_snapshot = {} # path -> mtime, for cheap change detection
+        
+        # Load cache
+        self.db_dir = self.core.config.get('paths', {}).get('db', './db') if self.core and hasattr(self.core, 'config') else './db'
+        os.makedirs(self.db_dir, exist_ok=True)
+        self.cache_path = os.path.join(self.db_dir, 'neural_indexer_cache.json')
+        
+        self.indexed_files = {} # path -> md5
+        if os.path.exists(self.cache_path):
+            try:
+                import json
+                with open(self.cache_path, 'r', encoding='utf-8') as f:
+                    self.indexed_files = json.load(f)
+            except Exception as e:
+                print(f"Failed to load indexer cache: {e}")
+
+    def _save_cache(self):
+        try:
+            import json
+            with open(self.cache_path, 'w', encoding='utf-8') as f:
+                json.dump(self.indexed_files, f)
+        except Exception as e:
+            print(f"Failed to save indexer cache: {e}")
 
     def _get_workspace_mtimes(self, workspace):
         """Quick pass to collect mtimes of all tracked files."""
@@ -106,6 +127,7 @@ class NeuralIndexer(GalacticSkill):
 
         processed_files = 0
         new_files = 0
+        global_batch = []
         
         for root, dirs, files in os.walk(workspace):
             # Ignore hidden and build dirs
@@ -132,23 +154,51 @@ class NeuralIndexer(GalacticSkill):
                     if self.indexed_files.get(path) == content_hash:
                         continue
                         
-                    # Semantic Imprint (Silent)
-                    await self.core.memory.save_memory(
-                        content=f"FILE: {file}\nPATH: {path}\nCONTENT:\n{content[:2000]}",
-                        category="codebase_index",
-                        metadata={"path": path, "type": "code"},
-                        silent=True
-                    )
+                    # Semantic Imprint (Silent) with Global Batching
+                    if len(content) > 100000:
+                        content = content[:100000]
+                        
+                    chunks = [c.strip() for c in content.split('\n\n') if len(c.strip()) > 50]
+                    if not chunks:
+                        chunk_size = 1500
+                        chunks = [content[i:i+chunk_size] for i in range(0, len(content), chunk_size)]
+                    
+                    for i, chunk in enumerate(chunks):
+                        global_batch.append({
+                            "content": f"FILE: {file} (Part {i+1}/{len(chunks)})\nPATH: {path}\nCONTENT:\n{chunk}",
+                            "category": "codebase_index",
+                            "metadata": {"path": path, "type": "code", "chunk_index": i}
+                        })
+                        
                     self.indexed_files[path] = content_hash
                     new_files += 1
                     
-                    if new_files % 10 == 0:
-                        await asyncio.sleep(0.01) # Faster yield
+                    if len(global_batch) >= 100:
+                        if hasattr(self.core.memory, 'save_memories_bulk'):
+                            await self.core.memory.save_memories_bulk(global_batch, silent=True)
+                        else:
+                            for mem in global_batch:
+                                await self.core.memory.save_memory(
+                                    content=mem['content'], category=mem['category'], metadata=mem['metadata'], silent=True
+                                )
+                        global_batch.clear()
+                        await asyncio.sleep(0.01) # Yield to event loop
                         
                 except Exception:
                     continue
+                    
+        if global_batch:
+            if hasattr(self.core.memory, 'save_memories_bulk'):
+                await self.core.memory.save_memories_bulk(global_batch, silent=True)
+            else:
+                for mem in global_batch:
+                    await self.core.memory.save_memory(
+                        content=mem['content'], category=mem['category'], metadata=mem['metadata'], silent=True
+                    )
+            global_batch.clear()
         
         if new_files > 0:
+            self._save_cache()
             # Final line break and summary log
             sys.stdout.write('\n')
             await self.core.log(f"🧠 Neural Indexer: Synchronized {new_files} files with Semantic Memory.", priority=3)

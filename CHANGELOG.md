@@ -1,3 +1,17 @@
+## v2.1.0 — Local Voice & Smarter Memory Update (2026-07-16)
+
+- 🔒 **Secrets Hardening**: Live API keys, tokens, and passwords moved out of the git-tracked `config.yaml` template into a gitignored `config.local.yaml` overlay (`config_loader.py`). Every writer (core, deck, model manager, CLI, voice agent) now saves only to the overlay.
+- 🐛 **Bug Fixes**: Fixed the "(agent processed the request internally but provided no final response)" think-only response bug with a retry-then-salvage strategy; fixed persona display names bleeding full identity-file prose into UI/log labels; registered the dead `/ws/terminal` route; fixed voice "look at my screen" (screen_awareness skill wasn't loading); fixed a remote-access JWT signature bug; added missing `/api/memory/search` and `/api/memory/compact` CLI endpoints; removed an over-broad keyword-triggered prompt injection.
+- 🧠 **Memory Quality**: Semantic recall now excludes the codebase index by default so personal/conversation memories aren't drowned out by code chunks; deregistered four redundant/no-op memory skills; added a **Memory Browser** to the Control Deck (search, inspect, delete individual memories) plus per-category stats.
+- 🔎 **search_codebase Tool**: The background Neural Indexer is now queryable by meaning ("where is X handled?"), scoped to the current workspace so stale code from old repo copies can't leak into answers.
+- 🎙️ **Local Speech-to-Text**: Wake-word listening and push-to-talk now transcribe via local, GPU-accelerated `faster-whisper` by default — cloud Whisper/Google STT is an optional fallback, not the default path.
+- 🔊 **Unified TTS Engine**: Consolidated two divergent text-to-speech implementations into one shared `tts_engine.py` module used by both the voice agent and the API, adding voice **barge-in** (interrupt Chong mid-sentence with a wake word).
+- 💬 **Bridges**: Discord and Gmail bridges are now wired into startup behind their `enabled` config flags (previously fully unwired despite being implemented).
+- 🗂️ **Named Chat Sessions**: Save, switch, and delete named chat sessions from the Control Deck.
+- 🧹 **Repo Cleanup**: Archived ~35 dead/duplicate files (legacy gateways, stale scratch scripts, orphaned Chrome-extension copies); added tooling to detect and purge codebase-index chunks left behind by old installs of this project.
+
+---
+
 - 🚀 **Phase 32: AI Loop & Reasoning Defense**:
   - 🛠️ **Large File Chunking**: Modified `tool_read_file` to default to 300-line chunks for large files. Includes a navigational header to prevent AI infinite loops when reading large codebases.
   - 🛑 **Ollama Reasoning Stop Tokens**: Implemented auto-injection of stop tokens (`</think>`, `<|im_end|>`, etc.) for reasoning-oriented Ollama models (DeepSeek-R1, Qwen3, etc.) to prevent infinite thinking loops.

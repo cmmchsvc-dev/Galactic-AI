@@ -1,0 +1,5 @@
+# FEATURE: vertex — Google Vertex AI (enterprise GCP endpoints)
+# Only needed if you use Vertex AI service accounts rather than a plain
+# Gemini API key. Most users do NOT need this.
+
+google-cloud-aiplatform>=1.70.0

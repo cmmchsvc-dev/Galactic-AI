@@ -1,0 +1,5 @@
+# FEATURE: browser — Autonomous web browsing (Playwright)
+# Lets the AI navigate sites, click, type, scrape, and research on its own.
+# The installer also downloads the Chromium engine (~150 MB).
+
+playwright>=1.44.0

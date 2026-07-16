@@ -1,0 +1,13 @@
+# FEATURE: memory — Semantic long-term memory (vector search)
+# Lets the AI recall by MEANING ("what did I say about my truck?" finds
+# "1966 F100"), not just matching words. Also powers search_codebase.
+# Without this you still get persistent keyword memory (memory_fallback.py).
+#
+# NOTE: torch dominates the download. The installer picks the CPU-only wheel
+# unless it detects an NVIDIA GPU, which cuts ~2 GB.
+
+torch>=2.2.0
+chromadb>=0.4.24
+sentence-transformers>=2.2.2
+numpy>=1.26.0
+scikit-learn>=1.4.0

@@ -54,6 +54,20 @@ def _now():
     return datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
 
+def _save_memory_sync(memory, content, category="general"):
+    """Safely call async save_memory from sync context."""
+    try:
+        loop = asyncio.get_running_loop()
+        # Event loop already running — schedule as fire-and-forget task
+        loop.create_task(memory.save_memory(content, category=category))
+    except RuntimeError:
+        # No event loop — create one for this call
+        try:
+            asyncio.run(memory.save_memory(content, category=category))
+        except Exception:
+            pass
+
+
 @dataclass
 class ProcHandles:
     stdout_f: Optional[object] = None
@@ -105,7 +119,7 @@ class AgentProcess:
 
         # record to memory
         try:
-            self.memory.save_memory(f"Starting agent: {self.name}", category="orchestrator")
+            _save_memory_sync(self.memory, f"Starting agent: {self.name}", category="orchestrator")
         except Exception:
             pass
 
@@ -129,7 +143,7 @@ class AgentProcess:
             self.status = "RUNNING"
             self.start_time = datetime.now()
             try:
-                self.memory.save_memory(f"Agent {self.name} started (PID: {self.process.pid})", category="orchestrator")
+                _save_memory_sync(self.memory, f"Agent {self.name} started (PID: {self.process.pid})", category="orchestrator")
             except Exception:
                 pass
             return f"OK: Agent {self.name} started (PID: {self.process.pid})"
@@ -153,7 +167,7 @@ class AgentProcess:
 
             self.status = "STOPPED"
             try:
-                self.memory.save_memory(f"Agent {self.name} stopped", category="orchestrator")
+                _save_memory_sync(self.memory, f"Agent {self.name} stopped", category="orchestrator")
             except Exception:
                 pass
             self._close_logs()
@@ -169,7 +183,7 @@ class AgentProcess:
             exit_code = self.process.poll()
             self.status = "CRASHED"
             try:
-                self.memory.save_memory(
+                _save_memory_sync(self.memory,
                     f"Agent {self.name} crashed (Exit Code: {exit_code})",
                     category="orchestrator",
                 )
@@ -197,7 +211,7 @@ class GalacticOrchestratorV2:
             name: AgentProcess(name, cfg, self.memory) for name, cfg in self.config.items()
         }
         try:
-            self.memory.save_memory("Galactic Orchestrator V2 initialized", category="system")
+            _save_memory_sync(self.memory, "Galactic Orchestrator V2 initialized", category="system")
         except Exception:
             pass
 

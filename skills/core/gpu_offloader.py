@@ -24,19 +24,33 @@ class GPUOffloader(GalacticSkill):
             "ampere":    "cuda:1" if self.device_count > 1 else ("cuda:0" if self.device_count > 0 else "cpu")
         }
 
-    def get_device(self, workload_type="standard"):
-        """Route workloads based on priority and hardware capability."""
+    def get_device(self, workload_type="standard", vram_required_gb=2.0):
+        """Route workloads dynamically based on VRAM and hardware capability."""
         if self.device_count == 0:
             return "cpu"
-        
-        # Priority mapping
-        if workload_type in ("shadow_thinking", "heavy_inference", "reasoning"):
-            return self.devices["blackwell"] 
-        
-        if workload_type in ("embeddings", "vision", "vector_search"):
-            return self.devices["ampere"]
             
-        return self.devices["ampere"] # Default to second GPU or first GPU if only one
+        def has_vram(device_id, needed_gb):
+            try:
+                props = torch.cuda.get_device_properties(device_id)
+                reserved = torch.cuda.memory_reserved(device_id)
+                free = (props.total_memory - reserved) / (1024**3)
+                return free >= needed_gb
+            except Exception:
+                return False
+
+        pref_id = 0 # default blackwell
+        if workload_type in ("embeddings", "vision", "vector_search") and self.device_count > 1:
+            pref_id = 1
+            
+        if has_vram(pref_id, vram_required_gb):
+            return f"cuda:{pref_id}"
+            
+        # Fallback to the other GPU if preferred is full
+        alt_id = 1 if pref_id == 0 else 0
+        if self.device_count > 1 and has_vram(alt_id, vram_required_gb):
+            return f"cuda:{alt_id}"
+            
+        return "cpu" # Out of VRAM fallback
 
     async def get_gpu_stats(self):
         """Returns live telemetry for the dashboard."""
@@ -53,5 +67,10 @@ class GPUOffloader(GalacticSkill):
         return stats
 
     async def run(self):
-        await self.core.log(f"⚡ GPU Accelerator Online. 5070 Ti (C0) & 3080 (C1) identified.", priority=3)
+        gpu_count = torch.cuda.device_count() if torch.cuda.is_available() else 0
+        if gpu_count > 0:
+            gpu_names = [f"{torch.cuda.get_device_properties(i).name} (C{i})" for i in range(gpu_count)]
+            await self.core.log(f"⚡ GPU Accelerator Online. {' & '.join(gpu_names)} identified.", priority=3)
+        else:
+            await self.core.log("⚡ GPU Accelerator: No CUDA devices found. CPU mode.", priority=3)
         # Warm up GPUs if needed

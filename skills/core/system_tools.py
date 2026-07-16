@@ -43,6 +43,18 @@ class SystemSkill(GalacticSkill):
 
     def get_tools(self):
         return {
+            "analyze_image": {
+                "description": "Analyze an image using the vision model to describe its contents or answer a prompt about it.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "path": {"type": "string", "description": "Absolute path to the image file."},
+                        "prompt": {"type": "string", "description": "Optional prompt to ask about the image (e.g. 'what is the text in this image?')."}
+                    },
+                    "required": ["path"]
+                },
+                "fn": self.tool_analyze_image
+            },
             "list_dir": {
                 "description": "List directory contents with sizes and dates. ALWAYS use absolute paths.",
                 "parameters": {
@@ -421,6 +433,18 @@ class SystemSkill(GalacticSkill):
                 },
                 "fn": self.tool_memory_imprint
             },
+            "search_codebase": {
+                "description": "Semantic search over this project's own source code (the Neural Indexer's vector index). Find where functionality lives by MEANING, e.g. 'where is the wake-word toggle handled?'. Complements grep_search (exact text) — use this when you don't know the exact string. Returns file paths + code snippets.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "query": {"type": "string", "description": "What to look for, in plain language."},
+                        "top_k": {"type": "number", "description": "Number of matches (default: 6)."}
+                    },
+                    "required": ["query"]
+                },
+                "fn": self.tool_search_codebase
+            },
             "text_to_speech": {
                 "description": "Convert text to speech using ElevenLabs. Returns path to audio file.",
                 "parameters": {
@@ -636,6 +660,26 @@ class SystemSkill(GalacticSkill):
 
         loop = asyncio.get_running_loop()
         return await loop.run_in_executor(None, _img_sync)
+
+    async def tool_analyze_image(self, args):
+        path = args.get('path', '')
+        prompt = args.get('prompt', 'Describe what is in this image in detail.')
+        if not os.path.exists(path):
+            return f"[ERROR] Image not found at {path}"
+        try:
+            import base64
+            import mimetypes
+            mime_type, _ = mimetypes.guess_type(path)
+            if not mime_type:
+                mime_type = "image/jpeg"
+            with open(path, "rb") as f:
+                img_data = f.read()
+            b64_str = base64.b64encode(img_data).decode('utf-8')
+            
+            result = await self.core.gateway._analyze_image_b64(b64_str, mime_type, prompt)
+            return result
+        except Exception as e:
+            return f"[ERROR] Failed to analyze image: {e}"
 
     async def tool_clipboard_get(self, args):
         try:
@@ -1011,6 +1055,15 @@ class SystemSkill(GalacticSkill):
         try:
             return await self.core.gateway.tool_memory_imprint({'content': content})
         except: return "[ERROR] Core memory_imprint failed."
+
+    async def tool_search_codebase(self, args):
+        try:
+            return await self.core.gateway.tool_search_codebase({
+                'query': args.get('query', ''),
+                'top_k': args.get('top_k', 6),
+            })
+        except Exception as e:
+            return f"[ERROR] Core search_codebase failed: {e}"
 
     async def tool_text_to_speech(self, args):
         text = args.get('text', '')

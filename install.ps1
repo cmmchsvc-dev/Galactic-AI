@@ -1,121 +1,100 @@
+<#
+.SYNOPSIS
+    Galactic AI installer bootstrap (Windows).
+
+.DESCRIPTION
+    Makes sure Python and the VC++ runtime are present, then hands off to
+    install.py, which does the real work (feature picking, Lite/Full/Custom,
+    GPU detection, verification).
+
+    All arguments are passed straight through to install.py.
+
+.EXAMPLE
+    .\install.ps1                      # guided install
+    .\install.ps1 -profile lite        # fast, ~160 MB
+    .\install.ps1 -profile full        # everything
+    .\install.ps1 -list                # show features
+#>
+[CmdletBinding()]
 param(
-    [switch]$Force
+    [Parameter(ValueFromRemainingArguments = $true)]
+    [string[]]$Args
 )
 
+$ErrorActionPreference = 'Stop'
+$ROOT = $PSScriptRoot
+
 Write-Host ""
-Write-Host "============================================" -ForegroundColor Cyan
-Write-Host "  GALACTIC AI - Automation Suite Installer" -ForegroundColor Cyan
-Write-Host "  v1.6.9" -ForegroundColor DarkCyan
-Write-Host "============================================" -ForegroundColor Cyan
+Write-Host "  Galactic AI - preparing installer..." -ForegroundColor Cyan
 Write-Host ""
 
-# Check VC++ Redistributable
-Write-Host "[1/6] Checking Visual C++ Redistributable..." -ForegroundColor Yellow
-$vcRegPath = "HKLM:\SOFTWARE\WOW6432Node\Microsoft\VisualStudio\14.0\VC\Runtimes\x64"
-if (-not (Test-Path $vcRegPath -ErrorAction SilentlyContinue)) {
-    Write-Host "  Missing VC++ Redist. Attempting automatic installation..." -ForegroundColor Yellow
-    [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
-    $vcUrl = "https://aka.ms/vs/17/release/vc_redist.x64.exe"
-    $vcInstaller = "$env:TEMP\vc_redist.x64.exe"
-    Invoke-WebRequest -Uri $vcUrl -OutFile $vcInstaller
-    Write-Host "  Please grant administrator permission in the pop-up to install Visual C++..." -ForegroundColor Yellow
-    Start-Process -FilePath $vcInstaller -ArgumentList "/install /quiet /norestart" -Verb RunAs -Wait
-    Write-Host "  VC++ Redistributable installed." -ForegroundColor Green
-}
-else {
-    Write-Host "  VC++ Redistributable is already installed." -ForegroundColor Green
+# ── 1. Visual C++ runtime (needed by several native wheels) ──────────────────
+$vcKey = "HKLM:\SOFTWARE\WOW6432Node\Microsoft\VisualStudio\14.0\VC\Runtimes\x64"
+if (-not (Test-Path $vcKey -ErrorAction SilentlyContinue)) {
+    Write-Host "  [1/2] Installing Visual C++ Redistributable (one-time)..." -ForegroundColor Yellow
+    try {
+        [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
+        $vc = "$env:TEMP\vc_redist.x64.exe"
+        Invoke-WebRequest -Uri "https://aka.ms/vs/17/release/vc_redist.x64.exe" -OutFile $vc
+        Write-Host "        Approve the admin prompt to continue..." -ForegroundColor DarkYellow
+        Start-Process -FilePath $vc -ArgumentList "/install /quiet /norestart" -Verb RunAs -Wait
+        Write-Host "        Visual C++ installed." -ForegroundColor Green
+    } catch {
+        Write-Host "        Could not auto-install VC++. If you hit DLL errors later, get it from:" -ForegroundColor Yellow
+        Write-Host "        https://aka.ms/vs/17/release/vc_redist.x64.exe" -ForegroundColor DarkYellow
+    }
+} else {
+    Write-Host "  [1/2] Visual C++ Redistributable: OK" -ForegroundColor Green
 }
 
-# Check Python
-Write-Host "[2/6] Checking Python..." -ForegroundColor Yellow
-if (-not (Get-Command "python" -ErrorAction SilentlyContinue)) {
-    Write-Host "  Python is not installed. Attempting automatic installation..." -ForegroundColor Yellow
-    
-    [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
-    $pythonUrl = "https://www.python.org/ftp/python/3.11.9/python-3.11.9-amd64.exe"
-    $installerPath = "$env:TEMP\python-installer.exe"
-    
-    Write-Host "  Downloading Python 3.11 (this may take a minute)..." -ForegroundColor Cyan
-    Invoke-WebRequest -Uri $pythonUrl -OutFile $installerPath
-    
-    Write-Host "  Installing Python (this will run silently)..." -ForegroundColor Cyan
-    Start-Process -FilePath $installerPath -ArgumentList "/quiet InstallAllUsers=0 PrependPath=1 Include_test=0" -Wait
-    
-    Write-Host "  Reloading environment variables..." -ForegroundColor DarkCyan
-    $env:Path = [System.Environment]::GetEnvironmentVariable("Path", "Machine") + ";" + [System.Environment]::GetEnvironmentVariable("Path", "User")
-    
-    if (-not (Get-Command "python" -ErrorAction SilentlyContinue)) {
-        Write-Host "  ERROR: Automatic Python install failed or PATH not updated." -ForegroundColor Red
-        Write-Host "  Please install manually from https://www.python.org/downloads/" -ForegroundColor Red
-        Write-Host "  Make sure to check 'Add Python to PATH' during installation, then run this installer again." -ForegroundColor Red
+# ── 2. Python 3.9+ ───────────────────────────────────────────────────────────
+function Get-PythonCmd {
+    foreach ($c in @('python', 'python3', 'py')) {
+        $cmd = Get-Command $c -ErrorAction SilentlyContinue
+        if ($cmd) {
+            try {
+                $v = & $c -c "import sys; print('%d.%d' % sys.version_info[:2])" 2>$null
+                if ($v -and [version]$v -ge [version]'3.9') { return $c }
+            } catch { }
+        }
+    }
+    return $null
+}
+
+$py = Get-PythonCmd
+if (-not $py) {
+    Write-Host "  [2/2] Python 3.9+ not found. Installing Python 3.11..." -ForegroundColor Yellow
+    try {
+        [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
+        $pyExe = "$env:TEMP\python-installer.exe"
+        Invoke-WebRequest -Uri "https://www.python.org/ftp/python/3.11.9/python-3.11.9-amd64.exe" -OutFile $pyExe
+        Start-Process -FilePath $pyExe -ArgumentList "/quiet InstallAllUsers=0 PrependPath=1 Include_test=0" -Wait
+        $env:Path = [Environment]::GetEnvironmentVariable("Path", "Machine") + ";" +
+                    [Environment]::GetEnvironmentVariable("Path", "User")
+        $py = Get-PythonCmd
+    } catch {
+        Write-Host "  Python install failed: $_" -ForegroundColor Red
+    }
+    if (-not $py) {
+        Write-Host ""
+        Write-Host "  Please install Python 3.9+ manually, checking 'Add Python to PATH':" -ForegroundColor Red
+        Write-Host "      https://www.python.org/downloads/" -ForegroundColor Cyan
+        Write-Host "  Then re-run this installer." -ForegroundColor Red
         exit 1
     }
-}
-$pythonVersion = python --version 2>&1
-Write-Host "  Found: $pythonVersion" -ForegroundColor Green
-
-# Upgrade pip
-Write-Host "[3/6] Upgrading pip..." -ForegroundColor Yellow
-python -m pip install --upgrade pip --quiet
-Write-Host "  pip upgraded." -ForegroundColor Green
-
-# Install pip dependencies from requirements.txt
-Write-Host "[4/6] Installing Python dependencies (this may take a few minutes)..." -ForegroundColor Yellow
-if ($Force) {
-    Write-Host "  Smart Repair active: Auditing your Python environment..." -ForegroundColor Magenta
-    $missingDeps = python scripts/check_deps.py requirements.txt
-    if ($missingDeps) {
-        Write-Host "  Missing dependencies found: $missingDeps" -ForegroundColor Cyan
-        Write-Host "  Repairing now (no-cache mode)..." -ForegroundColor DarkCyan
-        pip install $missingDeps.Split(" ") --no-cache-dir
-    }
-    else {
-        Write-Host "  All dependencies are healthy. Skipping reinstall." -ForegroundColor Green
-    }
-}
-else {
-    pip install -r requirements.txt
-}
-if ($LASTEXITCODE -ne 0) {
-    Write-Host "  ERROR: pip install failed. Check internet connection and try again." -ForegroundColor Red
-    exit 1
-}
-Write-Host "  Dependencies installed." -ForegroundColor Green
-
-# Install Playwright browser
-Write-Host "[5/6] Installing Chromium browser engine..." -ForegroundColor Yellow
-playwright install chromium
-if ($LASTEXITCODE -ne 0) {
-    Write-Host "  WARNING: Playwright browser install failed. Browser tools will not work." -ForegroundColor Yellow
-    Write-Host "  You can install manually later: playwright install chromium" -ForegroundColor DarkYellow
-}
-else {
-    Write-Host "  Chromium installed." -ForegroundColor Green
+} else {
+    $ver = & $py --version 2>&1
+    Write-Host "  [2/2] $ver : OK" -ForegroundColor Green
 }
 
-# Create workspace directories
-Write-Host "[6/6] Creating workspace directories..." -ForegroundColor Yellow
-New-Item -ItemType Directory -Force -Path "logs" | Out-Null
-New-Item -ItemType Directory -Force -Path "workspace" | Out-Null
-New-Item -ItemType Directory -Force -Path "watch" | Out-Null
-New-Item -ItemType Directory -Force -Path "memory" | Out-Null
-Write-Host "  Directories created." -ForegroundColor Green
+& $py -m pip install --upgrade pip --quiet --disable-pip-version-check 2>$null
 
-Write-Host ""
-Write-Host "============================================" -ForegroundColor Green
-Write-Host "  Installation complete!" -ForegroundColor Green
-Write-Host "============================================" -ForegroundColor Green
-Write-Host ""
-Write-Host "  To start Galactic AI:" -ForegroundColor White
-Write-Host "    .\launch.ps1" -ForegroundColor Cyan
-Write-Host ""
-Write-Host "  Then open your browser to:" -ForegroundColor White
-Write-Host "    http://127.0.0.1:17789" -ForegroundColor Cyan
-Write-Host ""
-Write-Host "  The setup wizard will guide you through configuring" -ForegroundColor White
-Write-Host "  API keys for 14+ AI providers." -ForegroundColor White
-Write-Host ""
-Write-Host "  (Optional) For local AI with no API keys:" -ForegroundColor White
-Write-Host "    1. Install Ollama: https://ollama.com/download" -ForegroundColor DarkCyan
-Write-Host "    2. ollama pull qwen3:8b" -ForegroundColor DarkCyan
-Write-Host ""
+# ── 3. Hand off to the real installer ────────────────────────────────────────
+Push-Location $ROOT
+try {
+    & $py "install.py" @Args
+    $code = $LASTEXITCODE
+} finally {
+    Pop-Location
+}
+exit $code

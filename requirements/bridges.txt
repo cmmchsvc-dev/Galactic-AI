@@ -1,0 +1,7 @@
+# FEATURE: bridges — Chat from Discord, and post to social media
+# Telegram and Gmail bridges need NO extra packages (stdlib + core only),
+# so they work on every install. This group adds the ones that do.
+
+discord.py>=2.3.0            # Discord bot bridge
+tweepy>=4.14.0               # Twitter/X posting
+praw>=7.7.0                  # Reddit

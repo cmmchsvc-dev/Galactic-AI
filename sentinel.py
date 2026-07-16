@@ -22,11 +22,28 @@ def check_for_commands():
     """Checks for and executes commands from the command file."""
     if os.path.exists(COMMAND_FILE_PATH):
         write_status("Command file detected.")
-        with open(COMMAND_FILE_PATH, "r") as f:
-            command = f.read().strip()
+        try:
+            with open(COMMAND_FILE_PATH, "r") as f:
+                command = f.read().strip()
+        except (IOError, OSError) as e:
+            write_status(f"Failed to read command file: {e}")
+            return
         
         # Immediately delete the file to prevent re-execution
-        os.remove(COMMAND_FILE_PATH)
+        try:
+            os.remove(COMMAND_FILE_PATH)
+        except (IOError, OSError):
+            pass
+
+        # Security: Only allow known safe command prefixes
+        ALLOWED_PREFIXES = (
+            'python ', 'py ', 'git ', 'Get-Process', 'Get-Service',
+            'Restart-Service', 'Stop-Process', 'Start-Process',
+            './update.ps1', '.\\update.ps1',
+        )
+        if command and not any(command.startswith(p) for p in ALLOWED_PREFIXES):
+            write_status(f"BLOCKED: Command not in allowlist: {command[:100]}")
+            return
 
         if command:
             write_status(f"Executing command: {command}")

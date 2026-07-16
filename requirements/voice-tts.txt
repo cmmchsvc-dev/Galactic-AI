@@ -1,0 +1,8 @@
+# FEATURE: voice-tts — Text-to-speech (the AI talks back)
+# edge-tts gives free, high-quality Microsoft neural voices with no API key.
+# ElevenLabs and Fish Speech (cloud, key required) are supported too.
+
+edge-tts>=7.0.0              # FREE Microsoft neural voices — no key needed
+gtts>=2.5.0                  # Free Google TTS fallback
+pygame>=2.5.0                # Local audio playback
+elevenlabs>=1.9.0            # Premium voices (optional, needs API key)

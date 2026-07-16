@@ -89,7 +89,7 @@ class RecentContextAutoInjectSkill(GalacticSkill):
         self._orig_speak = gw.speak
         orig = self._orig_speak
 
-        async def patched(self_gateway, user_input, context: str = "", chat_id=None, images=None):
+        async def patched(self_gateway, user_input, context: str = "", chat_id=None, images=None, **kwargs):
             if not self._injected_once:
                 try:
                     block = self._build_inject_block()
@@ -100,7 +100,7 @@ class RecentContextAutoInjectSkill(GalacticSkill):
                 finally:
                     self._injected_once = True
 
-            return await orig(user_input, context=context, chat_id=chat_id, images=images)
+            return await orig(user_input, context=context, chat_id=chat_id, images=images, **kwargs)
 
         try:
             gw.speak = types.MethodType(patched, gw)

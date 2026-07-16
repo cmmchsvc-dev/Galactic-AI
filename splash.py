@@ -4,6 +4,12 @@
 import yaml, os
 
 def _get_version():
+    # version.py is the single source of truth; config is only a fallback.
+    try:
+        from version import VERSION
+        return VERSION
+    except Exception:
+        pass
     try:
         cfg_path = os.path.join(os.path.dirname(__file__), 'config.yaml')
         with open(cfg_path, 'r', encoding='utf-8') as f:
