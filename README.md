@@ -147,20 +147,22 @@ After launching, open **<http://127.0.0.1:17789>**. The Setup Wizard appears aut
 
 | Provider | Top Models | Free Tier |
 |---|---|---|
-| **Google Gemini** | gemini-2.5-pro, gemini-3.1-pro-preview, gemini-2.5-flash | Yes |
-| **Anthropic Claude** | claude-opus-4-6, claude-sonnet-4-5 | No |
-| **OpenAI** | gpt-4o, o3, o1 | No |
-| **xAI Grok** | grok-4, grok-3 | No |
-| **Groq** | llama-3.3-70b, deepseek-r1, gemma-2-9b — blazing fast | Yes |
-| **Mistral** | mistral-large-3, codestral | Yes |
-| **NVIDIA AI** | qwen3-coder-480b, deepseek-v3.2, kimi-k2.5, llama-3.1-405b | Yes |
+| **Google Gemini** | gemini-3.5-flash, gemini-3.1-pro-preview, gemini-2.5-pro | Yes |
+| **Anthropic Claude** | claude-opus-4-8, claude-fable-5, claude-sonnet-4-6 | No |
+| **OpenAI** | gpt-5.4-pro, gpt-5.4, o3-mini | No |
+| **xAI Grok** | grok-4.3, grok-4.20-multi-agent, grok-4-reasoning | No |
+| **Groq** | llama-4-scout-17b, deepseek-r1-distill-llama-70b — blazing fast | Yes |
+| **Mistral** | mistral-small-latest, codestral, devstral | Yes |
+| **NVIDIA AI** | qwen3-coder-480b, deepseek-v4-pro, llama-3.1-405b | Yes |
 | **DeepSeek** | deepseek-chat, deepseek-reasoner | Yes |
 | **Cerebras** | llama-3.3-70b — ultra fast inference | Yes |
-| **OpenRouter** | Any model via unified API | Yes |
+| **OpenRouter** | 50+ curated models incl. Claude Opus 4.8, GPT-5.4, Grok 4.3, GLM-5, Kimi K2.5 | Yes |
 | **HuggingFace** | 1000s of open models | Yes |
 | **Together AI** | 100+ open models | Yes |
-| **Perplexity** | sonar-pro, sonar | No |
+| **Perplexity** | sonar-pro-search (routed via OpenRouter, not a direct provider) | No |
 | **Ollama (Local)** | Any model you pull — qwen3, llama3.3, phi4, mistral, deepseek-coder | **No key needed** |
+
+<sub>Model lists reflect `config/models.yaml`. That file now configures 24 provider integrations in total — several enterprise/niche additions (Amazon Bedrock, GitHub Copilot, ByteDance Doubao, Cloudflare AI Gateway, vLLM, Kilocode, and a few China-market providers) aren't included in this table since they're not part of the core setup flow.</sub>
 
 ---
 
