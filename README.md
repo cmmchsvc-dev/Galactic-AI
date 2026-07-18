@@ -2,9 +2,9 @@
 
 **Sovereign. Universal. Fast.**
 
-A powerful, local-first AI automation platform with 188+ built-in tools, an extensible Skills ecosystem, true persistent memory, local voice I/O (faster-whisper STT + unified TTS), video generation, Chrome browser extension, social media tools, 14+ AI providers, multi-platform messaging bridges, and a real-time web Control Deck. **v2.1.0**
+A powerful, local-first AI automation platform with 188+ built-in tools, an extensible Skills ecosystem, true persistent memory, local voice I/O (faster-whisper STT + unified TTS), video generation, Chrome browser extension, social media tools, 24 AI providers, multi-platform messaging bridges, and a real-time web Control Deck. **v2.1.0**
 
-Run fully local with Ollama (no API keys, no cloud, no tracking), or connect to any of 14 cloud providers. Your data stays yours.
+Run fully local with Ollama (no API keys, no cloud, no tracking), or connect to any of 24 cloud providers. Your data stays yours.
 
 ---
 
@@ -68,7 +68,7 @@ You don't have to download 4 GB of machine-learning wheels to chat with an AI. P
 
 | Profile | Size | Time | What you get |
 |---|---|---|---|
-| **Lite** | ~160 MB | ~2 min | Chat, Control Deck, all 14 AI providers, voice output, keyword memory. Runs great on a laptop. |
+| **Lite** | ~160 MB | ~2 min | Chat, Control Deck, all 24 AI providers, voice output, keyword memory. Runs great on a laptop. |
 | **Full** | ~3.4 GB | 10–20 min | Everything: semantic memory, voice in/out, web browsing, computer control, documents, Discord, OCR. |
 | **Custom** | you decide | — | Toggle features one by one, with live size estimates. |
 
@@ -160,9 +160,20 @@ After launching, open **<http://127.0.0.1:17789>**. The Setup Wizard appears aut
 | **HuggingFace** | 1000s of open models | Yes |
 | **Together AI** | 100+ open models | Yes |
 | **Perplexity** | sonar-pro-search (routed via OpenRouter, not a direct provider) | No |
+| **MiniMax** | MiniMax-M2.5, MiniMax-M2.1, MiniMax-VL-01 (vision) | No |
+| **Moonshot AI (Kimi)** | kimi-k2.5 | No |
+| **Xiaomi** | mimo-v2-flash | No |
+| **Qianfan (Baidu)** | deepseek-v3.2, ernie-5.0-thinking-preview | No |
+| **ByteDance Doubao** | doubao-pro-32k | No |
+| **BytePlus** | byteplus-pro | No |
+| **Amazon Bedrock** | Claude 3.5 Sonnet (Bedrock-hosted) | No |
+| **GitHub Copilot** | copilot-chat (requires a Copilot subscription) | No |
+| **Cloudflare AI Gateway** | Proxy/cache layer — forwards to your chosen backend provider | Gateway is free; backend model costs still apply |
+| **vLLM (Self-Hosted)** | Any model you deploy on your own vLLM server | Yes — self-hosted |
+| **Kilocode** | kilocode-base | No |
 | **Ollama (Local)** | Any model you pull — qwen3, llama3.3, phi4, mistral, deepseek-coder | **No key needed** |
 
-<sub>Model lists reflect `config/models.yaml`. That file now configures 24 provider integrations in total — several enterprise/niche additions (Amazon Bedrock, GitHub Copilot, ByteDance Doubao, Cloudflare AI Gateway, vLLM, Kilocode, and a few China-market providers) aren't included in this table since they're not part of the core setup flow.</sub>
+<sub>All 24 text/chat provider integrations from `config/models.yaml` are listed above. (Two more sections in that file, `google-imagen` and `flux`, are image-generation backends — see the [Image Generation](#image-generation) table instead.) "Free Tier" reflects each provider's standard public offering as of this writing and can change on their end at any time — check the provider's own site before assuming access. Model lists are illustrative, not exhaustive; every provider exposes more models than shown here.</sub>
 
 ---
 
@@ -500,7 +511,7 @@ Galactic-AI/
 ├── gmail_bridge.py           # Gmail IMAP bridge
 ├── personality.py            # AI personality + MEMORY.md + VAULT.md loader
 ├── memory_module_v2.py       # Persistent memory (memory_aura.json)
-├── model_manager.py          # 14-provider model management
+├── model_manager.py          # 24-provider model management
 ├── ollama_manager.py         # Ollama auto-discovery + health monitoring
 ├── scheduler.py              # Cron-style task scheduler (APScheduler)
 ├── nvidia_gateway.py         # NVIDIA NIM image generation gateway
