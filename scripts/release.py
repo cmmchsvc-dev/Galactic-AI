@@ -21,10 +21,12 @@ INCLUDE_LIST = [
     "chrome-extension",
     "skills",
     "config",
+    "requirements",             # feature-group dependency manifests (install.py)
     "CHANGELOG.md",
     "config.yaml",  # We will scrub this later
     "FEATURES.md",
     "index.html",
+    "install.py",               # interactive Lite/Full/Custom installer
     "install.ps1",
     "install.sh",
     "install-chromebook.sh",
@@ -39,12 +41,21 @@ INCLUDE_LIST = [
     "update.sh",
     "scripts",
     "PROJECT_STATE.md",
-    "README_DEV.md",
-    "TODOS.md",
     "create_shortcut.ps1",
     "galactic_ai_flux_v4.ico",
+    "version.py",                # single source of truth for app version
+    "config_loader.py",          # config.yaml + config.local.yaml overlay loader
+    "memory_fallback.py",        # keyword-memory engine for Lite installs
+    "tts_engine.py",             # shared TTS synthesis
+    "local_stt.py",              # local speech-to-text (faster-whisper)
+    "ambient_agent.py",
+    "antigravity_auth.py",
+    "swarm_orchestrator.py",
     "gateway_v3.py",
+    "gateway_tools.py",          # tool implementations mixed into the gateway
     "galactic_core_v2.py",
+    "galactic_cli.py",           # CLI entry point (README/PROJECT_STATE document this)
+    "galactic_desktop.py",       # native desktop shell entry point
     "galactic_memory.py",
     "galactic_orchestrator_v2.py",
     "galactic_dashboard_sovereign.py",
@@ -66,6 +77,9 @@ INCLUDE_LIST = [
     "spinner.py",
     "splash.py",
     "launcher_desktop.py",
+    "Galactic AI Desktop.bat",
+    "Galactic CLI.bat",
+    "Launch Galactic Desktop.vbs",
 ]
 
 def sync_versions(new_version):
@@ -125,12 +139,30 @@ def sync_versions(new_version):
                 f.write(new_content)
             print(f"  Updated: {target}")
 
+def _rmtree_resilient(path, attempts=5):
+    """shutil.rmtree that tolerates Windows file locks (AV scanning a
+    just-written folder, Explorer holding a handle, etc.) by retrying with
+    backoff instead of aborting the whole release build over a cleanup step."""
+    import time
+    for i in range(attempts):
+        try:
+            shutil.rmtree(path)
+            return True
+        except (PermissionError, OSError):
+            if i == attempts - 1:
+                return False
+            time.sleep(1.5 * (i + 1))
+    return False
+
+
 def clean_build_dir():
     """Remove the build directory if it exists."""
     if os.path.exists(BUILD_DIR):
         print(f"Cleaning build directory: {BUILD_DIR}")
-        shutil.rmtree(BUILD_DIR)
-    os.makedirs(BUILD_DIR)
+        if not _rmtree_resilient(BUILD_DIR):
+            print(f"  Warning: could not fully remove {BUILD_DIR} (locked by another "
+                  f"process, e.g. antivirus). Delete it manually when convenient.")
+    os.makedirs(BUILD_DIR, exist_ok=True)
 
 def copy_files():
     """Copy files to the build directory."""
@@ -143,8 +175,12 @@ def copy_files():
             continue
         
         if os.path.isdir(src):
-            # Exclude __pycache__ during copy
-            shutil.copytree(src, dst, ignore=shutil.ignore_patterns('__pycache__', '*.pyc'))
+            # Exclude __pycache__ during copy. dirs_exist_ok=True so a
+            # stubborn leftover build dir (Windows AV holding a lock on a
+            # prior run's files) doesn't hard-fail the whole build —
+            # files just get overwritten in place with fresh content.
+            shutil.copytree(src, dst, ignore=shutil.ignore_patterns('__pycache__', '*.pyc'),
+                            dirs_exist_ok=True)
         else:
             shutil.copy2(src, dst)
     
@@ -262,9 +298,12 @@ def generate_release_notes(version, release_target_dir):
                 found_version = True
                 notes_lines.append(line)
                 continue
-            
+
             if found_version:
-                if line.startswith("## v"):
+                # Stop at the next version header OR the "---" separator that
+                # ends each entry — some legacy entries have unheaded bullets
+                # sitting below the separator that belong to an OLDER release.
+                if line.startswith("## v") or line.strip() == "---":
                     break
                 notes_lines.append(line)
             
@@ -355,9 +394,11 @@ def main():
     
     build_packages(version, release_target_dir)
     generate_release_notes(version, release_target_dir)
-    
-    # Cleanup build dir
-    shutil.rmtree(BUILD_DIR)
+
+    # Cleanup build dir — best-effort; a locked temp folder should never
+    # make an already-successful release build look like it failed.
+    if not _rmtree_resilient(BUILD_DIR):
+        print(f"Warning: could not remove build dir {BUILD_DIR} — safe to delete by hand.")
     print("Done!")
 
 if __name__ == "__main__":
