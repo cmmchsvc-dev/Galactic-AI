@@ -139,7 +139,7 @@ echo "  Download complete."
 # ── Step 5: Apply update (skip protected files) ───────────────────────────────
 echo "[5/6] Applying update..."
 
-PROTECTED="config.yaml logs workspace watch memory MEMORY.md USER.md IDENTITY.md SOUL.md TOOLS.md VAULT.md HEARTBEAT.md"
+PROTECTED="config.yaml config.local.yaml logs workspace watch memory MEMORY.md USER.md IDENTITY.md SOUL.md TOOLS.md VAULT.md HEARTBEAT.md .install_manifest.json"
 
 EXTRACT_DIR="$TEMP_DIR/extracted"
 mkdir -p "$EXTRACT_DIR"
@@ -198,9 +198,85 @@ fi
 echo "  Version stamped    : v$LATEST_VERSION"
 
 # ── Step 6: Update pip dependencies ───────────────────────────────────────────
+# Respect an existing Lite/Custom install (from install.py) instead of always
+# pulling the full ~4GB dependency set. .install_manifest.json records exactly
+# which feature groups were chosen; if it's missing (a pre-installer or
+# manual-pip install), fall back to installing everything, as always.
 echo "[6/6] Updating Python dependencies..."
 if command -v python3 &>/dev/null; then PYTHON=python3; else PYTHON=python; fi
-$PYTHON -m pip install -r "$INSTALL_DIR/requirements.txt" --quiet --upgrade
+
+MANIFEST_PATH="$INSTALL_DIR/.install_manifest.json"
+# Small inline JSON reader — avoids depending on jq being installed.
+read_manifest() {
+    "$PYTHON" - "$MANIFEST_PATH" "$1" <<'PYEOF'
+import json, sys
+try:
+    with open(sys.argv[1], encoding='utf-8') as f:
+        m = json.load(f)
+    if sys.argv[2] == 'features':
+        print(' '.join(m.get('features', [])))
+    elif sys.argv[2] == 'torch':
+        print(m.get('torch', ''))
+except Exception:
+    pass
+PYEOF
+}
+
+if [ -f "$MANIFEST_PATH" ]; then
+    FEATURES=$(read_manifest features)
+    TORCH_MODE=$(read_manifest torch)
+
+    if [ -n "$FEATURES" ]; then
+        echo "  Detected a feature-based install (torch: ${TORCH_MODE:-n/a}): $FEATURES"
+
+        REQ_FILES=("$INSTALL_DIR/requirements/core.txt")
+        for f in $FEATURES; do
+            p="$INSTALL_DIR/requirements/$f.txt"
+            if [ -f "$p" ]; then
+                REQ_FILES+=("$p")
+            else
+                echo "  Warning: requirements/$f.txt not found in this release (feature may have been removed/renamed)."
+            fi
+        done
+
+        for rf in "${REQ_FILES[@]}"; do
+            $PYTHON -m pip install -r "$rf" --quiet --upgrade
+        done
+
+        # torch's wheel resolution differs by index (CPU-only vs CUDA-bundled).
+        # Re-pin explicitly so a generic --upgrade above can't silently swap a
+        # CPU-only install for the larger default (CUDA) build.
+        if [[ " $FEATURES " == *" memory "* ]] && [ "$TORCH_MODE" = "cpu" ]; then
+            echo "  Re-pinning CPU-only torch (matches your original install)..."
+            $PYTHON -m pip install torch --index-url https://download.pytorch.org/whl/cpu --quiet --upgrade
+        fi
+        if [[ " $FEATURES " == *" browser "* ]]; then
+            echo "  Updating Chromium engine..."
+            $PYTHON -m playwright install chromium
+        fi
+
+        # Keep the manifest's version stamp current.
+        "$PYTHON" - "$MANIFEST_PATH" "$LATEST_VERSION" <<'PYEOF'
+import json, sys, datetime
+path, version = sys.argv[1], sys.argv[2]
+try:
+    with open(path, encoding='utf-8') as f:
+        m = json.load(f)
+    m['version'] = version
+    m['installed_at'] = datetime.datetime.now().strftime('%Y-%m-%dT%H:%M:%S')
+    with open(path, 'w', encoding='utf-8') as f:
+        json.dump(m, f, indent=2)
+except Exception:
+    pass
+PYEOF
+    else
+        echo "  Manifest found but unreadable — installing the full dependency set, as always."
+        $PYTHON -m pip install -r "$INSTALL_DIR/requirements.txt" --quiet --upgrade
+    fi
+else
+    echo "  No feature manifest found (pre-installer setup) — installing the full dependency set, as always."
+    $PYTHON -m pip install -r "$INSTALL_DIR/requirements.txt" --quiet --upgrade
+fi
 echo "  Dependencies up to date."
 
 # ── Done ──────────────────────────────────────────────────────────────────────

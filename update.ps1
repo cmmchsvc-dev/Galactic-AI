@@ -132,8 +132,9 @@ catch {
 # ── Step 5: Apply update (skip protected files) ───────────────────────────────
 Write-Host "[5/6] Applying update..." -ForegroundColor Yellow
 
-$protected = @("config.yaml", "logs", "workspace", "watch", "memory",
-    "MEMORY.md", "USER.md", "IDENTITY.md", "SOUL.md", "TOOLS.md", "VAULT.md", "HEARTBEAT.md")
+$protected = @("config.yaml", "config.local.yaml", "logs", "workspace", "watch", "memory",
+    "MEMORY.md", "USER.md", "IDENTITY.md", "SOUL.md", "TOOLS.md", "VAULT.md", "HEARTBEAT.md",
+    ".install_manifest.json")
 
 $tempDir = "$env:TEMP\galactic-update-extracted-$timestamp"
 New-Item -ItemType Directory -Force -Path $tempDir | Out-Null
@@ -185,8 +186,73 @@ if ($patched -ne $configRaw) {
 }
 
 # ── Step 6: Update pip dependencies ───────────────────────────────────────────
+# Respect an existing Lite/Custom install (from install.py) instead of always
+# pulling the full ~4GB dependency set. .install_manifest.json records exactly
+# which feature groups were chosen; if it's missing (an install from before
+# install.py existed, or a manual pip install), fall back to the old
+# behaviour of installing everything — that keeps pre-existing installs
+# working exactly as they always have.
 Write-Host "[6/6] Updating Python dependencies..." -ForegroundColor Yellow
-if ($Force) {
+
+$manifestPath = "$InstallDir\.install_manifest.json"
+$manifest = $null
+if (Test-Path $manifestPath) {
+    try { $manifest = Get-Content $manifestPath -Raw | ConvertFrom-Json } catch { $manifest = $null }
+}
+
+if ($manifest -and $manifest.features) {
+    $features = @($manifest.features)
+    Write-Host "  Detected a feature-based install (torch: $($manifest.torch)): $($features -join ', ')" -ForegroundColor Cyan
+
+    $reqFiles = @("$InstallDir\requirements\core.txt")
+    foreach ($f in $features) {
+        $p = "$InstallDir\requirements\$f.txt"
+        if (Test-Path $p) { $reqFiles += $p }
+        else { Write-Host "  Warning: requirements\$f.txt not found in this release (feature may have been removed/renamed)." -ForegroundColor Yellow }
+    }
+
+    if ($Force) {
+        Write-Host "  Smart Repair active: Auditing your Python environment..." -ForegroundColor Magenta
+        $anyMissing = $false
+        foreach ($rf in $reqFiles) {
+            $missingDeps = python scripts/check_deps.py $rf
+            if ($missingDeps) {
+                $anyMissing = $true
+                Write-Host "  Missing ($([IO.Path]::GetFileName($rf))): $missingDeps" -ForegroundColor Cyan
+                python -m pip install $missingDeps.Split(" ") --no-cache-dir
+            }
+        }
+        if (-not $anyMissing) { Write-Host "  All dependencies for your installed features are healthy." -ForegroundColor Green }
+    }
+    else {
+        foreach ($rf in $reqFiles) {
+            python -m pip install -r $rf --upgrade
+        }
+        # torch's wheel resolution differs by index (CPU-only vs CUDA-bundled).
+        # A generic "--upgrade" above may have pulled the default (larger, CUDA)
+        # build regardless of the user's original choice — reinstall it
+        # explicitly via the recorded preference so it matches every time,
+        # rather than only on first install.
+        if (($features -contains "memory") -and ($manifest.torch -eq "cpu")) {
+            Write-Host "  Re-pinning CPU-only torch (matches your original install)..." -ForegroundColor DarkGray
+            python -m pip install torch --index-url https://download.pytorch.org/whl/cpu --upgrade
+        }
+        if ($features -contains "browser") {
+            Write-Host "  Updating Chromium engine..." -ForegroundColor DarkGray
+            python -m playwright install chromium
+        }
+    }
+
+    # Keep the manifest's version stamp current so future --repair/--list/update
+    # runs see accurate history.
+    try {
+        $manifest.version = $latestVersion
+        $manifest.installed_at = (Get-Date -Format "yyyy-MM-ddTHH:mm:ss")
+        $manifest | ConvertTo-Json -Depth 5 | Set-Content -Path $manifestPath
+    } catch { }
+}
+elseif ($Force) {
+    Write-Host "  No feature manifest found (pre-installer setup) — auditing full dependency set..." -ForegroundColor DarkGray
     Write-Host "  Smart Repair active: Auditing your Python environment..." -ForegroundColor Magenta
     $missingDeps = python scripts/check_deps.py "$InstallDir\requirements.txt"
     if ($missingDeps) {
@@ -199,6 +265,7 @@ if ($Force) {
     }
 }
 else {
+    Write-Host "  No feature manifest found (pre-installer setup) — installing the full dependency set, as always." -ForegroundColor DarkGray
     python -m pip install -r "$InstallDir\requirements.txt" --upgrade
 }
 Write-Host "  Dependencies up to date." -ForegroundColor Green
