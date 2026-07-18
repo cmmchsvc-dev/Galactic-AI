@@ -2030,6 +2030,9 @@ class GalacticGateway(GatewayToolsMixin):
             nonlocal consecutive_failures, recent_tools, _nudge_half_sent, _nudge_80_sent
             nonlocal _text_only_action_turns, _recent_response_fingerprints
             nonlocal _discovery_calls_used, _tool_name_counts  # V17
+            # Counters incremented below — without nonlocal, the `+=` makes them
+            # local to _react_loop and reading them first raises UnboundLocalError.
+            nonlocal _empty_final_retries, _persistence_nudges
 
             for _ in range(max_turns):
                 # ── STOP FLAG CHECK (user pressed STOP or /api/stop_agent was called) ──
