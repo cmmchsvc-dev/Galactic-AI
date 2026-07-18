@@ -1950,8 +1950,19 @@ class GalacticGateway(GatewayToolsMixin):
                           f"Focus on completing the current step before moving to the next.\n\n{full_context}"
                 await self.core.log(f"[Planner] Activated plan for: {user_input[:80]}...")
 
-        # 1. Detect coding intent (turn-level) BEFORE building the prompt
-        is_coding = any(k in lower_input for k in ["build", "create", "write", "implement", "refactor", "fix", "update", "add", "change"]) or lower_input.startswith("/code")
+        # 1. Detect coding intent (turn-level) BEFORE building the prompt.
+        #    Word-boundary matching: plain substring matching fired on "address"
+        #    and "additional" (containing "add") and "prefix" (containing "fix"),
+        #    so read-only requests like "scan the codebase and tell me what to
+        #    address" were misread as coding work and put into Senior Coder mode.
+        _CODING_VERBS = (
+            "build", "building", "create", "creating", "write", "writing",
+            "implement", "implementing", "refactor", "refactoring",
+            "fix", "fixing", "update", "updating", "add", "adding",
+            "change", "changing", "patch", "patching", "rename", "delete",
+        )
+        _coding_re = re.compile(r'\b(?:' + '|'.join(_CODING_VERBS) + r')(?:s|es|ed|d)?\b')
+        is_coding = bool(_coding_re.search(lower_input)) or lower_input.startswith("/code")
         autonomous = "autonomous" in lower_input or "go full" in lower_input or self.core.config.get('coding_agent', {}).get('autonomous', False)
         # Session-scoped flag: drives the persistence nudge and _call_llm's
         # per-turn prompt rebuild (previously never set, so both misfired).
@@ -1977,6 +1988,7 @@ class GalacticGateway(GatewayToolsMixin):
         _nudge_80_sent = False     # Track whether 80% nudge was sent
         _text_only_action_turns = 0  # Consecutive turns where model claimed an action but called no tools
         _empty_final_retries = 0     # Think-only final turns we've already re-prompted for a real answer
+        _persistence_nudges = 0      # "Senior Coder" nudges sent (hard-capped — see below)
         _recent_response_fingerprints = []  # Rolling hashes of recent responses for text-loop detection
         _discovery_budget = 20     # V17: Max total discovery calls per speak()
         _discovery_calls_used = 0  # V17: Running counter
@@ -2561,9 +2573,20 @@ class GalacticGateway(GatewayToolsMixin):
                     # ── Persistence Nudge (V17: gated behind discovery budget) ──
                     # Only nudge early in the task — if the model has already done extensive research,
                     # let it stop instead of forcing it back into a loop.
-                    if self.is_coding and turn_count < max_turns - 1 and _discovery_calls_used < _discovery_budget // 2:
+                    #
+                    # HARD CAP (_persistence_nudges): this nudge fires precisely when the
+                    # model called NO tools, but the discovery-budget gate below only
+                    # advances when tools ARE called. Without a dedicated counter the gate
+                    # can never close during a text-only exchange, so the nudge re-fires
+                    # every turn until max_turns — the user just sees "You are in 'Senior
+                    # Coder' mode" over and over. Nudge once; if the model still says it's
+                    # finished, take it at its word.
+                    if (self.is_coding and _persistence_nudges < 1
+                            and turn_count < max_turns - 1
+                            and _discovery_calls_used < _discovery_budget // 2):
                         # If coding mode is active, we expect verification or a TASK_COMPLETE marker.
                         if "TASK_COMPLETE" not in response_text and "verification" not in response_text.lower():
+                             _persistence_nudges += 1
                              await self.core.log("🔄 Persistence Nudge: Coding task not verifiably complete.", priority=2)
                              messages.append({"role": "assistant", "content": response_text})
                              messages.append({
