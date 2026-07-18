@@ -150,7 +150,9 @@ gta-clone/
 miniconda.exe
 *.webm
 *.bak
-images/video/
+# Runtime-generated output (desktop screenshots, AI-generated images, QR
+# pairing codes, Veo video clips) — personal content, not project source.
+images/
 temp_speech.*
 
 # ─── OS & IDE ─────────────────────────────────────────────────────────────────
