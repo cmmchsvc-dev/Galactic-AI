@@ -103,6 +103,9 @@ social-media-promo.md
 !privacy.html
 !terms.html
 !chrome-extension/*.html
+# The Control Deck UI — the app serves these and 500s without them.
+!deck_modern.html
+!deck_legacy.html
 *.jpg
 *.svg
 *.docx

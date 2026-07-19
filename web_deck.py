@@ -202,15 +202,23 @@ class GalacticWebDeck:
         return web.json_response({'ok': False, 'message': 'No active task to cancel'})
 
     async def handle_stop_agent(self, request):
-        """POST /api/stop_agent - Sets the stop flag so the ReAct loop exits cleanly at the next turn.
-        Unlike cancel_task (which abruptly cancels async tasks), this asks the agent to stop gracefully."""
+        """POST /api/stop_agent — escalating stop.
+
+        First press asks the ReAct loop to exit cleanly at the next turn
+        boundary (preserves state, finishes the current thought). But that flag
+        is only read BETWEEN turns, so it cannot interrupt a tool call that is
+        already running — a slow analyze_image or browser action would ignore
+        STOP for minutes, which just made users mash the button.
+
+        So: if a stop is already pending (i.e. the graceful request didn't take
+        because we're stuck inside a tool), escalate to a hard task cancel —
+        the same thing Escape does in the terminal, and the only thing that can
+        actually interrupt work in progress.
+        """
         gateway = self.core.gateway
-        
-        # 1. Gracefully stop the main gateway
-        if hasattr(gateway, '_stop_requested'):
-            gateway._stop_requested = True
-            
-        # 2. Cancel all running subagents in the background
+        already_stopping = bool(getattr(gateway, '_stop_requested', False))
+
+        # Always cancel subagents — they're independent of the main loop.
         mgr = self._get_subagent_mgr()
         subagent_cancelled_count = 0
         if mgr and hasattr(mgr, 'active_sessions'):
@@ -218,11 +226,34 @@ class GalacticWebDeck:
                 if session.status in ('pending', 'running'):
                     mgr.cancel_session(session.id)
                     subagent_cancelled_count += 1
-                    
-        await self.core.log(f"🛑 STOP signal sent. Gracefully stopping main agent. Cancelled {subagent_cancelled_count} running subagents.", priority=1)
+
+        if already_stopping:
+            # ── Escalation: force-cancel the in-flight tasks ──
+            cancelled = 0
+            for t in list(getattr(gateway, '_active_tasks', []) or []):
+                if not t.done():
+                    t.cancel()
+                    cancelled += 1
+            gateway._stop_requested = False  # consumed; loop is being torn down
+            await self.core.log(
+                f"🚫 STOP escalated — force-cancelled {cancelled} in-flight task(s) "
+                f"(agent was inside a long-running tool).", priority=1)
+            return web.json_response({
+                'ok': True, 'escalated': True, 'cancelled': cancelled,
+                'message': (f'🚫 Force-stopped {cancelled} running task(s).'
+                            if cancelled else
+                            '🚫 Nothing left running — agent already idle.')
+            })
+
+        gateway._stop_requested = True
+        await self.core.log(
+            f"🛑 STOP signal sent. Stopping at next turn. "
+            f"Cancelled {subagent_cancelled_count} running subagents.", priority=1)
         return web.json_response({
-            'ok': True, 
-            'message': f'🛑 Stop signal sent. Main agent will stop at next turn. Cancelled {subagent_cancelled_count} subagent(s).'
+            'ok': True, 'escalated': False,
+            'message': (f'🛑 Stopping at the next turn'
+                        + (f' · cancelled {subagent_cancelled_count} subagent(s)' if subagent_cancelled_count else '')
+                        + '. If it\'s mid-tool, press STOP again to force it.')
         })
 
     # ── Subagent Hive Mind API ───────────────────────────────────────────────

@@ -26,6 +26,8 @@ INCLUDE_LIST = [
     "config.yaml",  # We will scrub this later
     "FEATURES.md",
     "index.html",
+    "deck_modern.html",         # Control Deck UI — web_deck.py 500s without it
+    "deck_legacy.html",         # legacy deck theme (selectable in settings)
     "install.py",               # interactive Lite/Full/Custom installer
     "install.ps1",
     "install.sh",
