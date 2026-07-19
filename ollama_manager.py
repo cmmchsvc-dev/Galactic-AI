@@ -36,6 +36,10 @@ class OllamaManager:
 
         self.discovered_models: list[str] = []
         self.model_context_windows: dict[str, int] = {}
+        # Ollama-reported capabilities per model, e.g. ['completion', 'tools',
+        # 'vision', 'thinking']. Used to avoid second-guessing models that
+        # handle their own reasoning/termination natively.
+        self.model_capabilities: dict[str, list] = {}
         self.is_healthy: bool = False
         self._last_health_check: float = 0.0
         self._cached_health: bool = False
@@ -159,6 +163,19 @@ class OllamaManager:
         """Return the context window size for a model, or a safe default."""
         return self.model_context_windows.get(model_name, default)
 
+    def get_capabilities(self, model_name: str) -> list:
+        """Ollama-reported capabilities for a model (may be empty if unknown)."""
+        return self.model_capabilities.get(model_name, [])
+
+    def supports_thinking(self, model_name: str) -> bool:
+        """True if Ollama reports native reasoning support for this model.
+
+        Native-thinking models stream reasoning on a separate channel and
+        terminate themselves correctly, so they must NOT be second-guessed
+        with hand-rolled stop sequences.
+        """
+        return 'thinking' in (self.model_capabilities.get(model_name) or [])
+
     def get_status(self) -> dict:
         """Return a status dict for the /status endpoint and Telegram /status command."""
         return {
@@ -186,6 +203,11 @@ class OllamaManager:
                         json={"name": model_name}
                     )
                     data = resp.json()
+                    # Same response already tells us what the model can do —
+                    # capture it here rather than making a second call.
+                    caps = data.get('capabilities')
+                    if isinstance(caps, list):
+                        self.model_capabilities[model_name] = caps
                     # Ollama returns nested modelinfo with arch-specific keys
                     model_info = data.get('model_info', {})
                     ctx = (

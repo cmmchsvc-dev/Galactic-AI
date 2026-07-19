@@ -4404,14 +4404,23 @@ class GalacticGateway(GatewayToolsMixin):
         if stops:
             ollama_opts["stop"] = stops if isinstance(stops, list) else [stops]
         else:
-            # Auto-inject stop tokens for reasoning/distilled model families.
-            # These models enter a <think> block and spin forever without stop sequences.
+            # Legacy safety net for OLD distilled reasoning models (the original
+            # R1-distill wave) that emit raw <think> text and never terminate
+            # without explicit stop sequences.
+            #
+            # Modern models with NATIVE thinking (Ollama reports 'thinking' in
+            # capabilities — e.g. qwen3.x, current DeepSeek) stream reasoning on
+            # a separate channel and terminate correctly on their own. Forcing a
+            # hand-rolled stop list onto them overrides whatever the Modelfile
+            # declared, for no benefit — so skip them entirely.
             model_lower = str(self.llm.model).lower()
             REASONING_KEYWORDS = (
-                'qwen3', 'deepseek-r1', 'r1-', 'qwq', 'reasoning',
-                '-think', 'distill', 'abliterat'
+                'deepseek-r1', 'r1-', 'qwq', '-think', 'distill', 'abliterat'
             )
-            if any(kw in model_lower for kw in REASONING_KEYWORDS):
+            _om = getattr(self.core, 'ollama_manager', None)
+            _native_thinking = bool(_om and _om.supports_thinking(self.llm.model))
+
+            if not _native_thinking and any(kw in model_lower for kw in REASONING_KEYWORDS):
                 stop_tokens = [
                     "<|im_end|>",
                     "<|eot_id|>",
@@ -4419,9 +4428,13 @@ class GalacticGateway(GatewayToolsMixin):
                     "<|EOT|>",
                 ]
                 ollama_opts["stop"] = stop_tokens
+                # priority=3 — this is routine housekeeping, not an alert. It
+                # used to log at priority=1 with a 🛑, which read like reasoning
+                # was being cut off and spammed the console on every call.
                 await self.core.log(
-                    f"\U0001f6d1 Ollama: auto-injected reasoning stop tokens for {self.llm.model}",
-                    priority=1
+                    f"Ollama: applied legacy stop tokens for {self.llm.model} "
+                    f"(no native thinking support reported)",
+                    priority=3
                 )
 
         # ── Format messages ──
