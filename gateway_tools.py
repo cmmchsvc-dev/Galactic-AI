@@ -803,6 +803,75 @@ class GatewayToolsMixin:
             return f"[OK] Restored checkpoint {uuid_val}. State restored: turn {state.get('turn_count')}. You MUST now continue the interrupted task."
         except Exception as e:
             return f"[Error] Failed to resume workflow: {str(e)}"
+    @staticmethod
+    def _path_not_found_hint(path, verb="read"):
+        """Turn a bare 'no such file' into a self-correcting message.
+
+        A model that typos a filename ("texels.js" for "textures.js") learns
+        nothing from '[Errno 2] No such file or directory' — so it guesses
+        again, and again. Listing the closest real filenames from the actual
+        directory lets it fix itself on the very next turn instead of looping.
+        """
+        import difflib as _diff
+        try:
+            abs_path = os.path.abspath(path)
+            wanted = os.path.basename(abs_path)
+            directory = os.path.dirname(abs_path) or '.'
+
+            # Walk up to the nearest directory that actually exists, so a wrong
+            # folder name is reported as clearly as a wrong file name.
+            probe = directory
+            while probe and not os.path.isdir(probe):
+                parent = os.path.dirname(probe)
+                if parent == probe:
+                    break
+                probe = parent
+
+            if not os.path.isdir(probe):
+                return (f"[ERROR] Cannot {verb} '{path}' — not found, and no parent "
+                        f"directory of that path exists. Check the path and try again.")
+
+            try:
+                entries = sorted(os.listdir(probe))
+            except Exception:
+                entries = []
+            files = [e for e in entries if os.path.isfile(os.path.join(probe, e))]
+
+            lines = [f"[ERROR] File not found: {abs_path}"]
+            if probe != directory:
+                lines.append(f"The directory '{directory}' does not exist either. "
+                             f"Nearest existing directory: {probe}")
+
+            close = _diff.get_close_matches(wanted, files, n=5, cutoff=0.5)
+            if not close:
+                # Fall back to same-extension neighbours — a bad stem with the
+                # right extension is still a strong hint.
+                ext = os.path.splitext(wanted)[1].lower()
+                if ext:
+                    close = [f for f in files if f.lower().endswith(ext)][:8]
+
+            if close:
+                lines.append(f"Did you mean one of these? (exact names in {probe})")
+                lines.extend(f"  - {c}" for c in close)
+            elif files:
+                lines.append(f"Files actually in {probe}:")
+                lines.extend(f"  - {f}" for f in files[:15])
+                if len(files) > 15:
+                    lines.append(f"  ... and {len(files) - 15} more")
+            else:
+                lines.append(f"Directory {probe} contains no files.")
+
+            # Only point at "the list above" when there actually is one.
+            if close or files:
+                lines.append("Do NOT retry the same path — it does not exist. Use an exact "
+                             "name from the list above, or call list_dir on the directory.")
+            else:
+                lines.append("Do NOT retry the same path — it does not exist. "
+                             "Check the directory before trying again.")
+            return "\n".join(lines)
+        except Exception:
+            return f"[ERROR] File not found: {path}"
+
     async def tool_read_file(self, args):
         """Read a file with optional line range and line numbers (non-blocking)."""
         path = args.get('path')
@@ -856,6 +925,15 @@ class GatewayToolsMixin:
             footer = "" if e >= total_lines else f"\n--- (More content below. Next: start_line={e+1}) ---"
 
             return header + result + footer
+        except FileNotFoundError:
+            return self._path_not_found_hint(path, verb="read")
+        except (IsADirectoryError, PermissionError) as e:
+            # Windows raises PermissionError (not IsADirectoryError) when you
+            # open() a directory, which reads as a confusing "access denied".
+            if os.path.isdir(path):
+                return (f"[ERROR] '{path}' is a directory, not a file. "
+                        f"Use list_dir to see what's inside it.")
+            return f"Error reading file: {e}"
         except Exception as e:
             return f"Error reading file: {e}"
     async def tool_write_file(self, args):

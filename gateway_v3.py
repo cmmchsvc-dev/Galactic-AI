@@ -2189,7 +2189,12 @@ class GalacticGateway(GatewayToolsMixin):
                         # Block if the SAME tool+args is called too many times across ALL turns
                         _loop_limit = 3
                         if tool_name == 'read_file':
-                            _loop_limit = 50
+                            # Was 50 — high enough that a mistyped filename could
+                            # spin for dozens of turns before anything intervened.
+                            # Legitimate re-reads (different chunks of a big file)
+                            # use different args, so they get their own signature
+                            # and aren't affected by this cap.
+                            _loop_limit = 12
                         elif is_browser_tool:
                             _loop_limit = 12 # V13: Allow retries for browsing
                         elif tool_name in _DISCOVERY_TOOLS:
