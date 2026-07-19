@@ -1281,6 +1281,18 @@ class GalacticGateway(GatewayToolsMixin):
     }
     _OLLAMA_MAX_TOOLS = 28
 
+    # Coding tasks get a deliberately TIGHT set. Local models degrade at tool
+    # *selection* as choices grow — they pick a plausible-looking wrong tool, or
+    # narrate an action instead of calling anything. Mid-refactor, the browser /
+    # image / social tools are pure noise competing for attention, so drop them
+    # and leave only what's needed to find, read, change, and check code.
+    _OLLAMA_CODING_TOOLS = {
+        'read_file', 'write_file', 'edit_file', 'list_dir', 'find_files',
+        'grep_search', 'regex_search', 'search_codebase', 'exec_shell',
+        'execute_python', 'find_tools',
+    }
+    _OLLAMA_CODING_MAX_TOOLS = 14
+
     def _get_active_tools(self):
         """
         Returns a filtered subset of tools to prevent overloading models with 189+ definitions.
@@ -1310,7 +1322,11 @@ class GalacticGateway(GatewayToolsMixin):
             return active
 
         # ── Ollama tool-overload guard ──
-        core = {k: v for k, v in self.tools.items() if k in self._OLLAMA_CORE_TOOLS}
+        # Coding work uses a tighter, focused set (see _OLLAMA_CODING_TOOLS).
+        _coding = bool(getattr(self, 'is_coding', False))
+        _core_names = self._OLLAMA_CODING_TOOLS if _coding else self._OLLAMA_CORE_TOOLS
+        _max_tools = self._OLLAMA_CODING_MAX_TOOLS if _coding else self._OLLAMA_MAX_TOOLS
+        core = {k: v for k, v in self.tools.items() if k in _core_names}
 
         last_user_text = ""
         for m in reversed(self.history or []):
@@ -1323,7 +1339,10 @@ class GalacticGateway(GatewayToolsMixin):
                 break
 
         relevant = {}
-        if last_user_text:
+        # In coding mode, keyword-"relevant" extras are exactly the noise we're
+        # trying to remove (a task mentioning "image" or "page" would drag in
+        # image/browser tools mid-refactor), so skip that expansion entirely.
+        if last_user_text and not _coding:
             words = {w for w in re.findall(r'[a-z0-9]{4,}', last_user_text.lower())}
             for name, spec in active.items():
                 if name in core:
@@ -1339,8 +1358,8 @@ class GalacticGateway(GatewayToolsMixin):
         if 'find_tools' in self.tools:
             merged['find_tools'] = self.tools['find_tools']
 
-        if len(merged) > self._OLLAMA_MAX_TOOLS:
-            budget = max(0, self._OLLAMA_MAX_TOOLS - len(core) - 1)  # -1 reserves find_tools' slot
+        if len(merged) > _max_tools:
+            budget = max(0, _max_tools - len(core) - 1)  # -1 reserves find_tools' slot
             extras = list(relevant.items()) + list(discovered.items())
             merged = {**core, **dict(extras[:budget])}
             if 'find_tools' in self.tools:
