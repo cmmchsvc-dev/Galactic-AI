@@ -130,6 +130,11 @@ body{background:radial-gradient(1200px 800px at 85% -10%,rgba(139,92,246,0.16),t
 #sub-header{height:42px;background:var(--glass);border-bottom:1px solid var(--border);display:flex;align-items:center;justify-content:center;padding:0 24px;flex-shrink:0;z-index:90;position:relative;overflow:hidden}
 #orb-container{display:flex;justify-content:center;align-items:center;pointer-events:none}
 #thinking-orb{display:none;color:var(--cyan);font-family:var(--mono);font-size:0.85rem;text-shadow:0 0 10px rgba(0,243,245,0.5);white-space:nowrap;font-weight:bold;padding:4px 12px;border-radius:10px}
+#nudge-bar{display:none;align-items:center;gap:6px;margin:6px auto 0;width:min(420px,80vw);animation:riseIn .25s var(--ease) both}
+#nudge-input{flex:1;background:var(--bg3);border:1px solid rgba(0,243,255,0.3);border-radius:9px;padding:6px 11px;color:var(--text);font-family:var(--font);font-size:0.82rem;outline:none}
+#nudge-input:focus{border-color:var(--cyan)}
+#nudge-send{background:var(--bg3);border:1px solid rgba(0,243,255,0.4);border-radius:9px;color:var(--cyan);font-weight:700;font-size:0.78rem;padding:6px 12px;cursor:pointer;white-space:nowrap;transition:.15s}
+#nudge-send:hover{background:rgba(0,243,255,0.12);border-color:var(--cyan)}
 
 /* ── SIDEBAR ─────────────────────────────────────────────────────────────── */
 #sidebar{width:240px;min-width:190px;background:var(--glass);border-right:1px solid var(--border);display:flex;flex-direction:column;overflow:hidden;transition:width .2s;order:-2}
@@ -971,6 +976,12 @@ body[data-viz-theme="lightspeed"] #sidebar, body[data-viz-theme="lightspeed"] #c
     <div id="thinking-orb">⠋ Pondering the orb...</div>
     <div id="progress-container" style="display:none;width:300px;height:4px;background:rgba(255,255,255,0.05);border-radius:2px;margin:8px auto;overflow:hidden;border:1px solid rgba(0,243,255,0.1)">
       <div id="progress-bar" style="width:0%;height:100%;background:linear-gradient(90deg, var(--cyan), var(--pink));transition:width 0.3s ease-out;box-shadow:0 0 10px var(--cyan)"></div>
+    </div>
+    <div id="nudge-bar" style="display:none">
+      <input id="nudge-input" type="text" autocomplete="off" spellcheck="false"
+             placeholder="✏️ Nudge / correct Byte mid-task… (Enter to steer)"
+             onkeydown="if(event.key==='Enter'){event.preventDefault();sendNudge();}">
+      <button id="nudge-send" onclick="sendNudge()" title="Send a live course-correction">Steer ▶</button>
     </div>
   </div>
 </div>
@@ -1944,6 +1955,7 @@ function startOrb() {
   if (!el || _orbActiveCount > 1) return;
   
   el.style.display = 'block';
+  _showNudgeBar(true);   // agent is working — offer live steering
   _orbStartTime = Date.now();
   let frame = 0;
   let jokeIdx = Math.floor(Math.random() * ORB_JOKES.length);
@@ -1965,10 +1977,31 @@ function startOrb() {
   }, 100);
 }
 
+function _showNudgeBar(show) {
+  const nb = document.getElementById('nudge-bar');
+  if (nb) nb.style.display = show ? 'flex' : 'none';
+  if (!show) { const ni = document.getElementById('nudge-input'); if (ni) ni.value = ''; }
+}
+
+async function sendNudge() {
+  const inp = document.getElementById('nudge-input');
+  const text = inp ? inp.value.trim() : '';
+  if (!text) return;
+  if (inp) inp.value = '';
+  try {
+    const r = await authFetch('/api/nudge', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({text})});
+    const d = await r.json();
+    if (d.ok) showToast('✏️ Steering Byte: ' + text.slice(0, 60), 'success', 2600);
+    else if (d.idle) { showToast('Byte isn\'t working right now — just send a normal message', 'info', 3500); if (inp) inp.value = text; }
+    else showToast('⚠ ' + (d.error || 'nudge failed'), 'error', 3500);
+  } catch(e) { showToast('Nudge failed: ' + e.message, 'error', 3500); if (inp) inp.value = text; }
+}
+
 function stopOrb() {
   _orbActiveCount--;
   if (_orbActiveCount < 0) _orbActiveCount = 0;
   if (_orbActiveCount > 0) return;
+  _showNudgeBar(false);
 
   const tBtn = document.getElementById('thinking-tab-btn');
   if (tBtn) { tBtn.style.color = ''; tBtn.style.textShadow = ''; }
@@ -1980,7 +2013,8 @@ function stopOrb() {
 
 function resetOrb() {
   _orbActiveCount = 0;
-  
+  _showNudgeBar(false);
+
   const tBtn = document.getElementById('thinking-tab-btn');
   if (tBtn) { tBtn.style.color = ''; tBtn.style.textShadow = ''; }
 

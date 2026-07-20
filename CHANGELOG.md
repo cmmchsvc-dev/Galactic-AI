@@ -1,3 +1,9 @@
+## v2.1.7 — Mid-Thought Barge-In (2026-07-20)
+
+- ✏️ **Steer the agent without stopping it**: while Byte is working, a **Nudge / correct** box appears under the thinking orb. Type a course-correction and hit Enter — the current generation is cut short, your correction is folded in as a live user message, and the agent regenerates *with* it, keeping the task. No more mashing STOP and re-explaining from scratch when it heads down the wrong path. New `POST /api/nudge`; the ReAct loop checks for a pending nudge mid-stream (breaks the in-flight generation) and at each turn boundary (injects the steer). Best-effort by design — a nudge never hangs or corrupts the loop; if nothing's running it just tells you to send a normal message.
+
+---
+
 ## v2.1.6 — Context Icebox (2026-07-20)
 
 - 🧊 **Interactive token management**: click the topbar **CTX** meter (or Ctrl+K → "Context Icebox") to open an itemized view of everything currently filling the model's context — each message with its role, a preview, and an estimated token cost, image messages flagged. Hit 🗑 to surgically **drop** a heavy item (a giant pasted log, an old image) and reclaim those tokens *without* wiping the session, or **Strip all images** in one click (images keep their text, lose the pixels — usually the biggest single win). It's a per-item `/rewind`. New endpoints: `GET /api/context/items`, `POST /api/context/drop`, `POST /api/context/strip_images`. Safe by construction — persistent history holds only clean user/assistant messages (tool-call/result pairs live in the transient per-turn buffer), so dropping an item can't orphan a tool pair.

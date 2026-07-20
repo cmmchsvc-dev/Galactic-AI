@@ -3,7 +3,7 @@
 **Last Updated:** 2026-07-19
 **Owner:** Chesley McDaniel (techno-hippie / Ches)
 **Repo Path:** C:\Users\Chesley\Galactic AI
-**Current Version:** v2.1.6 (Context Icebox)
+**Current Version:** v2.1.7 (Mid-Thought Barge-In)
 
 ---
 
@@ -29,7 +29,8 @@ Galactic AI: Self-evolving AI platform with a skills ecosystem, auto-compacting 
 - [x] v2.1.4 Wave 2 #1 — **The Crucible**: opt-in `require_approval` diff gate on write/edit/replace_function (colorized diff modal, Approve/Reject+feedback, timeout→reject, default off = unchanged); `/api/approval/respond`; Settings toggle
 - [x] v2.1.5 Wave 2 #3 — **Swarm Blackboard**: live shared KV store (`blackboard.py` + 4 tools + Swarm-tab panel, `wait_for` w/ timeout); orchestrator mirrors wave results
 - [x] v2.1.6 Wave 2 #6 — **Context Icebox**: itemized context view (CTX chip / palette), per-item drop + strip-all-images to reclaim tokens (`/api/context/items|drop|strip_images`); safe because history has no tool-call pairs
-- [ ] Wave 2 remaining (from Gemini review #2): Set-of-Mark browser vision, Ghost-Cam browser PiP, mid-thought barge-in, Janitor idle daemon — all need live browser/hardware or touch the streaming loop; see `docs/WAVE2_ROADMAP.md`
+- [x] v2.1.7 Wave 2 #5 — **Mid-Thought Barge-In**: `/api/nudge` + `_pending_nudge`/`_nudge_interrupted` flags; mid-stream break in 3 streamers + top-of-turn `_consume_pending_nudge()` injection + post-call discard; nudge bar under the thinking orb. (Endpoint+injection unit-tested; mid-stream break needs a live model to fully exercise.)
+- [ ] Wave 2 remaining (need live browser/hardware to verify): Set-of-Mark browser vision, Ghost-Cam browser PiP; deferred: Janitor idle daemon — see `docs/WAVE2_ROADMAP.md`
 - [x] Secrets moved from tracked `config.yaml` to gitignored `config.local.yaml` overlay
 - [x] Local speech-to-text (faster-whisper) wired into wake-word agent + `/api/stt`
 - [x] Unified TTS engine (`tts_engine.py`) shared by voice agent + API; voice barge-in added

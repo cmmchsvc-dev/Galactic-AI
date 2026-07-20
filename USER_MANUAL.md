@@ -179,11 +179,15 @@ If the primary model errored mid-request and the system silently failed over, yo
 - **Drafts survive refreshes.** Half-typed a message and reloaded the page? It's still in the box.
 - **ArrowUp/ArrowDown cycles your last 50 sent prompts**, shell-history style — press ArrowUp in an empty (or caret-at-start) input to walk backwards, ArrowDown to come back. Slash commands are excluded from recall.
 
-### 4.5 Executable Smart Artifacts
+### 4.5 Barge-In — Steer Byte Mid-Task
+
+While Byte is working, a **Nudge / correct** box appears under the thinking orb. Realize it's heading down the wrong path? Type a course-correction and hit Enter — the current generation is cut short, your steer is folded in as a live instruction, and Byte adjusts *without losing the task*. No more mashing STOP and re-explaining from scratch. It's best-effort: if nothing's running, it just tells you to send a normal message; it never hangs the agent.
+
+### 4.6 Executable Smart Artifacts
 
 Code that Byte emits isn't just static text on the page. Fenced code blocks and Byte's `<galactic_code>` snippets render as **Smart Artifact cards** with a **▶ Run** button (plus Copy). Click Run and the snippet executes for real — Python and shell run server-side in an isolated background process and stream their output back into the card; HTML/CSS/JS run in a sandboxed preview frame. It's a one-click "does this actually work?" without leaving the chat. (Same isolation and timeouts as the `execute_python`/`exec_shell` tools.)
 
-### 4.6 Voice, Files, and Images
+### 4.7 Voice, Files, and Images
 
 The 🎙️ mic button records push-to-talk voice input (transcribed locally via `faster-whisper`), 👂 toggles always-on wake-word listening, and 🔊 toggles **Live Call Mode** (auto-speaks every reply). Attached text/code files are inlined as context; images are sent as vision content so Byte can actually see them. See [Voice](#10-voice) for the full voice picture.
 

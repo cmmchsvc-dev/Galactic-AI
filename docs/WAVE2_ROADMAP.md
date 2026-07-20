@@ -40,7 +40,11 @@ Built as `blackboard.py` (async KV store: write/read/list/`wait_for` with per-ke
 
 ---
 
-## 5. Mid-thought barge-in — steerable reasoning
+## 5. Mid-thought barge-in — steerable reasoning ✅ SHIPPED (v2.1.7)
+
+Built with the safe layered design: `POST /api/nudge` sets `gateway._pending_nudge` (only while `_speaking`); the 3 provider streamers check it between chunks and break the in-flight `aiter_lines()` loop (clean, they're inside `async with`), setting `_nudge_interrupted`; the choke point after `_call_llm_resilient` discards the partial and `continue`s; the top-of-turn `_consume_pending_nudge()` (extracted + unit-tested) injects the correction as a user message and regenerates. Never hangs. Deck: nudge bar under the thinking orb, shown while working. 14 tests (endpoint + injection state machine); the mid-stream break + regenerate needs a live model stream to fully exercise.
+
+### (original design notes, for reference)
 
 **What:** a "Nudge / Correct" box under the thinking orb. Typing while the model streams sends an `urgent_nudge` WS event; the ReAct loop cancels the current `httpx` stream, appends the nudge as a user correction, and restarts generation.
 

@@ -132,6 +132,7 @@ class GalacticWebDeck:
         # Cancellation
         self.app.router.add_post('/api/cancel_task', self.handle_cancel_task)
         self.app.router.add_post('/api/stop_agent', self.handle_stop_agent)
+        self.app.router.add_post('/api/nudge', self.handle_nudge)
         # Subagent Hive Mind API
         self.app.router.add_get('/api/subagents', self.handle_subagents)
         self.app.router.add_delete('/api/subagents/clear', self.handle_clear_subagents)
@@ -207,6 +208,28 @@ class GalacticWebDeck:
             await self.core.log(f"🚫 User clicked CANCEL in Control Deck. Aborting {count} task(s)...", priority=2)
             return web.json_response({'ok': True, 'message': f'Cancellation requested for {count} task(s)'})
         return web.json_response({'ok': False, 'message': 'No active task to cancel'})
+
+    async def handle_nudge(self, request):
+        """POST /api/nudge — {text} — barge in with a live course-correction.
+
+        Sets a flag the ReAct loop reads mid-stream: the current generation is
+        cut short, the correction is folded in as a user message, and the agent
+        regenerates — without losing the task. Only meaningful while it's working.
+        """
+        try:
+            data = await request.json()
+        except Exception:
+            return web.json_response({'ok': False, 'error': 'Invalid JSON'}, status=400)
+        text = (data.get('text') or '').strip()
+        if not text:
+            return web.json_response({'ok': False, 'error': 'empty nudge'}, status=400)
+        gw = self.core.gateway
+        if not getattr(gw, '_speaking', False):
+            return web.json_response({'ok': False, 'idle': True,
+                                      'error': 'The agent is not working right now — just send a normal message.'})
+        gw._pending_nudge = text
+        await self.core.log(f"✏️ Barge-in nudge received: {text[:80]}", priority=2)
+        return web.json_response({'ok': True})
 
     async def handle_stop_agent(self, request):
         """POST /api/stop_agent — escalating stop.

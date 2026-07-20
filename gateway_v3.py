@@ -518,6 +518,11 @@ class GalacticGateway(GatewayToolsMixin):
         self._tool_call_history = Counter() # (turn_idx, tool, args_str) -> count
         self.thinking_level = models_cfg.get('thinking_level', 'low')
         self._stop_requested = False  # Set by /api/stop_agent to abort the current loop
+        # Mid-thought barge-in: a live user correction that steers the agent
+        # without stopping it. Set by /api/nudge. _nudge_interrupted signals the
+        # streamer broke out of an in-flight generation so the partial is discarded.
+        self._pending_nudge = None
+        self._nudge_interrupted = False
 
         # Persistent chat log (JSONL) — survives page refreshes
         self.history_file = os.path.join(logs_dir, 'chat_history.jsonl')
@@ -1901,6 +1906,31 @@ class GalacticGateway(GatewayToolsMixin):
                     await self._log_chat("assistant", cancel_msg, source="telegram" if chat_id else "web")
                 return cancel_msg
 
+    async def _consume_pending_nudge(self, messages, turn_count=0, trace_sid=None):
+        """Barge-in: if a live user nudge is pending, fold it into `messages` as a
+        course-correction and clear the flags. Returns True if one was injected.
+        Extracted so the injection logic is unit-testable outside the ReAct loop.
+        """
+        if not self._pending_nudge:
+            return False
+        nudge = str(self._pending_nudge).strip()
+        self._pending_nudge = None
+        self._nudge_interrupted = False
+        if not nudge:
+            return False
+        messages.append({
+            "role": "user",
+            "content": (f"[LIVE CORRECTION — the user interrupted to steer you mid-task. "
+                        f"Adjust course accordingly]: {nudge}")
+        })
+        try:
+            await self._emit_trace("nudge", turn_count, session_id=trace_sid, content=nudge[:200])
+            await self.core.relay.emit(2, "system_notice", f"✏️ Steering: {nudge[:120]}")
+            await self.core.log(f"✏️ Barge-in nudge injected: {nudge[:80]}", priority=2)
+        except Exception:
+            pass
+        return True
+
     async def _speak_logic(self, user_input, context="", chat_id=None, images=None, skip_planning=False):
         """
         Internal implementation of the ReAct loop.
@@ -2133,6 +2163,9 @@ class GalacticGateway(GatewayToolsMixin):
 
         # Clear any pending stop request at the start of a new speak() call
         self._stop_requested = False
+        # A nudge belongs to the turn it's typed during, not a stale prior one.
+        self._pending_nudge = None
+        self._nudge_interrupted = False
 
         # Tools allowed to be repeated with same args (snapshots, searches, images, health)
         _DUPLICATE_EXEMPT = {
@@ -2178,6 +2211,11 @@ class GalacticGateway(GatewayToolsMixin):
                     await self.core.log("🛑 Agent loop stopped by user request.", priority=1)
                     return "🛑 Task stopped by user."
 
+                # ── BARGE-IN: inject a pending live correction before generating ──
+                # The user typed a nudge (possibly interrupting an in-flight stream).
+                # Fold it in as a user message so THIS turn regenerates with it.
+                await self._consume_pending_nudge(messages, turn_count, trace_sid)
+
                 # HEARTBEAT: Update watchdog so it knows we are still making progress
                 watchdog = next((s for s in self.core.skills if getattr(s, 'skill_name', '') == 'watchdog'), None)
                 if watchdog: watchdog.heartbeat()
@@ -2212,6 +2250,15 @@ class GalacticGateway(GatewayToolsMixin):
 
                 await self._send_telegram_typing_ping(chat_id)
                 response_text = await self._call_llm_resilient(messages)
+
+                # ── BARGE-IN: the stream was cut short by a live nudge ──
+                # Discard the partial generation and loop back; _pending_nudge is
+                # still set, so the top-of-turn handler injects the correction and
+                # this turn regenerates cleanly with the user's steer folded in.
+                if self._nudge_interrupted:
+                    self._nudge_interrupted = False
+                    await self._emit_trace("nudge_interrupt", turn_count, session_id=trace_sid)
+                    continue
 
                 if not response_text or not response_text.strip():
                     return "[ERROR] Model returned an empty response (possible safety filter)."
@@ -4426,6 +4473,9 @@ class GalacticGateway(GatewayToolsMixin):
                     token_buf = []
                     _suppress_stream = False
                     async for line in response.aiter_lines():
+                        if self.is_main_chat and self._pending_nudge:
+                            self._nudge_interrupted = True  # barge-in: stop generating
+                            break
                         if not line.startswith("data: "):
                             continue
                         data_str = line[6:].strip()
@@ -4791,6 +4841,9 @@ class GalacticGateway(GatewayToolsMixin):
                         _was_ollama_thinking = False
                         
                         async for line in response.aiter_lines():
+                            if self.is_main_chat and self._pending_nudge:
+                                self._nudge_interrupted = True  # barge-in: stop generating
+                                break
                             if not line.strip():
                                 continue
                             try:
@@ -5142,6 +5195,9 @@ class GalacticGateway(GatewayToolsMixin):
                         _was_reasoning = False  # inside a synthesized <think> block
                         
                         async for line in response.aiter_lines():
+                            if self.is_main_chat and self._pending_nudge:
+                                self._nudge_interrupted = True  # barge-in: stop generating
+                                break
                             if not line.startswith("data: "):
                                 continue
                             data_str = line[6:].strip()
