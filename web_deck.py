@@ -61,6 +61,9 @@ class GalacticWebDeck:
         self.app.router.add_post('/api/ask_user/respond', self.handle_ask_user_respond)
         self.app.router.add_post('/api/approval/respond', self.handle_approval_respond)
         self.app.router.add_get('/api/blackboard', self.handle_blackboard)
+        self.app.router.add_get('/api/context/items', self.handle_context_items)
+        self.app.router.add_post('/api/context/drop', self.handle_context_drop)
+        self.app.router.add_post('/api/context/strip_images', self.handle_context_strip_images)
         self.app.router.add_get('/api/status', self.handle_status)
         self.app.router.add_get('/api/cost-stats', self.handle_cost_stats)
         self.app.router.add_post('/api/plugin_toggle', self.handle_plugin_toggle)
@@ -2705,6 +2708,111 @@ class GalacticWebDeck:
             return web.json_response({'ok': True})
         except Exception as e:
             return web.json_response({'ok': False, 'error': str(e)}, status=500)
+
+    # ── Context Icebox: itemized token management ────────────────────────────
+    # gw.history holds ONLY clean {role, content} messages — tool-call/result
+    # pairs live in the transient per-turn `messages` list, never here. So
+    # dropping a history item can't orphan a tool pair. This is a surgical,
+    # per-item /rewind: it reclaims context tokens without wiping the session.
+    def _persist_history(self):
+        """Mirror gw.history to the JSONL file (same as /rewind does)."""
+        gw = self.core.gateway
+        h_file = getattr(gw, 'history_file', None)
+        if not h_file:
+            return
+        try:
+            with open(h_file, 'w', encoding='utf-8') as f:
+                for msg in gw.history:
+                    f.write(json.dumps(msg, ensure_ascii=False) + '\n')
+        except Exception as e:
+            import logging
+            logging.warning(f"Icebox: could not persist history: {e}")
+
+    @staticmethod
+    def _describe_history_item(m):
+        """Break a history message into {role, preview, chars, est_tokens, has_image}."""
+        content = m.get('content', '')
+        has_image = False
+        if isinstance(content, list):
+            texts = []
+            for part in content:
+                if isinstance(part, dict):
+                    if part.get('type') == 'image_url':
+                        has_image = True
+                    elif part.get('type') == 'text':
+                        texts.append(part.get('text', ''))
+            preview = ' '.join(texts).strip() or ('[image]' if has_image else '')
+        else:
+            preview = str(content)
+        chars = len(str(content))
+        return {
+            'role': m.get('role', '?'),
+            'preview': preview[:180],
+            'chars': chars,
+            'est_tokens': chars // 4,
+            'has_image': has_image,
+        }
+
+    async def handle_context_items(self, request):
+        """GET /api/context/items — itemized breakdown of the live context."""
+        gw = self.core.gateway
+        hist = gw.history or []
+        items = []
+        for i, m in enumerate(hist):
+            d = self._describe_history_item(m)
+            d['index'] = i
+            items.append(d)
+        used, ctx_max = self._context_usage()
+        return web.json_response({'items': items, 'used': used, 'max': ctx_max})
+
+    async def handle_context_drop(self, request):
+        """POST /api/context/drop — {index} or {indices:[...]} removes those items."""
+        try:
+            data = await request.json()
+        except Exception:
+            return web.json_response({'ok': False, 'error': 'Invalid JSON'}, status=400)
+        gw = self.core.gateway
+        hist = gw.history or []
+        raw = data.get('indices')
+        if raw is None and 'index' in data:
+            raw = [data.get('index')]
+        try:
+            indices = sorted({int(i) for i in (raw or []) if 0 <= int(i) < len(hist)}, reverse=True)
+        except (ValueError, TypeError):
+            return web.json_response({'ok': False, 'error': 'indices must be integers'}, status=400)
+        if not indices:
+            return web.json_response({'ok': False, 'error': 'No valid indices to drop'}, status=400)
+        for i in indices:  # descending, so earlier deletes don't shift later ones
+            del hist[i]
+        self._persist_history()
+        await self.core.log(f"🧊 Icebox: dropped {len(indices)} context item(s)", priority=2)
+        used, ctx_max = self._context_usage()
+        return web.json_response({'ok': True, 'dropped': len(indices), 'used': used, 'max': ctx_max})
+
+    async def handle_context_strip_images(self, request):
+        """POST /api/context/strip_images — remove image parts, keep the text."""
+        gw = self.core.gateway
+        stripped = 0
+        for m in (gw.history or []):
+            content = m.get('content')
+            if not isinstance(content, list):
+                continue
+            kept = []
+            for part in content:
+                if isinstance(part, dict) and part.get('type') == 'image_url':
+                    stripped += 1
+                else:
+                    kept.append(part)
+            texts = [p.get('text', '') for p in kept if isinstance(p, dict) and p.get('type') == 'text']
+            if kept and len(texts) == len(kept):
+                m['content'] = ' '.join(texts)          # collapse back to plain text
+            else:
+                m['content'] = kept if kept else '[image removed]'
+        if stripped:
+            self._persist_history()
+            await self.core.log(f"🧊 Icebox: stripped {stripped} image(s) from context", priority=2)
+        used, ctx_max = self._context_usage()
+        return web.json_response({'ok': True, 'stripped': stripped, 'used': used, 'max': ctx_max})
 
     # ── Named chat sessions ─────────────────────────────────────────────────────
 

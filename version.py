@@ -8,4 +8,4 @@ every surface updates together. config.yaml's system.version is stamped
 from this value at load time, so stale configs can no longer win.
 """
 
-VERSION = "2.1.5"
+VERSION = "2.1.6"

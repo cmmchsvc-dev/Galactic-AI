@@ -97,6 +97,29 @@ body{background:radial-gradient(1200px 800px at 85% -10%,rgba(139,92,246,0.16),t
 .bb-by{color:var(--dim);font-size:0.7rem;flex-shrink:0}
 .bb-preview{color:var(--text);opacity:.85;font-size:0.78rem;line-height:1.4;white-space:pre-wrap;word-break:break-word;max-height:60px;overflow:hidden}
 .bb-ts{color:var(--dim);font-size:0.68rem;margin-top:4px;text-align:right}
+/* ── Context Icebox modal ── */
+.icebox-overlay{position:fixed;inset:0;z-index:10001;background:rgba(0,0,0,0.6);backdrop-filter:blur(3px);display:flex;align-items:center;justify-content:center;padding:20px;animation:riseIn .2s var(--ease) both}
+.icebox-box{width:min(640px,96vw);max-height:86vh;display:flex;flex-direction:column;background:var(--bg2);border:1px solid var(--border-hi);border-radius:14px;box-shadow:0 24px 70px rgba(0,0,0,0.6);padding:18px;border-top:3px solid var(--cyan)}
+.icebox-head{display:flex;justify-content:space-between;align-items:baseline;font-weight:700;color:var(--cyan);font-size:1.02em}
+.icebox-usage{font-family:var(--mono);font-size:0.78rem;color:var(--dim);font-weight:400}
+.icebox-sub{color:var(--dim);font-size:0.8rem;margin:6px 0 12px;line-height:1.4}
+.icebox-list{flex:1;overflow-y:auto;display:flex;flex-direction:column;gap:6px;margin-bottom:12px}
+.icebox-empty{color:var(--dim);text-align:center;padding:30px;font-size:0.85rem}
+.ib-item{display:flex;align-items:stretch;gap:8px;background:var(--bg3);border:1px solid var(--border);border-radius:8px;padding:8px 10px}
+.ib-item.ib-user{border-left:3px solid var(--pink)}
+.ib-item.ib-assistant{border-left:3px solid var(--cyan)}
+.ib-item-main{flex:1;min-width:0}
+.ib-item-head{display:flex;align-items:center;gap:8px;margin-bottom:3px}
+.ib-role{font-size:0.72rem;text-transform:uppercase;letter-spacing:1px;color:var(--dim);font-weight:700}
+.ib-img{font-size:0.68rem;color:#ffb64e;border:1px solid rgba(255,182,78,0.4);border-radius:8px;padding:0 6px}
+.ib-tok{margin-left:auto;font-family:var(--mono);font-size:0.72rem;color:var(--dim)}
+.ib-preview{color:var(--text);opacity:.82;font-size:0.82rem;line-height:1.4;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.ib-drop{flex-shrink:0;align-self:center;background:var(--bg2);border:1px solid rgba(248,113,113,0.4);border-radius:7px;color:#f87171;cursor:pointer;font-size:0.9rem;padding:4px 9px;transition:.15s}
+.ib-drop:hover{background:rgba(248,113,113,0.12);border-color:#f87171}
+.icebox-actions{display:flex;justify-content:space-between;gap:10px}
+.icebox-strip{background:var(--bg3);border:1px solid rgba(255,182,78,0.45);border-radius:9px;color:#ffb64e;font-weight:600;padding:8px 14px;cursor:pointer;font-size:0.85em}
+.icebox-strip:hover{border-color:#ffb64e}
+.icebox-done{background:linear-gradient(135deg,var(--cyan),var(--pink));border:none;border-radius:9px;color:#000;font-weight:700;padding:8px 18px;cursor:pointer;font-size:0.85em}
 #ctx-meter{font-size:0.72rem;color:var(--dim);font-family:var(--mono);flex-shrink:0;white-space:nowrap;padding:2px 8px;border:1px solid var(--border);border-radius:10px;cursor:pointer;transition:color .3s,border-color .3s}
 #ctx-meter.ok{color:var(--green);border-color:rgba(0,255,136,0.35)}
 #ctx-meter.warn{color:#ffcc00;border-color:rgba(255,204,0,0.4)}
@@ -931,7 +954,7 @@ body[data-viz-theme="lightspeed"] #sidebar, body[data-viz-theme="lightspeed"] #c
   </div>
 
   <div id="topbar-right">
-    <div id="ctx-meter" title="Context window usage of the active model" onclick="switchTab('status')">CTX --%</div>
+    <div id="ctx-meter" title="Context usage — click to open the Icebox and drop heavy items" onclick="openContextIcebox()">CTX --%</div>
     <div id="token-counter">↑0 ↓0 tokens</div>
     <button class="topbar-btn" onclick="openPalette()" title="Command palette — jump anywhere, switch models, run commands (Ctrl+K)">⌘K</button>
     <button class="topbar-btn" onclick="clearChat()">🗑 Clear</button>
@@ -2594,6 +2617,7 @@ function buildCommands() {
   cmds.push({cat:'Chat', ic:'📋', label:'Copy last answer', run:() => copyLastAnswer()});
   cmds.push({cat:'Chat', ic:'⬇', label:'Export chat as Markdown', run:() => exportChatMarkdown()});
   cmds.push({cat:'Chat', ic:'🧬', label:'Toggle Hybrid Coding Mode (/hybrid)', run:() => sendPaletteCmd('/hybrid')});
+  cmds.push({cat:'Chat', ic:'🧊', label:'Context Icebox — drop items to reclaim tokens', run:() => openContextIcebox()});
 
   // Voice
   cmds.push({cat:'Voice', ic:'👂', label:(_wakeWordEnabled ? 'Disable' : 'Enable') + ' wake-word listening', run:() => toggleWakeWord()});
@@ -3018,6 +3042,87 @@ async function respondApproval(id, approved, feedback) {
 
 function closeApprovalModal(id) {
   const ov = document.getElementById('approval-' + id);
+  if (ov) ov.remove();
+}
+
+// ── Context Icebox: surgically drop heavy items to reclaim tokens ───────────
+async function openContextIcebox() {
+  let data;
+  try {
+    const r = await authFetch('/api/context/items');
+    data = await r.json();
+  } catch(e) { showToast('Could not load context: ' + e.message, 'error', 4000); return; }
+  closeContextIcebox();
+  const ov = document.createElement('div');
+  ov.className = 'icebox-overlay';
+  ov.id = 'icebox-overlay';
+  ov.onclick = (e) => { if (e.target === ov) closeContextIcebox(); };
+  ov.innerHTML =
+    '<div class="icebox-box">' +
+      '<div class="icebox-head"><span>🧊 Context Icebox</span><span class="icebox-usage" id="icebox-usage"></span></div>' +
+      '<div class="icebox-sub">Drop heavy items to reclaim tokens without wiping the session (like a surgical /rewind). Oldest first.</div>' +
+      '<div class="icebox-list" id="icebox-list"></div>' +
+      '<div class="icebox-actions">' +
+        '<button class="icebox-strip" onclick="stripContextImages()">🖼 Strip all images</button>' +
+        '<button class="icebox-done" onclick="closeContextIcebox()">Done</button>' +
+      '</div>' +
+    '</div>';
+  document.body.appendChild(ov);
+  renderIcebox(data);
+}
+
+function renderIcebox(data) {
+  const list = document.getElementById('icebox-list');
+  const usage = document.getElementById('icebox-usage');
+  if (!list) return;
+  const items = data.items || [];
+  if (usage) {
+    usage.textContent = data.max ? (_fmtTok(data.used) + ' / ' + _fmtTok(data.max) + ' tok')
+                                 : (_fmtTok(data.used) + ' tok');
+  }
+  if (data.max !== undefined && typeof updateCtxMeter === 'function') updateCtxMeter(data.used, data.max);
+  if (!items.length) { list.innerHTML = '<div class="icebox-empty">Context is empty.</div>'; return; }
+  list.innerHTML = items.map(it =>
+    '<div class="ib-item ib-' + escHtml(it.role) + '">' +
+      '<div class="ib-item-main">' +
+        '<div class="ib-item-head">' +
+          '<span class="ib-role">' + escHtml(it.role) + '</span>' +
+          (it.has_image ? '<span class="ib-img">🖼 image</span>' : '') +
+          '<span class="ib-tok">~' + _fmtTok(it.est_tokens) + ' tok</span>' +
+        '</div>' +
+        '<div class="ib-preview">' + escHtml(it.preview || '(empty)') + '</div>' +
+      '</div>' +
+      '<button class="ib-drop" onclick="dropContextItem(' + it.index + ')" title="Remove this from the model\'s context">🗑</button>' +
+    '</div>'
+  ).join('');
+}
+
+async function reloadIcebox() {
+  try { const r = await authFetch('/api/context/items'); renderIcebox(await r.json()); } catch(e) {}
+}
+
+async function dropContextItem(index) {
+  try {
+    const r = await authFetch('/api/context/drop', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({index})});
+    const d = await r.json();
+    if (!d.ok) { showToast('⚠ ' + (d.error || 'drop failed'), 'error', 3500); return; }
+    showToast('🧊 Dropped 1 item from context', 'success', 1800);
+    await reloadIcebox();
+  } catch(e) { showToast('Drop failed: ' + e.message, 'error', 3500); }
+}
+
+async function stripContextImages() {
+  try {
+    const r = await authFetch('/api/context/strip_images', {method:'POST', headers:{'Content-Type':'application/json'}, body:'{}'});
+    const d = await r.json();
+    showToast(d.stripped ? ('🖼 Stripped ' + d.stripped + ' image(s)') : 'No images in context',
+              d.stripped ? 'success' : 'info', 2500);
+    await reloadIcebox();
+  } catch(e) { showToast('Strip failed: ' + e.message, 'error', 3500); }
+}
+
+function closeContextIcebox() {
+  const ov = document.getElementById('icebox-overlay');
   if (ov) ov.remove();
 }
 

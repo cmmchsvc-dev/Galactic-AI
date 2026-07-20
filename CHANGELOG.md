@@ -1,3 +1,9 @@
+## v2.1.6 — Context Icebox (2026-07-20)
+
+- 🧊 **Interactive token management**: click the topbar **CTX** meter (or Ctrl+K → "Context Icebox") to open an itemized view of everything currently filling the model's context — each message with its role, a preview, and an estimated token cost, image messages flagged. Hit 🗑 to surgically **drop** a heavy item (a giant pasted log, an old image) and reclaim those tokens *without* wiping the session, or **Strip all images** in one click (images keep their text, lose the pixels — usually the biggest single win). It's a per-item `/rewind`. New endpoints: `GET /api/context/items`, `POST /api/context/drop`, `POST /api/context/strip_images`. Safe by construction — persistent history holds only clean user/assistant messages (tool-call/result pairs live in the transient per-turn buffer), so dropping an item can't orphan a tool pair.
+
+---
+
 ## v2.1.5 — Swarm Blackboard (2026-07-20)
 
 - 🧠 **Live shared agent memory**: a real-time key/value **Blackboard** that agents write to and read from *during* execution — not just passing finished results downstream. Four new tools: `blackboard_write`, `blackboard_read`, `blackboard_list`, and `blackboard_wait_for` (blocks until a peer publishes a key, with a timeout so it never hangs). A research agent can publish a URL the moment it finds it, and a scraper running in parallel picks it up via `blackboard_wait_for` — genuine mid-flight collaboration. The Swarm orchestrator mirrors each agent's result onto the Blackboard, and the **Swarm tab** now shows a live panel of every shared entry as it lands (`GET /api/blackboard`, `blackboard_update` WS event). New module `blackboard.py`.

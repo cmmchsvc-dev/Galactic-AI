@@ -477,6 +477,15 @@ Click **⬇ Export** in the session bar (or run it from Ctrl+K) to download the 
 
 `/rewind [n]` (default 2) deletes the last *n* messages from history and from the on-disk log — the fast way to erase a wrong turn without wiping the whole conversation.
 
+### 12.5 Context Icebox — Reclaim Tokens Surgically
+
+Click the topbar **CTX** meter (or Ctrl+K → "Context Icebox") to open an itemized view of everything currently filling the model's context window — every message with its role, a preview, and an estimated token cost, with image messages flagged. It's the surgical alternative to `/compact` (which summarizes everything) and `/rewind` (which only trims from the end):
+
+- **🗑 Drop** any single heavy item — a giant pasted log, an old screenshot — to reclaim exactly those tokens while keeping the rest of the conversation intact.
+- **🖼 Strip all images** in one click — images keep their text but lose the pixels, usually the single biggest token win.
+
+The CTX meter updates live as you trim. Safe by design: your conversation history holds only clean message text (tool-call machinery lives elsewhere), so dropping an item never corrupts the conversation.
+
 ---
 
 ## 13. Sub-Agents & the Swarm Tab

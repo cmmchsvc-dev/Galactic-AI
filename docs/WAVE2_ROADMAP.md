@@ -50,11 +50,9 @@ Built as `blackboard.py` (async KV store: write/read/list/`wait_for` with per-ke
 
 ---
 
-## 6. Context "Icebox" — interactive token diet
+## 6. Context "Icebox" — interactive token diet ✅ SHIPPED (v2.1.6)
 
-**What:** make the `/context viz` breakdown interactive — assign ids to history items (system prompt, each image, big tool results) and add a 🗑️ Drop button + `POST /api/context/drop` that surgically removes a chosen item from `gateway.history` without breaking the conversation.
-
-**Why deferred:** dropping arbitrary history items can break tool-call/response pairing (orphan a tool result whose call is gone) and confuse the model; needs rules about what's safe to drop (whole user↔assistant exchanges, or standalone tool results — not half a pair).
+Built as a modal (opened from the CTX meter chip or Ctrl+K) listing each history item with role, preview, and est-token cost + image flag; per-item 🗑 Drop and a Strip-all-images button. `GET /api/context/items`, `POST /api/context/drop` (descending multi-delete, no index shift), `POST /api/context/strip_images`. The tool-pairing risk noted here turned out to be structurally absent: `gw.history` holds only clean user/assistant messages — tool_call/tool_result pairs live in the transient per-turn `messages` list — so dropping any item is safe. Persists like /rewind. 15 tests.
 
 ---
 
