@@ -1,9 +1,9 @@
 # PROJECT STATE
 
-**Last Updated:** 2026-07-16
+**Last Updated:** 2026-07-19
 **Owner:** Chesley McDaniel (techno-hippie / Ches)
 **Repo Path:** C:\Users\Chesley\Galactic AI
-**Current Version:** v2.1.0 (Local Voice & Smarter Memory Update)
+**Current Version:** v2.1.5 (Swarm Blackboard)
 
 ---
 
@@ -22,6 +22,13 @@ Galactic AI: Self-evolving AI platform with a skills ecosystem, auto-compacting 
 
 ## Active Tasks
 
+- [x] v2.1.1 QOL: 🚀 Boost/⟳ Retry hybrid escalation (`/api/chat/boost`, `/boost`, `/retry`), per-message provenance (model/time/tokens/fallback chips), message hover toolbar (copy/speak/edit), draft persistence + ArrowUp prompt recall, Markdown chat export
+- [x] v2.1.1 🧬 Hybrid Coding Mode: cloud Architect writes code into a blueprint, local Builder applies it (`models.hybrid_coding`, `/hybrid`, Settings → Model Configuration incl. new Boost dropdown)
+- [x] v2.1.2 Hardening (from a verified external review): fixed a deck XSS hole (formatMsg now escapes before markdown), search_codebase cross-project leak, execute_python temp sandbox+leak, RAM/diff/thread-pool/canvas/upload nits, trimmed .galactic_map.md injection; documented undersold safety features (VCR auto-backup, write verification, Smart Artifacts, tmp/ sandbox, /context viz)
+- [x] v2.1.3 Agentic Superpowers Wave 1: AST-safe editing (`list_functions`/`read_function`/`replace_function`, re-parses before writing), `ask_user` human-in-the-loop tool + deck modal (`/api/ask_user/respond`), Terminal-to-Brain "Ask Byte About Last Error" button
+- [x] v2.1.4 Wave 2 #1 — **The Crucible**: opt-in `require_approval` diff gate on write/edit/replace_function (colorized diff modal, Approve/Reject+feedback, timeout→reject, default off = unchanged); `/api/approval/respond`; Settings toggle
+- [x] v2.1.5 Wave 2 #3 — **Swarm Blackboard**: live shared KV store (`blackboard.py` + 4 tools + Swarm-tab panel, `wait_for` w/ timeout); orchestrator mirrors wave results
+- [ ] Wave 2 remaining (from Gemini review #2): Set-of-Mark browser vision, Ghost-Cam browser PiP, mid-thought barge-in, interactive context "icebox", Janitor idle daemon — see `docs/WAVE2_ROADMAP.md`
 - [x] Secrets moved from tracked `config.yaml` to gitignored `config.local.yaml` overlay
 - [x] Local speech-to-text (faster-whisper) wired into wake-word agent + `/api/stt`
 - [x] Unified TTS engine (`tts_engine.py`) shared by voice agent + API; voice barge-in added

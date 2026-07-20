@@ -9,10 +9,34 @@ models:
   primary_model: hf.co/unsloth/Qwen3-Coder-30B-A3B-Instruct-GGUF:Q4_K_M
   fallback_provider: google
   fallback_model: gemini-3-flash-preview
+  # Boost target for the 🚀 button / "/boost" — the big cloud brain used to
+  # re-run the last answer on demand. One-shot override; never persisted as
+  # primary. If unset, auto-picks your top-tier cloud model: the first
+  # 👑-marked model in config/models.yaml whose provider has an API key
+  # (falling back to the first cloud model with a key).
+  # boost_provider: anthropic
+  # boost_model: claude-opus-4-6
+  # Hybrid Coding Mode — on coding tasks, the cloud Architect scans the repo
+  # and writes the exact code into a blueprint; the local Builder then runs
+  # the tool loop and applies it (cloud pays once for thinking, local does the
+  # grunt work). Toggle in Settings → Model Configuration or with /hybrid.
+  # Architect defaults to the planner model, Builder to the fallback model
+  # (when the fallback is ollama).
+  # hybrid_coding:
+  #   enabled: false
+  #   architect_provider: anthropic
+  #   architect_model: claude-opus-4-6
+  #   builder_provider: ollama
+  #   builder_model: qwen3.6:27b
   planner_provider: google
   planner_model: gemini-3.1-pro-preview
   planner_fallback_provider: google
   planner_fallback_model: gemini-3-flash-preview
+  # The Crucible — when true, every file write/edit/replace_function shows you a
+  # diff in the Control Deck and waits for Approve/Reject before touching disk.
+  # Default false. Also toggleable in Settings → Model Configuration or per-run.
+  # require_approval: false
+  # approval_timeout: 300   # seconds to wait before auto-rejecting (safe default)
   auto_fallback: true
   smart_routing: false
   streaming: true

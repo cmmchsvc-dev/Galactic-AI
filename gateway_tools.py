@@ -71,6 +71,42 @@ class GatewayToolsMixin:
                 },
                 "fn": self.tool_write_file
             },
+            "list_functions": {
+                "description": "List all top-level functions and classes (and their methods) in a Python file, with exact line ranges. Use before read_function/replace_function to get the right names.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "path": {"type": "string", "description": "Path to a .py file."}
+                    },
+                    "required": ["path"]
+                },
+                "fn": self.tool_list_functions
+            },
+            "read_function": {
+                "description": "Read the exact source of ONE function/class/method from a Python file, located by name via AST (no line guessing). Name may be 'my_func' or 'MyClass.my_method'.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "path": {"type": "string", "description": "Path to a .py file."},
+                        "name": {"type": "string", "description": "Function/class name, or 'ClassName.method'."}
+                    },
+                    "required": ["path", "name"]
+                },
+                "fn": self.tool_read_function
+            },
+            "replace_function": {
+                "description": "Rewrite ONE whole function/class/method in a Python file, located by name via AST — immune to line-number drift and whitespace. The new code is auto-indented and the ENTIRE file is re-parsed to guarantee valid Python BEFORE writing (nothing is written if it would break syntax). Existing decorators are preserved automatically — do NOT include them. Auto-backs up via VCR. Prefer this over edit_file for whole-function rewrites.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "path": {"type": "string", "description": "Path to a .py file."},
+                        "name": {"type": "string", "description": "Function/class name, or 'ClassName.method'."},
+                        "new_code": {"type": "string", "description": "The complete new function/class source, starting at 'def'/'class' (no decorators)."}
+                    },
+                    "required": ["path", "name", "new_code"]
+                },
+                "fn": self.tool_replace_function
+            },
             "schedule_task": {
                 "description": "Schedule a reminder or task execution.",
                 "parameters": {
@@ -102,6 +138,57 @@ class GatewayToolsMixin:
                     "required": ["query"]
                 },
                 "fn": self.tool_web_search
+            },
+            "ask_user": {
+                "description": "Pause and ask the human a question mid-task, then continue with their answer. Use for things only they can resolve — a 2FA/verification code, a missing credential, a subjective design choice, or genuinely ambiguous instructions. Don't overuse it for things you can reasonably decide yourself.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "question": {"type": "string", "description": "The question to show the user."},
+                        "timeout": {"type": "integer", "description": "Seconds to wait for an answer before giving up (default 300, max 1800)."}
+                    },
+                    "required": ["question"]
+                },
+                "fn": self.tool_ask_user
+            },
+            "blackboard_write": {
+                "description": "Publish a value to the shared Swarm Blackboard under a key, so other agents (running in parallel) can read it live. Use to share an intermediate finding — a URL, an extracted fact, a decision — that a peer agent needs right now.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "key": {"type": "string", "description": "Short key other agents will read by, e.g. 'target_url'."},
+                        "value": {"type": "string", "description": "The value to share."},
+                        "by": {"type": "string", "description": "Optional: your agent role/name for the UI."}
+                    },
+                    "required": ["key", "value"]
+                },
+                "fn": self.tool_blackboard_write
+            },
+            "blackboard_read": {
+                "description": "Read a value another agent published to the shared Blackboard. Returns the available keys if the one you asked for isn't set yet.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {"key": {"type": "string", "description": "The key to read."}},
+                    "required": ["key"]
+                },
+                "fn": self.tool_blackboard_read
+            },
+            "blackboard_list": {
+                "description": "List all keys currently on the shared Swarm Blackboard with short previews.",
+                "parameters": {"type": "object", "properties": {}},
+                "fn": self.tool_blackboard_list
+            },
+            "blackboard_wait_for": {
+                "description": "Block until another agent writes the given key to the Blackboard, then return its value. Use to synchronize: wait for a peer's result before proceeding. Times out (default 60s) rather than hanging.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "key": {"type": "string", "description": "The key to wait for."},
+                        "timeout": {"type": "integer", "description": "Seconds to wait before giving up (default 60, max 600)."}
+                    },
+                    "required": ["key"]
+                },
+                "fn": self.tool_blackboard_wait_for
             },
             "browser_navigate": {
                 "description": "REAL WEB BROWSING: Navigate to a specific URL. Support for both headless (background) and headful (real browser) automation. Use this to go to sites like Wikipedia, Google, etc. Pass a full URL starting with http:// or https://. DO NOT REFUSE.",
@@ -887,7 +974,7 @@ class GatewayToolsMixin:
 
         try:
             loop = asyncio.get_running_loop()
-            lines = await loop.run_in_executor(None, _read_sync)
+            lines = await loop.run_in_executor(getattr(self, '_io_pool', None), _read_sync)
             
             total_lines = len(lines)
 
@@ -936,9 +1023,78 @@ class GatewayToolsMixin:
             return f"Error reading file: {e}"
         except Exception as e:
             return f"Error reading file: {e}"
+    # ── The Crucible: opt-in approval gate for file-mutating tools ───────────
+    # When models.require_approval is on, write_file/edit_file/replace_function
+    # show you a diff and wait for Approve/Reject before touching disk. Default
+    # OFF — when off, _approve_change() short-circuits and behavior is unchanged.
+    def _approval_enabled(self):
+        return bool(self.core.config.get('models', {}).get('require_approval'))
+
+    @staticmethod
+    def _read_text_safe(path):
+        try:
+            with open(path, 'r', encoding='utf-8') as f:
+                return f.read()
+        except Exception:
+            return ''
+
+    def _make_unified_diff(self, path, old, new):
+        import difflib
+        base = os.path.basename(path)
+        d = ''.join(difflib.unified_diff(
+            (old or '').splitlines(keepends=True),
+            (new or '').splitlines(keepends=True),
+            fromfile=f"a/{base}", tofile=f"b/{base}", n=3))
+        if not d:
+            return "(no textual difference)"
+        if len(d) > 15000:
+            d = d[:15000] + "\n...[diff truncated — change is large]..."
+        return d
+
+    async def _approve_change(self, path, old_content, new_content, action):
+        """Gate a file mutation. Returns (approved: bool, reason: str|None).
+
+        No-op (True, None) when require_approval is off. Otherwise emits an
+        approval_request WS event with a diff and blocks until the user decides
+        or a timeout elapses (timeout -> reject, the safe default).
+        """
+        if not self._approval_enabled():
+            return True, None
+        import uuid as _uuid
+        req_id = _uuid.uuid4().hex[:12]
+        loop = asyncio.get_running_loop()
+        fut = loop.create_future()
+        store = getattr(self, '_pending_approvals', None)
+        if store is None:
+            store = self._pending_approvals = {}
+        store[req_id] = fut
+        try:
+            await self.core.relay.emit(2, "approval_request", {
+                "id": req_id, "path": path, "action": action,
+                "diff": self._make_unified_diff(path, old_content, new_content)})
+            await self.core.log(f"⏸️ Approval required: {action} on {path}", priority=2)
+            timeout = int(self.core.config.get('models', {}).get('approval_timeout', 300))
+            try:
+                decision = await asyncio.wait_for(fut, timeout=timeout)
+            except asyncio.TimeoutError:
+                return False, (f"[NOT APPLIED] Approval for {action} on {path} timed out after "
+                               f"{timeout}s — no changes were made. Ask the user before retrying.")
+            if decision.get('approved'):
+                return True, None
+            fb = (decision.get('feedback') or '').strip()
+            return False, (f"[CHANGE REJECTED] The user declined the {action} to {path}."
+                           + (f" Their feedback: {fb}" if fb else "")
+                           + " Do NOT re-apply the same change — revise based on this.")
+        finally:
+            store.pop(req_id, None)
+            try:
+                await self.core.relay.emit(2, "approval_resolved", {"id": req_id})
+            except Exception:
+                pass
+
     async def tool_write_file(self, args):
         """Write content to a file (non-blocking) with robust error handling.
-        
+
         VERIFICATION GUARANTEE: After every write, this tool immediately reads
         the file back and returns the verified byte count and line count.
         This is structural proof that the write actually happened on disk.
@@ -955,6 +1111,13 @@ class GatewayToolsMixin:
                 f"Create a new file with a different name instead."
             )
 
+        # The Crucible: gate the write behind user approval (no-op when off).
+        if self._approval_enabled():
+            old = self._read_text_safe(os.path.abspath(path))
+            approved, reason = await self._approve_change(path, old, content or '', "write_file")
+            if not approved:
+                return reason
+
         def _write_and_verify():
             try:
                 is_absolute = os.path.isabs(path)
@@ -968,15 +1131,16 @@ class GatewayToolsMixin:
                 with open(abs_path, 'w', encoding='utf-8') as f:
                     f.write(content)
 
-                # ── IMMEDIATE READ-BACK (structural verification) ──
-                # This is what makes tool results trustworthy. The model SEES the
-                # proof: line count, byte count, and a content fingerprint.
-                # It cannot claim it wrote something unless this block confirms it.
-                with open(abs_path, 'r', encoding='utf-8') as f:
-                    verified_content = f.read()
-
-                verified_lines = verified_content.count('\n') + 1
-                verified_bytes = len(verified_content.encode('utf-8'))
+                # ── DISK VERIFICATION (O(1) memory) ──
+                # This is what makes tool results trustworthy: the model SEES
+                # proof the write landed (real byte count on disk). os.path.getsize
+                # confirms the bytes hit the platter WITHOUT reading the file back
+                # into RAM — critical when the AI writes a large file (a 50MB CSV
+                # would otherwise be loaded, then duplicated as an encoded byte
+                # array, just to report a size). The line count comes from the
+                # content we already hold in memory, so no re-read is needed.
+                verified_bytes = os.path.getsize(abs_path)
+                verified_lines = (content or '').count('\n') + 1
                 expected_bytes = len((content or '').encode('utf-8'))
 
                 if verified_bytes == 0 and expected_bytes > 0:
@@ -1002,7 +1166,7 @@ class GatewayToolsMixin:
 
         try:
             loop = asyncio.get_running_loop()
-            return await loop.run_in_executor(None, _write_and_verify)
+            return await loop.run_in_executor(getattr(self, '_io_pool', None), _write_and_verify)
         except Exception as e:
             return f"Error writing file: {e}"
     async def tool_web_search(self, args):
@@ -1407,7 +1571,9 @@ class GatewayToolsMixin:
         if not path:
             return "Error: 'path' parameter is required."
 
-        def _edit_and_verify():
+        def _compute_edit():
+            """Apply replacements in memory. Returns ('ERR', msg) or
+            ('OK', {old, new, replacements})."""
             # Collect replacements
             replacements = []
             if 'replacements' in args and isinstance(args['replacements'], list):
@@ -1423,11 +1589,7 @@ class GatewayToolsMixin:
                     replacements.append((old, new))
 
             if not replacements:
-                return "Error: No valid replacements provided. Required: 'old_text' and 'new_text' or 'replacements' array."
-
-            # Auto-backup via VCR before editing
-            if path:
-                self._vcr_auto_backup(os.path.abspath(path))
+                return ('ERR', "Error: No valid replacements provided. Required: 'old_text' and 'new_text' or 'replacements' array.")
 
             start_line = args.get('start_line')
             end_line = args.get('end_line')
@@ -1439,22 +1601,22 @@ class GatewayToolsMixin:
                     lines = f.readlines()
 
                 total_lines = len(lines)
-                
+
                 if start_line is not None or end_line is not None:
                     s = max(1, int(start_line) if start_line is not None else 1)
                     e = min(total_lines, int(end_line) if end_line is not None else total_lines)
-                    
+
                     segment_lines = lines[s-1:e]
                     segment = "".join(segment_lines)
-                    
+
                     for old_text, new_text in replacements:
                         count = segment.count(old_text)
                         if count == 0:
-                            return f"Error: Could not find '{old_text}' within lines {s}-{e} of {path}."
+                            return ('ERR', f"Error: Could not find '{old_text}' within lines {s}-{e} of {path}.")
                         if count > 1:
-                            return f"Error: Found {count} occurrences of '{old_text}' within lines {s}-{e}. Be more specific."
+                            return ('ERR', f"Error: Found {count} occurrences of '{old_text}' within lines {s}-{e}. Be more specific.")
                         segment = segment.replace(old_text, new_text)
-                    
+
                     new_content = "".join(lines[:s-1]) + segment + "".join(lines[e:])
                 else:
                     new_content = content
@@ -1462,24 +1624,47 @@ class GatewayToolsMixin:
                         count = new_content.count(old_text)
                         if count == 0:
                             if old_text in content:
-                                return f"Error: '{old_text}' was already changed by a previous replacement in this call."
-                            return f"Error: Could not find exact text '{old_text}' in {path}."
+                                return ('ERR', f"Error: '{old_text}' was already changed by a previous replacement in this call.")
+                            return ('ERR', f"Error: Could not find exact text '{old_text}' in {path}.")
                         if count > 1:
-                            return f"Error: Found {count} occurrences of '{old_text}'. Use start_line/end_line to disambiguate."
+                            return ('ERR', f"Error: Found {count} occurrences of '{old_text}'. Use start_line/end_line to disambiguate.")
                         new_content = new_content.replace(old_text, new_text)
+
+                return ('OK', {'old': content, 'new': new_content, 'replacements': replacements})
+            except Exception as e:
+                return ('ERR', f"Error editing file: {str(e)}")
+
+        loop = asyncio.get_running_loop()
+        status, payload = await loop.run_in_executor(getattr(self, '_io_pool', None), _compute_edit)
+        if status == 'ERR':
+            return payload
+
+        # The Crucible: gate the write behind user approval (no-op when off).
+        approved, reason = await self._approve_change(path, payload['old'], payload['new'], "edit_file")
+        if not approved:
+            return reason
+
+        new_content = payload['new']
+        replacements = payload['replacements']
+
+        def _write_verify():
+            try:
+                # Auto-backup via VCR before editing (only now that it's approved)
+                self._vcr_auto_backup(os.path.abspath(path))
 
                 # ── WRITE BACK ──
                 with open(path, 'w', encoding='utf-8') as f:
                     f.write(new_content)
 
                 # ── IMMEDIATE READ-BACK (structural verification) ──
-                # Read the file from disk and verify the change actually landed.
-                # The model receives PROOF: line count + confirmation the new text exists.
+                # Read the file back and verify the change landed. Edit verification
+                # genuinely needs the content (to spot-check each replacement), but
+                # the byte count comes from os.path.getsize, not a re-encode.
                 with open(path, 'r', encoding='utf-8') as f:
                     verified_content = f.read()
 
                 verified_lines = verified_content.count('\n') + 1
-                verified_bytes = len(verified_content.encode('utf-8'))
+                verified_bytes = os.path.getsize(path)
 
                 # Spot-check: verify the new text actually landed in the file
                 verification_checks = []
@@ -1505,11 +1690,187 @@ class GatewayToolsMixin:
             except Exception as e:
                 return f"Error editing file: {str(e)}"
 
-        try:
-            loop = asyncio.get_running_loop()
-            return await loop.run_in_executor(None, _edit_and_verify)
-        except Exception as e:
-            return f"Error editing file: {str(e)}"
+        return await loop.run_in_executor(getattr(self, '_io_pool', None), _write_verify)
+
+    # ── AST-safe Python editing ──────────────────────────────────────────────
+    # edit_file relies on exact string matching, which is fragile: whitespace
+    # drift, a moved line, or a near-duplicate breaks it. These tools locate a
+    # function/class by NAME via Python's AST, so edits are immune to line-number
+    # drift, and the whole file is re-parsed to guarantee valid Python BEFORE any
+    # bytes hit disk. (lsp_tooling can *read* symbols; these can rewrite them.)
+    @staticmethod
+    def _find_ast_targets(tree, name):
+        """Return the list of AST nodes matching 'name' or 'ClassName.method'."""
+        import ast
+        parts = name.split('.')
+        out = []
+        if len(parts) == 2:
+            cls_name, meth = parts
+            for node in ast.walk(tree):
+                if isinstance(node, ast.ClassDef) and node.name == cls_name:
+                    for sub in node.body:
+                        if isinstance(sub, (ast.FunctionDef, ast.AsyncFunctionDef)) and sub.name == meth:
+                            out.append(sub)
+        else:
+            target = parts[0]
+            # Prefer a top-level match; only walk deeper if there isn't one.
+            for node in tree.body:
+                if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)) and node.name == target:
+                    out.append(node)
+            if not out:
+                for node in ast.walk(tree):
+                    if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)) and node.name == target:
+                        out.append(node)
+        return out
+
+    async def tool_list_functions(self, args):
+        """List top-level functions/classes (and methods) in a Python file with line ranges."""
+        import ast
+        path = args.get('path', '')
+        if not path:
+            return "[ERROR] list_functions requires a 'path'."
+
+        def _worker():
+            if not os.path.exists(path):
+                return f"[ERROR] File not found: {path}"
+            try:
+                with open(path, 'r', encoding='utf-8') as f:
+                    tree = ast.parse(f.read())
+            except SyntaxError as e:
+                return f"[ERROR] {path} is not valid Python: {e}"
+            except Exception as e:
+                return f"[ERROR] Could not read {path}: {e}"
+            lines = [f"[AST] {path}"]
+            for node in tree.body:
+                if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                    lines.append(f"  def {node.name}()  (lines {node.lineno}-{node.end_lineno})")
+                elif isinstance(node, ast.ClassDef):
+                    lines.append(f"  class {node.name}  (lines {node.lineno}-{node.end_lineno})")
+                    for sub in node.body:
+                        if isinstance(sub, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                            lines.append(f"      {node.name}.{sub.name}()  (lines {sub.lineno}-{sub.end_lineno})")
+            if len(lines) == 1:
+                lines.append("  (no top-level functions or classes found)")
+            return "\n".join(lines)
+
+        loop = asyncio.get_running_loop()
+        return await loop.run_in_executor(getattr(self, '_io_pool', None), _worker)
+
+    async def tool_read_function(self, args):
+        """Return the exact source of a function/class/method located by name via AST."""
+        import ast
+        path = args.get('path', '')
+        name = args.get('name', '')
+        if not path or not name:
+            return "[ERROR] read_function requires 'path' and 'name'."
+
+        def _worker():
+            if not os.path.exists(path):
+                return f"[ERROR] File not found: {path}"
+            try:
+                with open(path, 'r', encoding='utf-8') as f:
+                    source = f.read()
+                tree = ast.parse(source)
+            except SyntaxError as e:
+                return f"[ERROR] {path} is not valid Python: {e}"
+            except Exception as e:
+                return f"[ERROR] Could not read {path}: {e}"
+            targets = self._find_ast_targets(tree, name)
+            if not targets:
+                return (f"[ERROR] No function/class named '{name}' in {path}. "
+                        f"Use list_functions to see available names.")
+            if len(targets) > 1:
+                where = ', '.join(f"line {t.lineno}" for t in targets)
+                return (f"[ERROR] '{name}' is ambiguous ({len(targets)} matches at {where}). "
+                        f"Qualify it as 'ClassName.method'.")
+            node = targets[0]
+            src_lines = source.splitlines(keepends=True)
+            segment = ''.join(src_lines[node.lineno - 1:node.end_lineno])
+            return (f"[AST] {name} in {path} (lines {node.lineno}-{node.end_lineno}):\n\n{segment}")
+
+        loop = asyncio.get_running_loop()
+        return await loop.run_in_executor(getattr(self, '_io_pool', None), _worker)
+
+    async def tool_replace_function(self, args):
+        """Replace a function/class/method (located by AST name) with new code, safely."""
+        import ast, textwrap
+        path = args.get('path', '')
+        name = args.get('name', '')
+        new_code = args.get('new_code', '')
+        if not path or not name or not new_code:
+            return "[ERROR] replace_function requires 'path', 'name', and 'new_code'."
+
+        filename = os.path.basename(path)
+        if filename in getattr(self, '_PROTECTED_FILES', set()):
+            return f"[BLOCKED] Cannot modify protected core file '{filename}'."
+
+        def _compute():
+            """Build & syntax-validate the new file content. Returns
+            ('ERR', msg) or ('OK', {old, new, start, end})."""
+            if not os.path.exists(path):
+                return ('ERR', f"[ERROR] File not found: {path}")
+            try:
+                with open(path, 'r', encoding='utf-8') as f:
+                    source = f.read()
+                tree = ast.parse(source)
+            except SyntaxError as e:
+                return ('ERR', f"[ERROR] {path} is not valid Python (fix it first): {e}")
+            except Exception as e:
+                return ('ERR', f"[ERROR] Could not read {path}: {e}")
+
+            targets = self._find_ast_targets(tree, name)
+            if not targets:
+                return ('ERR', f"[ERROR] No function/class named '{name}' in {path}. "
+                               f"Use list_functions to see available names.")
+            if len(targets) > 1:
+                where = ', '.join(f"line {t.lineno}" for t in targets)
+                return ('ERR', f"[ERROR] '{name}' is ambiguous ({len(targets)} matches at {where}). "
+                               f"Qualify it as 'ClassName.method'.")
+            node = targets[0]
+            start, end = node.lineno, node.end_lineno  # decorators above are preserved
+
+            # Re-indent the new code to the target's column (so the model can pass
+            # it at column 0 whether it's a top-level function or a nested method).
+            indent = ' ' * node.col_offset
+            dedented = textwrap.dedent(new_code).rstrip('\n')
+            new_block = '\n'.join((indent + ln if ln.strip() else ln)
+                                  for ln in dedented.split('\n')) + '\n'
+
+            src_lines = source.splitlines(keepends=True)
+            new_content = ''.join(src_lines[:start - 1]) + new_block + ''.join(src_lines[end:])
+
+            # SAFETY GATE: the edited file must still parse. If not, write nothing.
+            try:
+                ast.parse(new_content)
+            except SyntaxError as e:
+                return ('ERR', f"[ERROR] Replacement would produce invalid Python — NOT written.\n"
+                               f"  {e}\nCheck the syntax/indentation of your new_code.")
+            return ('OK', {'old': source, 'new': new_content, 'start': start, 'end': end})
+
+        loop = asyncio.get_running_loop()
+        status, payload = await loop.run_in_executor(getattr(self, '_io_pool', None), _compute)
+        if status == 'ERR':
+            return payload
+
+        # The Crucible: gate the write behind user approval (no-op when off).
+        approved, reason = await self._approve_change(path, payload['old'], payload['new'], "replace_function")
+        if not approved:
+            return reason
+
+        start, end, new_content = payload['start'], payload['end'], payload['new']
+
+        def _write():
+            self._vcr_auto_backup(os.path.abspath(path))
+            with open(path, 'w', encoding='utf-8') as f:
+                f.write(new_content)
+            new_total = new_content.count('\n') + 1
+            return (f"✅ AST REPLACE VERIFIED\n"
+                    f"  Replaced '{name}' in {path} (was lines {start}-{end})\n"
+                    f"  File now {new_total} lines and parses as valid Python.\n"
+                    f"  Original backed up to workspace/.galactic_vcr/ (undo: /vcr undo {path}).")
+
+        return await loop.run_in_executor(getattr(self, '_io_pool', None), _write)
+
     async def tool_web_fetch(self, args):
         """Fetch and extract readable content from a URL."""
         url = args.get('url')
@@ -1661,7 +2022,7 @@ class GatewayToolsMixin:
 
         try:
             loop = asyncio.get_running_loop()
-            raw = await loop.run_in_executor(None, _read_img)
+            raw = await loop.run_in_executor(getattr(self, '_io_pool', None), _read_img)
             image_b64 = base64.b64encode(raw).decode('utf-8')
             suffix = Path(path).suffix.lower()
             mime_map = {'.jpg': 'image/jpeg', '.jpeg': 'image/jpeg',
@@ -1724,7 +2085,11 @@ class GatewayToolsMixin:
             )
             scoped = [r for r in raw
                       if str((r.get('metadata') or {}).get('path', '')).lower().startswith(root)]
-            results = (scoped or raw)[:top_k]
+            # NEVER fall back to unscoped `raw`: if nothing in the current
+            # workspace matched, returning cross-install/cross-project chunks
+            # (the exact stale hits the scoping above exists to exclude) would
+            # hand back code from an unrelated repo. Empty is the honest answer.
+            results = scoped[:top_k]
             if not results:
                 return (f"[CODEBASE] No indexed code matched: {query}\n"
                         "(The Neural Indexer may still be building — check Status.)")
@@ -2213,7 +2578,7 @@ class GatewayToolsMixin:
             
             # Run blocking glob in a thread pool
             loop = asyncio.get_running_loop()
-            entries = await loop.run_in_executor(None, lambda: _glob.glob(search, recursive=recurse))
+            entries = await loop.run_in_executor(getattr(self, '_io_pool', None), lambda: _glob.glob(search, recursive=recurse))
             
             if not entries:
                 return f"No files match '{pattern}' in {base}"
@@ -2249,7 +2614,7 @@ class GatewayToolsMixin:
             
             # Run blocking glob in a thread pool
             loop = asyncio.get_running_loop()
-            results = await loop.run_in_executor(None, lambda: _glob.glob(search, recursive=True))
+            results = await loop.run_in_executor(getattr(self, '_io_pool', None), lambda: _glob.glob(search, recursive=True))
             
             results = [os.path.relpath(r, base) for r in sorted(results)]
             total = len(results)
@@ -2301,7 +2666,13 @@ class GatewayToolsMixin:
             diff = list(_diff.unified_diff(lines_a, lines_b, fromfile=path_a, tofile=label_b, n=context))
             if not diff:
                 return "✅ Files are identical — no differences found."
-            return ''.join(diff)
+            diff_str = ''.join(diff)
+            # Cap output: diffing two large or entirely-different files (e.g.
+            # minified JS) can produce tens of thousands of chars and blow up the
+            # model's context window.
+            if len(diff_str) > 15000:
+                diff_str = diff_str[:15000] + "\n\n...[DIFF TRUNCATED — output exceeded 15000 chars; compare narrower ranges]..."
+            return diff_str
         except Exception as e:
             return f"[ERROR] diff_files: {e}"
     async def tool_zip_create(self, args):
@@ -2893,7 +3264,12 @@ $notify.Dispose()
         import tempfile
         tmp = None
         try:
-            tmp = tempfile.NamedTemporaryFile(mode='w', suffix='.py', delete=False, encoding='utf-8')
+            # Write into the project's own tmp/ sandbox (self._temp_dir =
+            # GALACTIC_TEMP_DIR), not the global OS %TEMP%, so scratch scripts
+            # stay inside the workspace and are swept by the 7-day tmp/ purge.
+            _tmpdir = getattr(self, '_temp_dir', None)
+            tmp = tempfile.NamedTemporaryFile(mode='w', suffix='.py', delete=False,
+                                              encoding='utf-8', dir=_tmpdir)
             tmp.write(code)
             tmp.close()
             
@@ -2931,14 +3307,121 @@ $notify.Dispose()
         except Exception as e:
             return f"❌ Error executing Python: {str(e)}"
         finally:
+            # Best-effort cleanup. On Windows a just-killed subprocess can keep a
+            # lock on the file for a few ms after proc.kill(), making os.unlink
+            # raise PermissionError — retry briefly before giving up rather than
+            # silently leaking it. The 7-day tmp/ purge is the backstop.
             if tmp and os.path.exists(tmp.name):
-                try: os.unlink(tmp.name)
-                except: pass
+                for _attempt in range(3):
+                    try:
+                        os.unlink(tmp.name)
+                        break
+                    except PermissionError:
+                        await asyncio.sleep(0.1)
+                    except Exception:
+                        break
     async def tool_wait(self, args):
         """Pause execution."""
         seconds = min(float(args.get('seconds', 1)), 300)
         await asyncio.sleep(seconds)
         return f"Waited {seconds:.1f} seconds."
+
+    async def tool_ask_user(self, args):
+        """Pause mid-task and ask the human a question, then resume with their answer.
+
+        Use when you hit something only the user can resolve — a 2FA/verification
+        code, a subjective design choice, a missing credential, an ambiguous
+        instruction. Blocks the loop until they answer or a timeout elapses, so
+        the agent never has to guess-and-fail or abort the whole task.
+        """
+        question = (args.get('question') or '').strip()
+        if not question:
+            return "[ERROR] ask_user requires a 'question'."
+        timeout = min(int(args.get('timeout', 300)), 1800)
+
+        import uuid as _uuid
+        req_id = _uuid.uuid4().hex[:12]
+        loop = asyncio.get_running_loop()
+        fut = loop.create_future()
+        pending = getattr(self, '_pending_asks', None)
+        if pending is None:
+            pending = self._pending_asks = {}
+        pending[req_id] = fut
+
+        try:
+            await self.core.relay.emit(2, "ask_user", {"id": req_id, "question": question})
+            await self.core.log(f"❓ ask_user: awaiting human input — {question[:80]}", priority=2)
+            try:
+                answer = await asyncio.wait_for(fut, timeout=timeout)
+                return f"[USER ANSWERED] {answer}"
+            except asyncio.TimeoutError:
+                return (f"[NO RESPONSE] The user did not answer within {timeout}s. "
+                        f"Proceed with your best judgment, or stop and tell them you're "
+                        f"blocked waiting on: {question[:120]}")
+        finally:
+            pending.pop(req_id, None)
+            # Tell the UI to dismiss the prompt even on timeout/cancel.
+            try:
+                await self.core.relay.emit(2, "ask_user_resolved", {"id": req_id})
+            except Exception:
+                pass
+
+    # ── Swarm Blackboard: live shared memory across agents ───────────────────
+    def _blackboard(self):
+        bb = getattr(self.core, 'blackboard', None)
+        if bb is None:
+            from blackboard import Blackboard
+            bb = self.core.blackboard = Blackboard()
+        return bb
+
+    async def tool_blackboard_write(self, args):
+        """Publish a value to the shared Blackboard so other agents can read it."""
+        key = (args.get('key') or '').strip()
+        if not key:
+            return "[ERROR] blackboard_write requires a 'key'."
+        value = args.get('value', '')
+        by = (args.get('by') or 'agent').strip() or 'agent'
+        self._blackboard().write(key, value, by=by)
+        try:
+            await self.core.relay.emit(3, "blackboard_update", {
+                "key": key, "by": by,
+                "preview": (value if isinstance(value, str) else str(value))[:200]})
+        except Exception:
+            pass
+        return f"[BLACKBOARD] Wrote key '{key}'. Peers can now blackboard_read('{key}')."
+
+    async def tool_blackboard_read(self, args):
+        """Read a value from the shared Blackboard by key (returns nothing if unset)."""
+        key = (args.get('key') or '').strip()
+        if not key:
+            return "[ERROR] blackboard_read requires a 'key'."
+        val = self._blackboard().read(key)
+        if val is None:
+            existing = ', '.join(self._blackboard().keys()) or '(none yet)'
+            return f"[BLACKBOARD] Key '{key}' is not set. Available keys: {existing}"
+        return f"[BLACKBOARD] {key} =\n{val}"
+
+    async def tool_blackboard_list(self, args):
+        """List the keys currently on the shared Blackboard, with short previews."""
+        snap = self._blackboard().snapshot(value_chars=120)
+        if not snap:
+            return "[BLACKBOARD] Empty — no keys written yet."
+        lines = [f"[BLACKBOARD] {len(snap)} key(s):"]
+        for e in snap:
+            lines.append(f"  • {e['key']} (by {e['by']}): {e['preview']}")
+        return "\n".join(lines)
+
+    async def tool_blackboard_wait_for(self, args):
+        """Block until another agent writes `key` to the Blackboard, then return it."""
+        key = (args.get('key') or '').strip()
+        if not key:
+            return "[ERROR] blackboard_wait_for requires a 'key'."
+        timeout = min(int(args.get('timeout', 60)), 600)
+        val = await self._blackboard().wait_for(key, timeout=timeout)
+        if val is None:
+            return (f"[BLACKBOARD] Timed out after {timeout}s waiting for key '{key}' — "
+                    f"no agent produced it. Proceed without it or try a different approach.")
+        return f"[BLACKBOARD] {key} (received) =\n{val}"
     async def tool_send_telegram(self, args):
         """Send a proactive Telegram message."""
         message = args.get('message', '')

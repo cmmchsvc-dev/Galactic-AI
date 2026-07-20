@@ -1,3 +1,52 @@
+## v2.1.5 — Swarm Blackboard (2026-07-20)
+
+- 🧠 **Live shared agent memory**: a real-time key/value **Blackboard** that agents write to and read from *during* execution — not just passing finished results downstream. Four new tools: `blackboard_write`, `blackboard_read`, `blackboard_list`, and `blackboard_wait_for` (blocks until a peer publishes a key, with a timeout so it never hangs). A research agent can publish a URL the moment it finds it, and a scraper running in parallel picks it up via `blackboard_wait_for` — genuine mid-flight collaboration. The Swarm orchestrator mirrors each agent's result onto the Blackboard, and the **Swarm tab** now shows a live panel of every shared entry as it lands (`GET /api/blackboard`, `blackboard_update` WS event). New module `blackboard.py`.
+
+---
+
+## v2.1.4 — The Crucible (2026-07-20)
+
+- ⏸️ **Approval gate for file edits (opt-in)**: turn on **Settings → Require approval for file edits** (or `models.require_approval`) and every `write_file`/`edit_file`/`replace_function` now shows you a **colorized diff** in the Control Deck and waits for **✅ Approve** or **❌ Reject** before touching disk. Reject lets you type feedback that goes straight back to Byte so it can revise. Default **OFF** — behavior is byte-for-byte unchanged when off. Blocks only until you decide or a timeout elapses; on timeout it **rejects** (the safe default) rather than applying blindly. New `POST /api/approval/respond` + `approval_request`/`approval_resolved` WS events. Reuses the same Future-over-WebSocket plumbing as `ask_user`.
+
+---
+
+## v2.1.3 — Agentic Superpowers, Wave 1 (2026-07-20)
+
+First wave of new agent capabilities (more queued as Wave 2 — see the roadmap notes below this release in dev docs).
+
+- 🌳 **AST-safe code editing**: three new tools — `list_functions`, `read_function`, and `replace_function` — that locate a function/class/method by **name** via Python's AST instead of by fragile string-matching or line numbers. `replace_function` auto-indents your new code, preserves existing decorators, re-parses the **entire file to guarantee it's still valid Python before writing a single byte**, and auto-backs-up via VCR. Immune to line-drift and whitespace hallucinations; prefer it over `edit_file` for whole-function rewrites. (Complements the read-only `lsp_tooling` skill.)
+- 🙋 **`ask_user` — human-in-the-loop**: Byte can now pause mid-task and ask *you* a question — a 2FA code, a missing credential, a subjective design call — via a clean modal in the Control Deck, then resume with your answer instead of guessing-and-failing or aborting. Blocks the ReAct loop only until you answer or a timeout elapses (never hangs; on timeout it proceeds or reports it's blocked). New `POST /api/ask_user/respond` + `ask_user_resolved` WS event.
+- 🐞 **Terminal-to-Brain**: an "Ask Byte About Last Error" button in the Virtual Terminal grabs the last ~50 lines of output, switches to Chat, and fires off a pre-filled "diagnose & fix this" prompt — no more copy-paste-switch-tabs.
+
+---
+
+## v2.1.2 — Hardening & Honesty Update (2026-07-19)
+
+Triggered by an external code review (Gemini Deep Think); every claim was verified against the live source before acting — some were confirmed, some corrected.
+
+- 🔒 **Security — XSS fix (serious)**: `formatMsg` in the Control Deck now HTML-escapes the full raw model reply *before* any markdown rendering, so hostile markup echoed back by the AI (e.g. from summarizing a poisoned webpage) can no longer execute in the deck. Previously only code-block capture groups were escaped, leaving prose/inline-code/bold to reach `innerHTML` as live HTML — a zero-click RCE path via the authenticated API. Verified inert end-to-end in a live DOM; all legitimate markdown and Smart Artifacts still render.
+- 🐛 **`search_codebase` no longer leaks cross-project results**: when nothing in the current workspace matches, it returns an honest "no match" instead of silently falling back to unscoped results from other indexed repos — honoring the scoping guarantee its own code comment already claimed.
+- ⚡ **`execute_python` sandbox + leak fix**: scratch scripts now write to the project's `tmp/` sandbox (not the global OS temp dir), and cleanup retries briefly on Windows instead of silently leaking a file the just-killed process still had locked.
+- 🧠 **Lower per-turn token cost**: the MagicDocs architecture map (`.galactic_map.md`) is now injected into the system prompt as a ~5k-char summary instead of up to 100k chars every turn (the full map stays reachable via `read_file`) — meaningful savings, especially for local Ollama models.
+- 🚀 **Efficiency**: file verification no longer double-allocates large files in RAM (`os.path.getsize` instead of re-encoding the whole content); `diff_files` output is capped at 15k chars; disk-I/O tools (read/write/edit/find_files) now run on a dedicated thread pool so a runaway file scan can't stall the web server or WebSocket relays.
+- 🔋 **Deck polish**: the background canvas animation pauses when the tab is hidden (battery), and the drag-drop upload limit now matches the click-upload limit (20 MB, was an inconsistent 5 MB).
+- 📖 **Manual — documented existing-but-undersold safety features**: automatic pre-edit VCR backups (`/vcr undo`), byte-level write verification, executable Smart Artifacts (▶ Run), the self-cleaning 7-day `tmp/` sandbox, and the CLI's `/context viz` + `@`-file autocomplete. Fixed the CLI's own `/ctx viz` → `/context viz` hint typo.
+
+---
+
+## v2.1.1 — The Hybrid Pilot QOL Update (2026-07-19)
+
+- 🧬 **Hybrid Coding Mode**: A toggleable split-brain workflow for coding tasks — the cloud **Architect** (your big brain) scans the repo and writes the exact code into a blueprint; the local **Builder** then runs the tool loop and applies it, so cloud tokens pay once for the thinking while local compute does the grunt work. Architect and Builder are each selectable in Settings → Model Configuration (Architect defaults to the Planner model, Builder to your local fallback); toggle with the Settings checkbox or `/hybrid [on|off]` from deck chat, CLI, or the Ctrl+K palette. Off = everything behaves exactly as before.
+- ⚙️ **Boost Model in Settings**: The 🚀 Boost target is now a proper dropdown in Settings → Model Configuration (`models.boost_provider/boost_model`) alongside Primary/Fallback/Planner.
+
+- 🚀 **Boost & Retry**: One-click hybrid escalation — hover the newest answer and hit **🚀 Boost** to rewind the exchange and re-run it on your cloud "big brain" (`models.boost_provider/boost_model`; if unset, auto-picks your top-tier 👑 cloud model), or **⟳ Retry** for a fresh roll on the current model. One-shot override; your primary model selection is never touched. Also available as `/boost [model]` + `/retry` in deck chat, the CLI, and the Ctrl+K palette (`POST /api/chat/boost`).
+- 🔍 **Per-Message Provenance**: Every reply now shows which model *actually* answered — model chip, response time, and ↑/↓ token counts on the meta line, plus an amber **⚠ fallback** chip and toast when the reply silently came from the fallback model.
+- 🖱️ **Message Hover Toolbar**: 📋 Copy (raw markdown) on every message, 🔊 Speak (unified TTS) on replies, ✏️ Edit & resend on your newest message.
+- ⌨️ **Input QOL**: Unsent drafts survive page refreshes; ArrowUp/ArrowDown cycles your last 50 sent prompts shell-style (slash commands excluded).
+- ⬇️ **Chat Export**: Download the conversation as clean Markdown from the session bar or palette; role-labeled and timestamped.
+
+---
+
 ## v2.1.0 — Local Voice & Smarter Memory Update (2026-07-16)
 
 - 🔒 **Secrets Hardening**: Live API keys, tokens, and passwords moved out of the git-tracked `config.yaml` template into a gitignored `config.local.yaml` overlay (`config_loader.py`). Every writer (core, deck, model manager, CLI, voice agent) now saves only to the overlay.

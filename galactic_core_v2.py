@@ -757,6 +757,14 @@ class GalacticCore:
         except Exception:
             pass
 
+        # Release the gateway's dedicated disk-I/O thread pool.
+        try:
+            io_pool = getattr(getattr(self, 'gateway', None), '_io_pool', None)
+            if io_pool:
+                io_pool.shutdown(wait=False, cancel_futures=True)
+        except Exception:
+            pass
+
         # Cancel all background tasks (with timeout — don't wait forever)
         tasks = [t for t in asyncio.all_tasks() if t is not asyncio.current_task()]
         for task in tasks:

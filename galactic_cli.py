@@ -828,6 +828,22 @@ async def cmd_rewind(session, arg):
     safe_print(f"[dim cyan]⏪ Rewinding conversation by {num} turn(s)...[/dim cyan]")
     await send_chat(session, f"/rewind {num}")
 
+async def cmd_boost(session, arg):
+    """Re-run the last exchange on the boost (cloud) model."""
+    target = f" {arg.strip()}" if arg and arg.strip() else ""
+    safe_print("[cyan]🚀 Boosting the last answer on the big brain...[/cyan]")
+    await send_chat(session, f"/boost{target}")
+
+async def cmd_retry(session, arg):
+    """Re-run the last exchange on the current model."""
+    safe_print("[cyan]⟳ Retrying the last answer...[/cyan]")
+    await send_chat(session, "/retry")
+
+async def cmd_hybrid(session, arg):
+    """Toggle Hybrid Coding Mode (cloud Architect writes, local Builder applies)."""
+    state = f" {arg.strip().lower()}" if arg and arg.strip().lower() in ("on", "off") else ""
+    await send_chat(session, f"/hybrid{state}")
+
 async def cmd_clear(session, arg):
     """Clear the screen and reset conversation history."""
     os.system('cls' if os.name == 'nt' else 'clear')
@@ -988,7 +1004,7 @@ async def cmd_context(session, arg):
                     f"\n[bold cyan]Usage:[/bold cyan] [{pct_color}]{usage_pct:.1f}%[/{pct_color}] "
                     f"[dim]{bar}[/dim]\n"
                     f"\n[dim]Input Tokens: {session_token_counts['input']:,} | Output Tokens: {session_token_counts['output']:,}[/dim]\n\n"
-                    f"[dim italic]Tip: Type '/ctx viz' for a visual breakdown of context items.[/dim italic]",
+                    f"[dim italic]Tip: Type '/context viz' for a visual breakdown of context items.[/dim italic]",
                     title="Context Window",
                     border_style="cyan",
                     box=ROUNDED
@@ -2016,6 +2032,9 @@ COMMAND_GRAPH = {
     "plan": {"handler": cmd_plan, "desc": "Toggle Plan Mode (prompts LLM to act as planner)"},
     "auto": {"handler": cmd_auto, "desc": "Toggle Auto Mode (autonomous agent loop)"},
     "rewind": {"handler": cmd_rewind, "desc": "Remove the last N messages/turns to undo conversation"},
+    "boost": {"handler": cmd_boost, "desc": "Re-run the last answer on the boost (cloud) model — /boost [model]"},
+    "retry": {"handler": cmd_retry, "desc": "Re-run the last answer on the current model"},
+    "hybrid": {"handler": cmd_hybrid, "desc": "Toggle Hybrid Coding Mode — cloud Architect writes, local Builder applies"},
     "save": {"handler": cmd_save, "desc": "Save current session to JSON file"},
     "load": {"handler": cmd_load, "desc": "Load a saved session or list files"},
     "history": {"handler": cmd_history, "desc": "Show recent conversation history"},
@@ -2286,7 +2305,8 @@ async def main():
                     continue
                 # Context-management commands live in the backend's command
                 # interceptor (web_deck handle_chat) — forward instead of failing.
-                if user_input.split()[0].lower() in ('/compact', '/context', '/clear', '/rewind'):
+                if user_input.split()[0].lower() in ('/compact', '/context', '/clear', '/rewind',
+                                                     '/boost', '/retry', '/hybrid'):
                     reset_stream_state()
                     await send_chat(http_session, user_input, extra_payload)
                     continue

@@ -6,6 +6,8 @@ A powerful, local-first AI automation platform with 188+ built-in tools, an exte
 
 Run fully local with Ollama (no API keys, no cloud, no tracking), or connect to any of 24 cloud providers. Your data stays yours.
 
+📖 **New here?** [`USER_MANUAL.md`](USER_MANUAL.md) is the full task-oriented guide — every tab, every command, every feature, with step-by-step instructions. This README is the quick tour; the manual is the reference you keep open.
+
 ---
 
 ## What Makes Galactic AI Different

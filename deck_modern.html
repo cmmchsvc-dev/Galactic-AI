@@ -55,6 +55,48 @@ body{background:radial-gradient(1200px 800px at 85% -10%,rgba(139,92,246,0.16),t
 #cmdk-empty{padding:22px;text-align:center;color:var(--dim);font-size:0.86em}
 #cmdk-hint{display:flex;gap:14px;justify-content:center;padding:8px;border-top:1px solid var(--border);font-size:0.7em;color:var(--dim)}
 #cmdk-hint kbd{background:var(--bg3);border:1px solid var(--border);border-radius:4px;padding:1px 5px;margin-right:3px;font-family:var(--mono)}
+/* ── ask_user (human-in-the-loop) modal ── */
+.ask-user-overlay{position:fixed;inset:0;z-index:10000;background:rgba(0,0,0,0.6);backdrop-filter:blur(3px);display:flex;align-items:center;justify-content:center;padding:20px;animation:riseIn .2s var(--ease) both}
+.ask-user-box{width:min(560px,94vw);background:var(--bg2);border:1px solid var(--border-hi);border-radius:14px;box-shadow:0 24px 70px rgba(0,0,0,0.6);padding:20px;border-top:3px solid var(--cyan)}
+.ask-user-title{font-weight:700;color:var(--cyan);font-size:1.02em;margin-bottom:10px;letter-spacing:.3px}
+.ask-user-q{color:var(--text);font-size:0.98em;line-height:1.5;white-space:pre-wrap;word-break:break-word;margin-bottom:14px}
+.ask-user-input{width:100%;background:var(--bg3);border:1px solid var(--border);border-radius:9px;padding:10px 12px;color:var(--text);font-family:var(--font);font-size:0.92em;resize:vertical;outline:none;box-sizing:border-box}
+.ask-user-input:focus{border-color:var(--cyan)}
+.ask-user-actions{display:flex;justify-content:flex-end;margin-top:12px}
+.ask-user-send{background:linear-gradient(135deg,var(--cyan),var(--pink));border:none;border-radius:9px;color:#000;font-weight:700;padding:9px 18px;cursor:pointer;font-size:0.9em;transition:opacity .2s}
+.ask-user-send:hover{opacity:.88}
+.ask-user-send:disabled{opacity:.5;cursor:default}
+/* Terminal "Ask Byte About Last Error" accent */
+.ask-byte-btn{color:#ffb64e !important;border-color:rgba(255,182,78,0.45) !important;box-shadow:0 0 10px rgba(255,182,78,0.12)}
+.ask-byte-btn:hover{color:#ffd08a !important;border-color:#ffb64e !important;box-shadow:0 0 14px rgba(255,182,78,0.3)}
+/* ── The Crucible: approval diff modal ── */
+.approval-overlay{position:fixed;inset:0;z-index:10001;background:rgba(0,0,0,0.65);backdrop-filter:blur(3px);display:flex;align-items:center;justify-content:center;padding:20px;animation:riseIn .2s var(--ease) both}
+.approval-box{width:min(820px,96vw);max-height:88vh;display:flex;flex-direction:column;background:var(--bg2);border:1px solid var(--border-hi);border-radius:14px;box-shadow:0 24px 70px rgba(0,0,0,0.6);padding:18px;border-top:3px solid #ffb64e}
+.approval-title{font-weight:700;color:#ffb64e;font-size:1.02em;margin-bottom:4px}
+.approval-action{text-transform:none}
+.approval-path{color:var(--dim);font-family:var(--mono);font-size:0.8em;margin-bottom:12px;word-break:break-all}
+.approval-diff{flex:1;overflow:auto;background:#0d0d14;border:1px solid var(--border);border-radius:8px;padding:10px 12px;margin:0 0 12px;font-family:var(--mono);font-size:0.8em;line-height:1.5;white-space:pre;tab-size:4}
+.approval-diff .d-add{color:#4ade80;display:block}
+.approval-diff .d-del{color:#f87171;display:block}
+.approval-diff .d-hunk{color:var(--cyan);display:block}
+.approval-diff .d-file{color:var(--dim);display:block}
+.approval-diff .d-ctx{color:var(--text);opacity:.75;display:block}
+.approval-feedback{margin-bottom:12px}
+.approval-fb-input{width:100%;background:var(--bg3);border:1px solid var(--border);border-radius:9px;padding:9px 11px;color:var(--text);font-family:var(--font);font-size:0.9em;resize:vertical;outline:none;box-sizing:border-box}
+.approval-fb-input:focus{border-color:var(--cyan)}
+.approval-actions{display:flex;justify-content:flex-end;gap:10px}
+.approval-actions button{border:none;border-radius:9px;font-weight:700;padding:9px 18px;cursor:pointer;font-size:0.9em;transition:opacity .2s}
+.approval-actions button:disabled{opacity:.5;cursor:default}
+.approval-approve{background:linear-gradient(135deg,#22c55e,#16a34a);color:#04140a}
+.approval-reject{background:var(--bg3);border:1px solid rgba(248,113,113,0.5) !important;color:#f87171}
+.approval-actions button:hover{opacity:.85}
+/* ── Swarm Blackboard panel entries ── */
+.bb-entry{background:var(--bg3);border:1px solid var(--border);border-radius:8px;padding:8px 10px;margin-bottom:8px;animation:riseIn .25s var(--ease) both}
+.bb-entry-head{display:flex;justify-content:space-between;align-items:center;gap:8px;margin-bottom:4px}
+.bb-key{color:var(--cyan);font-family:var(--mono);font-size:0.82rem;font-weight:700;word-break:break-all}
+.bb-by{color:var(--dim);font-size:0.7rem;flex-shrink:0}
+.bb-preview{color:var(--text);opacity:.85;font-size:0.78rem;line-height:1.4;white-space:pre-wrap;word-break:break-word;max-height:60px;overflow:hidden}
+.bb-ts{color:var(--dim);font-size:0.68rem;margin-top:4px;text-align:right}
 #ctx-meter{font-size:0.72rem;color:var(--dim);font-family:var(--mono);flex-shrink:0;white-space:nowrap;padding:2px 8px;border:1px solid var(--border);border-radius:10px;cursor:pointer;transition:color .3s,border-color .3s}
 #ctx-meter.ok{color:var(--green);border-color:rgba(0,255,136,0.35)}
 #ctx-meter.warn{color:#ffcc00;border-color:rgba(255,204,0,0.4)}
@@ -100,6 +142,21 @@ body{background:radial-gradient(1200px 800px at 85% -10%,rgba(139,92,246,0.16),t
 .msg.bot .bubble{background:rgba(255,255,255,0.03);backdrop-filter:blur(10px);border:1px solid var(--border);border-bottom-left-radius:4px;box-shadow:var(--shadow-1)}
 .msg.bot.thinking .bubble{border-color:rgba(255,0,200,0.3);color:var(--dim)}
 .msg .meta{font-size:0.73rem;color:var(--dim)}
+/* ── Per-message hover actions + provenance chips ── */
+.msg-actions{display:flex;gap:4px;opacity:0;pointer-events:none;transition:opacity .18s;margin-top:1px}
+.msg:hover .msg-actions,.msg:focus-within .msg-actions{opacity:1;pointer-events:auto}
+.msg-actions button{background:var(--bg3);border:1px solid var(--border);border-radius:6px;color:var(--dim);font-size:0.7rem;padding:2px 8px;cursor:pointer;font-family:var(--font);transition:color .15s,border-color .15s}
+.msg-actions button:hover{color:var(--text);border-color:var(--border-hi)}
+.msg-actions button.boost{color:#ffd75e;border-color:rgba(255,215,94,0.35)}
+.msg-actions button.boost:hover{color:#ffe89a;border-color:#ffd75e}
+.msg .act-last{display:none}
+.msg.is-last-bot .act-last,.msg.is-last-user .act-last{display:inline-block}
+.meta-chip{display:inline-block;background:var(--bg3);border:1px solid var(--border);border-radius:10px;padding:0 7px;margin-left:6px;font-size:0.68rem;color:var(--dim);vertical-align:middle}
+.meta-chip.fb{color:#ffb64e;border-color:rgba(255,182,78,0.4)}
+.meta-chip.boosted{color:#ffd75e;border-color:rgba(255,215,94,0.4)}
+.msg.superseded{opacity:0.45}
+.msg.superseded .bubble{filter:saturate(0.5)}
+.msg.boosted .bubble{border-left:3px solid #ffd75e}
 #stream-bubble{padding:12px 16px;border-radius:16px;font-size:0.95rem;line-height:1.6;background:var(--bg3);border:1px solid rgba(255,0,200,0.35);color:var(--pink);white-space:pre-wrap;word-break:break-word;align-self:flex-start;max-width:88%;display:none}
 #chat-input-row{display:flex;gap:10px;padding:14px 18px;border-top:1px solid var(--border);flex-shrink:0;background:var(--glass)}
 #chat-input{flex:1;background:var(--bg3);border:1px solid var(--border);border-radius:12px;padding:11px 16px;color:var(--text);font-family:var(--font);font-size:0.95rem;resize:none;height:48px;max-height:200px;overflow-y:auto;outline:none;transition:border .2s}
@@ -1026,6 +1083,7 @@ body[data-viz-theme="lightspeed"] #sidebar, body[data-viz-theme="lightspeed"] #c
             <button class="topbar-btn" onclick="saveSessionPrompt()" title="Save the current chat as a named session" style="padding:5px 10px">💾 Save</button>
             <button class="topbar-btn" onclick="newSession()" title="Start a fresh chat (offers to save current first)" style="padding:5px 10px">＋ New</button>
             <button class="topbar-btn" onclick="deleteSessionPrompt()" title="Delete the selected saved session" style="padding:5px 10px">🗑️</button>
+            <button class="topbar-btn" onclick="exportChatMarkdown()" title="Download this conversation as a Markdown file" style="padding:5px 10px">⬇ Export</button>
           </div>
           <div id="chat-log">
             <div class="msg bot"><div class="bubble">⬡ Galactic AI online. How can I help?</div></div>
@@ -1035,7 +1093,7 @@ body[data-viz-theme="lightspeed"] #sidebar, body[data-viz-theme="lightspeed"] #c
           <div id="chat-input-row" style="display:flex;gap:8px;padding:12px 16px;border-top:1px solid var(--border);flex-shrink:0;background:var(--bg2);align-items:center">
             <input type="file" id="chat-file-input" multiple accept=".txt,.md,.py,.js,.ts,.json,.yaml,.yml,.xml,.html,.css,.csv,.log,.toml,.ini,.cfg,.sh,.ps1,.bat,.rs,.go,.java,.c,.cpp,.h,.hpp,.rb,.php,.sql,.r,.swift,.kt,.dart,.env,.conf,.properties,.jpg,.jpeg,.png,.gif,.webp,.bmp,.tiff,.tif,.heic,.heif,.avif,.svg,image/*" style="display:none" onchange="handleFileAttach(this)">
             <button id="attach-btn" onclick="document.getElementById('chat-file-input').click()" title="Attach files" style="padding:10px 12px;background:var(--bg3);border:1px solid var(--border);border-radius:10px;color:var(--dim);cursor:pointer;font-size:1.1em;transition:border .2s,color .2s" onmouseover="this.style.borderColor='var(--cyan)';this.style.color='var(--cyan)'" onmouseout="this.style.borderColor='var(--border)';this.style.color='var(--dim)'">📎</button>
-            <textarea id="chat-input-main" placeholder="Message Byte... (Enter to send, Shift+Enter for newline)" style="flex:1;background:var(--bg3);border:1px solid var(--border);border-radius:10px;padding:10px 14px;color:var(--text);font-family:var(--font);font-size:0.9em;resize:none;height:44px;max-height:200px;overflow-y:auto;outline:none;transition:border .2s" onkeydown="handleKeyMain(event)" oninput="autoResize(this)"></textarea>
+            <textarea id="chat-input-main" placeholder="Message Byte... (Enter to send, Shift+Enter for newline)" style="flex:1;background:var(--bg3);border:1px solid var(--border);border-radius:10px;padding:10px 14px;color:var(--text);font-family:var(--font);font-size:0.9em;resize:none;height:44px;max-height:200px;overflow-y:auto;outline:none;transition:border .2s" onkeydown="handleKeyMain(event)" oninput="autoResize(this);saveDraft(this)"></textarea>
             <button id="voice-btn" class="voice-chat-btn" onclick="toggleVoiceInput()" title="Voice input (click to record)">🎙️</button>
             <button id="wake-word-btn" class="voice-chat-btn" onclick="toggleWakeWord()" title="Wake-word listening (always-on mic)">👂</button>
             <button id="live-call-btn" class="voice-chat-btn" onclick="toggleLiveCall()" title="Live Call Mode (auto-speak responses)">🔊</button>
@@ -1319,6 +1377,15 @@ body[data-viz-theme="lightspeed"] #sidebar, body[data-viz-theme="lightspeed"] #c
             </div>
           </div>
           <div class="model-config-row">
+            <label title="One-shot escalation target for the 🚀 Boost button and /boost — never becomes your primary">🚀 Boost Model</label>
+            <div style="display:flex;gap:8px;flex:1">
+              <select id="set-boost-provider" onchange="updateSettingsModelList('boost')" style="flex:0.4;padding:7px 10px;background:var(--bg);border:1px solid var(--border);border-radius:7px;color:var(--text);font-size:0.88em">
+              </select>
+              <select id="set-boost-model" style="flex:0.6;padding:7px 10px;background:var(--bg);border:1px solid var(--border);border-radius:7px;color:var(--text);font-size:0.88em">
+              </select>
+            </div>
+          </div>
+          <div class="model-config-row">
             <label>Planner Model</label>
             <div style="display:flex;gap:8px;flex:1">
               <select id="set-planner-provider" onchange="updateSettingsModelList('planner')" style="flex:0.4;padding:7px 10px;background:var(--bg);border:1px solid var(--border);border-radius:7px;color:var(--text);font-size:0.88em">
@@ -1345,10 +1412,43 @@ body[data-viz-theme="lightspeed"] #sidebar, body[data-viz-theme="lightspeed"] #c
               </select>
             </div>
           </div>
+          <div style="margin-top:16px;padding:12px;border:1px solid rgba(255,215,94,0.25);border-radius:9px;background:rgba(255,215,94,0.04)">
+            <label style="display:flex;align-items:center;gap:8px;cursor:pointer;font-size:0.9em;font-weight:700">
+              <input type="checkbox" id="set-hybrid-coding" style="accent-color:#ffd75e;width:18px;height:18px;cursor:pointer">
+              <span>🧬 Hybrid Coding Mode</span>
+              <span style="font-weight:400;color:var(--dim);font-size:0.85em">— cloud Architect writes the code, local Builder applies it (saves cloud tokens)</span>
+            </label>
+            <div style="font-size:0.72em;color:var(--dim);margin:8px 0 10px 26px">
+              On coding tasks, the <b>Architect</b> (big brain) scans the code and produces a blueprint containing the exact code;
+              the <b>Builder</b> (cheap/local) runs the tool loop and applies it. Toggle anytime with <code style="background:var(--bg3);padding:1px 5px;border-radius:4px">/hybrid</code>.
+            </div>
+            <div class="model-config-row">
+              <label title="The big brain — plans AND writes the exact code into a blueprint. Defaults to the Planner model if unset.">🏛️ Architect</label>
+              <div style="display:flex;gap:8px;flex:1">
+                <select id="set-architect-provider" onchange="updateSettingsModelList('architect')" style="flex:0.4;padding:7px 10px;background:var(--bg);border:1px solid var(--border);border-radius:7px;color:var(--text);font-size:0.88em">
+                </select>
+                <select id="set-architect-model" style="flex:0.6;padding:7px 10px;background:var(--bg);border:1px solid var(--border);border-radius:7px;color:var(--text);font-size:0.88em">
+                </select>
+              </div>
+            </div>
+            <div class="model-config-row">
+              <label title="The workhorse — applies the Architect's code with tools. Defaults to your local fallback model if unset.">🔨 Builder</label>
+              <div style="display:flex;gap:8px;flex:1">
+                <select id="set-builder-provider" onchange="updateSettingsModelList('builder')" style="flex:0.4;padding:7px 10px;background:var(--bg);border:1px solid var(--border);border-radius:7px;color:var(--text);font-size:0.88em">
+                </select>
+                <select id="set-builder-model" style="flex:0.6;padding:7px 10px;background:var(--bg);border:1px solid var(--border);border-radius:7px;color:var(--text);font-size:0.88em">
+                </select>
+              </div>
+            </div>
+          </div>
           <div style="display:flex;gap:18px;flex-wrap:wrap;margin-top:14px">
             <label style="display:flex;align-items:center;gap:8px;cursor:pointer;font-size:0.88em">
               <input type="checkbox" id="set-streaming" checked style="accent-color:var(--cyan);width:18px;height:18px;cursor:pointer">
               <span>Streaming</span>
+            </label>
+            <label style="display:flex;align-items:center;gap:8px;cursor:pointer;font-size:0.88em" title="The Crucible: when on, every file write/edit shows you a diff and waits for your Approve/Reject before touching disk">
+              <input type="checkbox" id="set-require-approval" style="accent-color:#ffb64e;width:18px;height:18px;cursor:pointer">
+              <span>⏸️ Require approval for file edits</span>
             </label>
           </div>
           <div style="margin-top:16px;padding-top:14px;border-top:1px solid var(--border)">
@@ -1637,6 +1737,17 @@ body[data-viz-theme="lightspeed"] #sidebar, body[data-viz-theme="lightspeed"] #c
             </div>
           </div>
 
+          <!-- Live Blackboard: shared agent memory -->
+          <div style="width:320px; display:flex; flex-direction:column; background:var(--bg2); border:1px solid rgba(0,243,255,0.1); border-radius:12px; overflow:hidden;">
+            <div style="padding:16px 20px; font-weight:600; color:var(--text); border-bottom:1px solid rgba(255,255,255,0.05); display:flex; justify-content:space-between; align-items:center">
+              <span>🧠 Blackboard <span id="bb-count" style="color:var(--dim); font-weight:400; font-size:0.8rem"></span></span>
+              <button class="btn secondary" style="padding:4px 10px; font-size:0.75rem" onclick="loadBlackboard()" title="Refresh shared blackboard">↻</button>
+            </div>
+            <div id="blackboard-list" style="flex:1; overflow-y:auto; padding:14px;">
+              <div style="color:var(--dim); font-size:0.85rem; text-align:center; margin-top:30px;">Empty — agents post shared findings here in real time.</div>
+            </div>
+          </div>
+
           <!-- Swarm Routing -->
           <div style="width:380px; display:flex; flex-direction:column; background:var(--bg2); border:1px solid rgba(0, 243, 255, 0.1); border-radius:12px; overflow:hidden;">
             <div style="padding:16px 20px; font-weight:600; color:var(--text); border-bottom:1px solid rgba(255,255,255,0.05);">
@@ -1702,6 +1813,7 @@ body[data-viz-theme="lightspeed"] #sidebar, body[data-viz-theme="lightspeed"] #c
         <div style="display:flex;gap:8px">
           <button class="term-btn" onclick="launchShell()">💻 Standard Shell</button>
           <button class="term-btn" onclick="launchGeminiCLI()">🚀 Launch Gemini CLI</button>
+          <button class="term-btn ask-byte-btn" onclick="askByteAboutError()" title="Send the recent terminal output to Byte in chat and ask for a fix">🐞 Ask Byte About Last Error</button>
           <button class="term-btn" onclick="resetTerminal()">↺ Reset</button>
         </div>
       </div>
@@ -1929,6 +2041,36 @@ function resetTerminal() {
   if (term) term.clear();
   if (termSocket) termSocket.close();
   connectTerminalWS();
+}
+
+// ── Terminal-to-Brain: grab recent terminal output and ask Byte to fix it ──
+function grabTerminalTail(maxLines) {
+  if (!term || !term.buffer || !term.buffer.active) return '';
+  const buf = term.buffer.active;
+  const total = buf.length;
+  const lines = [];
+  for (let i = Math.max(0, total - maxLines); i < total; i++) {
+    const line = buf.getLine(i);
+    if (line) lines.push(line.translateToString(true));  // true = trim trailing whitespace
+  }
+  // Drop trailing empty lines so we don't send a wall of blank prompt rows.
+  while (lines.length && !lines[lines.length - 1].trim()) lines.pop();
+  return lines.join('\n');
+}
+
+function askByteAboutError() {
+  const tail = grabTerminalTail(50).trim();
+  if (!tail) { showToast('Terminal looks empty — nothing to send yet', 'info', 3000); return; }
+  const prompt = "I just ran something in the terminal and want help. Here's the recent output — " +
+    "diagnose what went wrong and tell me how to fix it:\n\n```\n" + tail + "\n```";
+  switchTab('chat');
+  const box = document.getElementById('chat-input-main');
+  if (box) {
+    box.value = prompt;
+    if (typeof autoResize === 'function') autoResize(box);
+    if (typeof saveDraft === 'function') saveDraft(box);
+  }
+  if (typeof sendChatMain === 'function') sendChatMain();
 }
 
 async function loadAliases() {
@@ -2341,6 +2483,7 @@ async function loadTraceHistory() {
 
 async function init() {
   stopOrb(); // Reset orb state on load
+  restoreDraft();   // unsent message survives a refresh
   await loadChatHistory();
   await loadLogHistory();
   await loadTraceHistory();
@@ -2446,6 +2589,11 @@ function buildCommands() {
   cmds.push({cat:'Chat', ic:'🧹', label:'Compact context (/compact)', run:() => sendPaletteCmd('/compact')});
   cmds.push({cat:'Chat', ic:'⏪', label:'Rewind last exchange (/rewind)', run:() => sendPaletteCmd('/rewind')});
   cmds.push({cat:'Chat', ic:'🛠️', label:'List chat commands (/help)', run:() => sendPaletteCmd('/help')});
+  cmds.push({cat:'Chat', ic:'🚀', label:'Boost last answer (re-run on cloud model)', run:() => boostLast()});
+  cmds.push({cat:'Chat', ic:'⟳', label:'Retry last answer (same model)', run:() => retryLast()});
+  cmds.push({cat:'Chat', ic:'📋', label:'Copy last answer', run:() => copyLastAnswer()});
+  cmds.push({cat:'Chat', ic:'⬇', label:'Export chat as Markdown', run:() => exportChatMarkdown()});
+  cmds.push({cat:'Chat', ic:'🧬', label:'Toggle Hybrid Coding Mode (/hybrid)', run:() => sendPaletteCmd('/hybrid')});
 
   // Voice
   cmds.push({cat:'Voice', ic:'👂', label:(_wakeWordEnabled ? 'Disable' : 'Enable') + ' wake-word listening', run:() => toggleWakeWord()});
@@ -2725,9 +2873,198 @@ function connectWS() {
       const u = p.data || {};
       showToast(`🆕 Update available: v${u.latest} — Run ./update.ps1`, 'info', 30000);
       showUpdateBanner(u);
+    } else if (p.type === 'ask_user') {
+      showAskUserModal((p.data || {}).id, (p.data || {}).question || '');
+    } else if (p.type === 'ask_user_resolved') {
+      closeAskUserModal((p.data || {}).id);
+    } else if (p.type === 'approval_request') {
+      const a = p.data || {};
+      showApprovalModal(a.id, a.path || '', a.action || 'change', a.diff || '');
+    } else if (p.type === 'approval_resolved') {
+      closeApprovalModal((p.data || {}).id);
+    } else if (p.type === 'blackboard_update') {
+      pushBlackboardUpdate(p.data || {});
     }
   };
   socket.onclose = () => setTimeout(connectWS, 3000);
+}
+
+// ── Human-in-the-loop: Byte can ask YOU a question mid-task (ask_user tool) ──
+function showAskUserModal(id, question) {
+  if (!id) return;
+  closeAskUserModal(id);  // avoid duplicates
+  const ov = document.createElement('div');
+  ov.className = 'ask-user-overlay';
+  ov.id = 'ask-user-' + id;
+  ov.innerHTML =
+    '<div class="ask-user-box">' +
+      '<div class="ask-user-title">🤖 Byte needs your input</div>' +
+      '<div class="ask-user-q"></div>' +
+      '<textarea class="ask-user-input" rows="3" placeholder="Type your answer… (Enter to send, Shift+Enter for newline)"></textarea>' +
+      '<div class="ask-user-actions">' +
+        '<button class="ask-user-send">Send answer ▶</button>' +
+      '</div>' +
+    '</div>';
+  ov.querySelector('.ask-user-q').textContent = question;  // textContent = safe
+  document.body.appendChild(ov);
+  const ta = ov.querySelector('.ask-user-input');
+  const send = ov.querySelector('.ask-user-send');
+  const submit = () => answerAskUser(id, ta.value);
+  send.onclick = submit;
+  ta.addEventListener('keydown', e => {
+    if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); submit(); }
+  });
+  setTimeout(() => ta.focus(), 50);
+  // Flash the tab title if the user is away — this is blocking Byte's task.
+  try { if (document.hidden && typeof notifyReplyReady === 'function') notifyReplyReady(question, 'Byte needs input'); } catch(e) {}
+}
+
+async function answerAskUser(id, answer) {
+  const ov = document.getElementById('ask-user-' + id);
+  const btn = ov ? ov.querySelector('.ask-user-send') : null;
+  if (btn) { btn.disabled = true; btn.textContent = 'Sending…'; }
+  try {
+    const r = await authFetch('/api/ask_user/respond', {
+      method: 'POST', headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({ id, answer: answer || '' })
+    });
+    const d = await r.json();
+    if (d.ok) { closeAskUserModal(id); showToast('✅ Answer sent to Byte', 'success', 2500); }
+    else { showToast('⚠ ' + (d.error || 'Could not send answer'), 'error', 4000); if (btn) { btn.disabled = false; btn.textContent = 'Send answer ▶'; } }
+  } catch(e) {
+    showToast('Failed to send answer: ' + e.message, 'error', 4000);
+    if (btn) { btn.disabled = false; btn.textContent = 'Send answer ▶'; }
+  }
+}
+
+function closeAskUserModal(id) {
+  const ov = document.getElementById('ask-user-' + id);
+  if (ov) ov.remove();
+}
+
+// ── The Crucible: approve/reject a file change before it hits disk ──────────
+function renderDiff(diffText) {
+  // Colorize a unified diff, escaping every line (it's raw file content).
+  return String(diffText).split('\n').map(line => {
+    const safe = escHtml(line);
+    if (line.startsWith('+++') || line.startsWith('---')) return '<span class="d-file">' + safe + '</span>';
+    if (line.startsWith('@@')) return '<span class="d-hunk">' + safe + '</span>';
+    if (line.startsWith('+')) return '<span class="d-add">' + safe + '</span>';
+    if (line.startsWith('-')) return '<span class="d-del">' + safe + '</span>';
+    return '<span class="d-ctx">' + safe + '</span>';
+  }).join('\n');
+}
+
+function showApprovalModal(id, path, action, diff) {
+  if (!id) return;
+  closeApprovalModal(id);
+  const ov = document.createElement('div');
+  ov.className = 'approval-overlay';
+  ov.id = 'approval-' + id;
+  ov.innerHTML =
+    '<div class="approval-box">' +
+      '<div class="approval-title">⏸️ Approve this <span class="approval-action"></span>?</div>' +
+      '<div class="approval-path"></div>' +
+      '<pre class="approval-diff">' + renderDiff(diff) + '</pre>' +
+      '<div class="approval-feedback" style="display:none">' +
+        '<textarea class="approval-fb-input" rows="2" placeholder="Optional: tell Byte what to change instead…"></textarea>' +
+      '</div>' +
+      '<div class="approval-actions">' +
+        '<button class="approval-reject">❌ Reject</button>' +
+        '<button class="approval-approve">✅ Approve &amp; write</button>' +
+      '</div>' +
+    '</div>';
+  ov.querySelector('.approval-action').textContent = action;
+  ov.querySelector('.approval-path').textContent = path;
+  document.body.appendChild(ov);
+  const box = ov.querySelector('.approval-box');
+  const fbWrap = ov.querySelector('.approval-feedback');
+  const rejectBtn = ov.querySelector('.approval-reject');
+  ov.querySelector('.approval-approve').onclick = () => respondApproval(id, true, '');
+  rejectBtn.onclick = () => {
+    // First click reveals the feedback box; second click sends the rejection.
+    if (fbWrap.style.display === 'none') {
+      fbWrap.style.display = 'block';
+      rejectBtn.textContent = '❌ Confirm reject';
+      box.querySelector('.approval-fb-input').focus();
+    } else {
+      respondApproval(id, false, box.querySelector('.approval-fb-input').value);
+    }
+  };
+  try { if (document.hidden && typeof notifyReplyReady === 'function') notifyReplyReady('Byte wants to ' + action + ' ' + path, 'Approval needed'); } catch(e) {}
+}
+
+async function respondApproval(id, approved, feedback) {
+  const ov = document.getElementById('approval-' + id);
+  if (ov) ov.querySelectorAll('button').forEach(b => b.disabled = true);
+  try {
+    const r = await authFetch('/api/approval/respond', {
+      method: 'POST', headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({ id, approved: !!approved, feedback: feedback || '' })
+    });
+    const d = await r.json();
+    if (d.ok) {
+      closeApprovalModal(id);
+      showToast(approved ? '✅ Change approved' : '❌ Change rejected', approved ? 'success' : 'info', 2500);
+    } else {
+      showToast('⚠ ' + (d.error || 'Could not send decision'), 'error', 4000);
+      if (ov) ov.querySelectorAll('button').forEach(b => b.disabled = false);
+    }
+  } catch(e) {
+    showToast('Failed to send decision: ' + e.message, 'error', 4000);
+    if (ov) ov.querySelectorAll('button').forEach(b => b.disabled = false);
+  }
+}
+
+function closeApprovalModal(id) {
+  const ov = document.getElementById('approval-' + id);
+  if (ov) ov.remove();
+}
+
+// ── Swarm Blackboard: live shared agent memory panel ────────────────────────
+function bbEntryHtml(e) {
+  const t = e.ts ? new Date(e.ts * 1000).toLocaleTimeString() : '';
+  return '<div class="bb-entry" data-key="' + escHtml(e.key) + '">' +
+      '<div class="bb-entry-head"><span class="bb-key">' + escHtml(e.key) + '</span>' +
+      '<span class="bb-by">' + escHtml(e.by || '?') + '</span></div>' +
+      '<div class="bb-preview">' + escHtml(e.preview || '') + '</div>' +
+      '<div class="bb-ts">' + escHtml(t) + '</div></div>';
+}
+
+function renderBlackboard(entries) {
+  const box = document.getElementById('blackboard-list');
+  const cnt = document.getElementById('bb-count');
+  if (!box) return;
+  if (!entries || !entries.length) {
+    box.innerHTML = '<div style="color:var(--dim); font-size:0.85rem; text-align:center; margin-top:30px;">Empty — agents post shared findings here in real time.</div>';
+    if (cnt) cnt.textContent = '';
+    return;
+  }
+  box.innerHTML = entries.map(bbEntryHtml).join('');
+  if (cnt) cnt.textContent = '(' + entries.length + ')';
+}
+
+async function loadBlackboard() {
+  try {
+    const r = await authFetch('/api/blackboard');
+    const d = await r.json();
+    renderBlackboard(d.entries || []);
+  } catch(e) { /* panel is best-effort */ }
+}
+
+// Live update from a blackboard_update WS event: upsert the entry at the top.
+function pushBlackboardUpdate(data) {
+  const box = document.getElementById('blackboard-list');
+  if (!box || !data || !data.key) return;
+  const placeholder = box.querySelector('div[style*="text-align:center"]');
+  if (placeholder) box.innerHTML = '';
+  const existing = box.querySelector('.bb-entry[data-key="' + (window.CSS && CSS.escape ? CSS.escape(data.key) : data.key) + '"]');
+  if (existing) existing.remove();
+  box.insertAdjacentHTML('afterbegin', bbEntryHtml({
+    key: data.key, by: data.by, preview: data.preview, ts: Date.now() / 1000
+  }));
+  const cnt = document.getElementById('bb-count');
+  if (cnt) cnt.textContent = '(' + box.querySelectorAll('.bb-entry').length + ')';
 }
 
 // Chat
@@ -2738,17 +3075,61 @@ function fmtTime(ts) {
   return new Date().toLocaleTimeString();
 }
 
-function appendBotMsg(text, ts, personaOverride) {
+function metaChips(meta) {
+  if (!meta) return '';
+  let out = '';
+  if (meta.model) {
+    const full = (meta.provider ? meta.provider + '/' : '') + meta.model;
+    const label = String(meta.model).split('/').pop().substring(0, 28);
+    out += `<span class="meta-chip" title="Answered by ${escHtml(full)}">${escHtml(label)}</span>`;
+  }
+  if (meta.elapsed !== undefined && meta.elapsed !== null)
+    out += `<span class="meta-chip" title="Response time">${Number(meta.elapsed)}s</span>`;
+  if (meta.tokens_out)
+    out += `<span class="meta-chip" title="Tokens in / out (final model call)">\u2191${_fmtTok(meta.tokens_in || 0)} \u2193${_fmtTok(meta.tokens_out)}</span>`;
+  if (meta.mode === 'fallback')
+    out += `<span class="meta-chip fb" title="The primary model errored \u2014 this reply came from the FALLBACK model">\u26a0 fallback</span>`;
+  if (meta.boosted)
+    out += `<span class="meta-chip boosted" title="Re-run on the boost model">\ud83d\ude80 boosted</span>`;
+  return out;
+}
+
+// Only the newest bot/user message shows Retry/Boost/Edit \u2014 mark them
+function markLastMsgs() {
+  const log = document.getElementById('chat-log');
+  if (!log) return;
+  log.querySelectorAll('.msg.is-last-bot,.msg.is-last-user').forEach(d =>
+    d.classList.remove('is-last-bot', 'is-last-user'));
+  const bots = log.querySelectorAll('.msg.bot');
+  for (let i = bots.length - 1; i >= 0; i--)
+    if (bots[i]._raw) { bots[i].classList.add('is-last-bot'); break; }
+  const users = log.querySelectorAll('.msg.user');
+  for (let i = users.length - 1; i >= 0; i--)
+    if (users[i]._raw) { users[i].classList.add('is-last-user'); break; }
+}
+
+function appendBotMsg(text, ts, personaOverride, meta) {
   const sb = document.getElementById('stream-bubble');
   sb.style.display = 'none'; sb.textContent = ''; sb._rawText = '';
   const log = document.getElementById('chat-log');
   const div = document.createElement('div');
-  div.className = 'msg bot';
+  div.className = 'msg bot' + (meta && meta.boosted ? ' boosted' : '');
+  div._raw = String(text == null ? '' : text);
   const nameToUse = personaOverride || activePersonalityName || 'Galactic AI';
-  div.innerHTML = `<div class="bubble">${formatMsg(text)}</div><div class="meta">${nameToUse} \u2022 ${fmtTime(ts)}</div>`;
+  div.innerHTML = `<div class="bubble">${formatMsg(text)}</div>
+    <div class="meta">${nameToUse} \u2022 ${fmtTime(ts)}${metaChips(meta)}</div>
+    <div class="msg-actions">
+      <button onclick="copyMsg(this)" title="Copy raw message text">\ud83d\udccb Copy</button>
+      <button onclick="speakMsg(this)" title="Read this reply aloud">\ud83d\udd0a</button>
+      <button class="act-last" onclick="retryLast()" title="Rewind and re-run this answer on the current model">\u27f3 Retry</button>
+      <button class="act-last boost" onclick="boostLast()" title="Rewind and re-run this answer on your boost (cloud) model">\ud83d\ude80 Boost</button>
+    </div>`;
   log.insertBefore(div, sb);
+  markLastMsgs();
   if (autoScroll) log.scrollTop = log.scrollHeight;
   notifyReplyReady(text, nameToUse);
+  if (meta && meta.mode === 'fallback' && meta.model)
+    showToast('\u26a0 Primary model errored \u2014 answered by fallback: ' + meta.model, 'info', 5000);
 }
 
 // \u2500\u2500 Background completion alerts \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500
@@ -2853,6 +3234,35 @@ async function loadChatHistory() {
       });
     }
   } catch(e) { console.error('loadChatHistory:', e); }
+}
+
+// ── Export the conversation as a Markdown file ─────────────────────────────
+async function exportChatMarkdown() {
+  try {
+    const r = await authFetch('/api/history?limit=2000');
+    const d = await r.json();
+    const msgs = (d.messages || []).filter(m =>
+      m && (m.role === 'user' || m.role === 'assistant') && typeof m.content === 'string');
+    if (!msgs.length) { showToast('Nothing to export yet', 'info', 2500); return; }
+    const persona = activePersonalityName || 'Galactic AI';
+    const sess = activeSessionName || 'main';
+    const now = new Date();
+    let md = `# Galactic AI — ${sess}\n\n` +
+             `Exported ${now.toLocaleString()} • ${msgs.length} messages\n\n---\n\n`;
+    msgs.forEach(m => {
+      const who = m.role === 'user' ? '🧑 **You**' : `⬡ **${m.personality_name || persona}**`;
+      const ts = m.ts ? ` _(${fmtTime(m.ts)})_` : '';
+      md += `${who}${ts}\n\n${m.content}\n\n---\n\n`;
+    });
+    const blob = new Blob([md], {type: 'text/markdown'});
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    const stamp = now.toISOString().slice(0, 16).replace(/[T:]/g, '-');
+    a.download = `galactic-chat-${sess.replace(/[^a-z0-9_-]+/gi, '_')}-${stamp}.md`;
+    document.body.appendChild(a); a.click(); a.remove();
+    setTimeout(() => URL.revokeObjectURL(a.href), 5000);
+    showToast('⬇ Chat exported as Markdown', 'success', 3000);
+  } catch(e) { showToast('Export failed: ' + e.message, 'error', 4000); }
 }
 
 async function loadLogHistory() {
@@ -2974,10 +3384,99 @@ function appendUserMsg(text, ts) {
   const sb = document.getElementById('stream-bubble');
   const div = document.createElement('div');
   div.className = 'msg user';
-  div.innerHTML = `<div class="bubble">${escHtml(text)}</div><div class="meta">You \u2022 ${fmtTime(ts)}</div>`;
+  div._raw = String(text == null ? '' : text);
+  div.innerHTML = `<div class="bubble">${escHtml(text)}</div><div class="meta">You \u2022 ${fmtTime(ts)}</div>
+    <div class="msg-actions" style="justify-content:flex-end">
+      <button onclick="copyMsg(this)" title="Copy raw message text">\ud83d\udccb Copy</button>
+      <button class="act-last" onclick="editLast(this)" title="Load this back into the input to tweak & resend">\u270f\ufe0f Edit</button>
+    </div>`;
   log.insertBefore(div, sb);
+  markLastMsgs();
   if (autoScroll) log.scrollTop = log.scrollHeight;
 }
+
+// \u2500\u2500 Message action handlers \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500
+function copyMsg(btn) {
+  const div = btn.closest('.msg');
+  const raw = (div && div._raw) || (div ? div.querySelector('.bubble').innerText : '');
+  navigator.clipboard.writeText(raw).then(
+    () => showToast('\ud83d\udccb Copied to clipboard', 'success', 1800),
+    () => showToast('Copy failed \u2014 clipboard blocked by the browser', 'error', 3000));
+}
+
+function copyLastAnswer() {
+  const div = document.querySelector('#chat-log .msg.bot.is-last-bot');
+  if (!div || !div._raw) { showToast('No answer to copy yet', 'info', 2200); return; }
+  navigator.clipboard.writeText(div._raw).then(
+    () => showToast('\ud83d\udccb Last answer copied', 'success', 2000),
+    () => showToast('Copy failed \u2014 clipboard blocked by the browser', 'error', 3000));
+}
+
+let _msgAudio = null;
+async function speakMsg(btn) {
+  const div = btn.closest('.msg');
+  let raw = (div && div._raw) || '';
+  raw = raw.replace(/```[\s\S]*?```/g, ' (code block) ').replace(/\*\*/g, '').trim();
+  if (!raw) return;
+  if (_msgAudio) { try { _msgAudio.pause(); } catch(e) {} _msgAudio = null; }
+  btn.disabled = true;
+  try {
+    const qs = document.getElementById('quick-voice-select');
+    const r = await authFetch('/api/tts', {method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({text: raw.substring(0, 2000), voice: qs ? qs.value : 'Nova'})});
+    if (!r.ok) throw new Error('TTS unavailable');
+    const blob = await r.blob();
+    const url = URL.createObjectURL(blob);
+    _msgAudio = new Audio(url);
+    _msgAudio.onended = () => URL.revokeObjectURL(url);
+    _msgAudio.play();
+  } catch(e) { showToast('\ud83d\udd0a ' + e.message, 'error', 3000); }
+  btn.disabled = false;
+}
+
+function editLast(btn) {
+  const div = btn.closest('.msg');
+  const inp = document.getElementById('chat-input-main');
+  if (!div || !div._raw || !inp) return;
+  inp.value = div._raw;
+  autoResize(inp); saveDraft(inp); inp.focus();
+  inp.setSelectionRange(inp.value.length, inp.value.length);
+  showToast('\u270f\ufe0f Loaded into the input \u2014 tweak and Send (use \u27f3 Retry to replace the old answer instead)', 'info', 4500);
+}
+
+// \u2500\u2500 Boost / Retry: rewind the last exchange and re-run it \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500
+let _boostPending = false;
+async function boostLast(retry) {
+  if (_boostPending) return;
+  const lastBot = document.querySelector('#chat-log .msg.bot.is-last-bot');
+  _boostPending = true;
+  showToast(retry ? '\u27f3 Retrying on the current model\u2026' : '\ud83d\ude80 Boosting on the big brain\u2026', 'info', 2600);
+  const stream = document.getElementById('stream-bubble');
+  stream.style.display = 'block'; stream.textContent = '';
+  httpChatPending = true;
+  try {
+    const r = await authFetch('/api/chat/boost', {method:'POST',
+      headers:{'Content-Type':'application/json'}, body: JSON.stringify({retry: !!retry})});
+    const d = await r.json();
+    stream.style.display = 'none'; stream.textContent = ''; stream._rawText = '';
+    if (d.error) {
+      showToast('\ud83d\ude80 ' + d.error, 'error', 5000);
+    } else {
+      if (lastBot) {
+        lastBot.classList.add('superseded');
+        lastBot.querySelectorAll('.act-last').forEach(b => b.remove());
+      }
+      appendBotMsg(d.response || '(no response)', null, null, d.meta);
+      await refreshStatus();
+    }
+  } catch(e) {
+    stream.style.display = 'none';
+    showToast('Boost failed: ' + e.message, 'error', 4000);
+  }
+  httpChatPending = false;
+  _boostPending = false;
+}
+function retryLast() { boostLast(true); }
 
 // ─── File Attachment State ───
 let pendingFiles = [];
@@ -2996,9 +3495,13 @@ function fileToBase64(f) {
   });
 }
 
+// Single source of truth for the per-file upload cap — matches the backend's
+// 20 MB limit in web_deck.handle_chat. Used by BOTH click-upload and drag-drop.
+const MAX_UPLOAD_BYTES = 20 * 1024 * 1024;
+
 function handleFileAttach(input) {
   for (const f of input.files) {
-    if (f.size > 20 * 1024 * 1024) { appendBotMsg('[File too large] ' + f.name + ' exceeds 20 MB limit.'); continue; }
+    if (f.size > MAX_UPLOAD_BYTES) { appendBotMsg('[File too large] ' + f.name + ' exceeds 20 MB limit.'); continue; }
     pendingFiles.push(f);
   }
   input.value = '';
@@ -3039,7 +3542,7 @@ function renderAttachBar() {
     e.preventDefault(); dragCounter = 0; wrap.style.outline = '';
     if (e.dataTransfer.files.length) {
       for (const f of e.dataTransfer.files) {
-        if (f.size > 5 * 1024 * 1024) { appendBotMsg('[File too large] ' + f.name + ' exceeds 5 MB limit.'); continue; }
+        if (f.size > MAX_UPLOAD_BYTES) { appendBotMsg('[File too large] ' + f.name + ' exceeds 20 MB limit.'); continue; }
         pendingFiles.push(f);
       }
       renderAttachBar();
@@ -3093,6 +3596,8 @@ async function sendChatMain() {
   pendingFiles = [];
   renderAttachBar();
   inp.value = ''; inp.style.height = '44px';
+  saveDraft(inp);           // sent — clear the persisted draft
+  pushPromptHist(msg);      // remember for ArrowUp recall
   const displayMsg = msg + (filesToSend.length ? '\n📎 ' + filesToSend.map(f => f.name).join(', ') : '');
   appendUserMsg(displayMsg);
   document.getElementById('send-btn-main').disabled = true;
@@ -3142,7 +3647,7 @@ async function sendChatMain() {
     await refreshStatus();
 
     const aiResponse = d.response || d.error || 'No response';
-    appendBotMsg(aiResponse);
+    appendBotMsg(aiResponse, null, null, d.meta);
     console.log('[Image Delivery] response keys:', Object.keys(d), 'image_url:', d.image_url || 'NONE');
     if (d.image_url) appendBotImage(d.image_url);
     if (d.video_url) appendBotVideo(d.video_url);
@@ -3179,8 +3684,68 @@ async function sendChatMain() {
   document.getElementById('send-btn-main').textContent = 'Send ▶';
 }
 
+// ── Draft persistence + shell-style prompt recall ──────────────────────────
+const DRAFT_KEY = 'gal_draft', PHIST_KEY = 'gal_prompt_hist';
+let _phNav = -1, _phPending = null;
+
+function saveDraft(el) {
+  try { localStorage.setItem(DRAFT_KEY, (el && el.value) || ''); } catch(e) {}
+}
+function restoreDraft() {
+  try {
+    const d = localStorage.getItem(DRAFT_KEY);
+    const inp = document.getElementById('chat-input-main');
+    if (d && inp && !inp.value) { inp.value = d; autoResize(inp); }
+  } catch(e) {}
+}
+function getPromptHist() {
+  try { return JSON.parse(localStorage.getItem(PHIST_KEY) || '[]'); } catch(e) { return []; }
+}
+function pushPromptHist(msg) {
+  _phNav = -1; _phPending = null;
+  if (!msg || msg.startsWith('/')) return;   // don't recall slash commands
+  try {
+    let h = getPromptHist().filter(m => m !== msg);
+    h.push(msg);
+    if (h.length > 50) h = h.slice(-50);
+    localStorage.setItem(PHIST_KEY, JSON.stringify(h));
+  } catch(e) {}
+}
+function navPromptHist(dir, inp) {
+  const h = getPromptHist();
+  if (!h.length) return false;
+  if (_phNav === -1) {
+    if (dir > 0) return false;               // nothing newer than "now"
+    _phPending = inp.value;                  // stash the half-typed draft
+    _phNav = h.length - 1;
+  } else {
+    _phNav += dir;
+    if (_phNav >= h.length) {                // walked past newest → restore stash
+      _phNav = -1;
+      inp.value = _phPending || '';
+      _phPending = null;
+      autoResize(inp); saveDraft(inp);
+      return true;
+    }
+    if (_phNav < 0) { _phNav = 0; return true; }  // stay at oldest
+  }
+  inp.value = h[_phNav];
+  autoResize(inp); saveDraft(inp);
+  inp.setSelectionRange(inp.value.length, inp.value.length);
+  return true;
+}
+
 function handleKeyMain(e) {
-  if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendChatMain(); }
+  if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendChatMain(); return; }
+  const inp = e.target;
+  // ArrowUp with an empty box / caret at start recalls previous prompts (like a shell)
+  if (e.key === 'ArrowUp' &&
+      (inp.value === '' || inp.selectionStart === 0 ||
+       (_phNav !== -1 && inp.selectionStart === inp.value.length))) {
+    if (navPromptHist(-1, inp)) e.preventDefault();
+  } else if (e.key === 'ArrowDown' && _phNav !== -1 && inp.selectionStart === inp.value.length) {
+    if (navPromptHist(1, inp)) e.preventDefault();
+  }
 }
 
 // Global key listeners
@@ -4080,7 +4645,7 @@ function populateSettingsProviders() {
     'cloudflare-ai-gateway','amazon-bedrock','xiaomi','kilocode','github-copilot'
   ];
 
-  ['primary', 'fallback', 'planner', 'planner_fallback', 'cli_fallback', 'summarizer'].forEach(role => {
+  ['primary', 'fallback', 'boost', 'planner', 'planner_fallback', 'cli_fallback', 'summarizer', 'architect', 'builder'].forEach(role => {
     const sel = document.getElementById(`set-${role}-provider`);
     if (!sel) return;
     const prev = sel.value;  // Preserve current selection
@@ -4239,10 +4804,25 @@ async function loadSettingsValues() {
     setProv('planner_fallback', plfProv); setModel('planner_fallback', plfModel);
     setProv('summarizer', sumProv); setModel('summarizer', sumModel);
 
+    // 🚀 Boost + 🧬 Hybrid Coding roles (fall back to sensible defaults when unset)
+    const splitPM = s => {
+      const parts = (s || '').split('/');
+      return parts.length > 1 ? [parts[0], parts.slice(1).join('/')] : ['', parts[0] || ''];
+    };
+    const [boProv, boModel] = splitPM(d.boost_model);
+    if (boProv) { setProv('boost', boProv); setModel('boost', boModel); }
+    const [arProv, arModel] = splitPM(d.architect_model || d.boost_model || d.planner_model);
+    if (arProv) { setProv('architect', arProv); setModel('architect', arModel); }
+    const [buProv, buModel] = splitPM(d.builder_model || (fbProv === 'ollama' ? d.fallback_model : ''));
+    if (buProv) { setProv('builder', buProv); setModel('builder', buModel); }
+    const hcEl = document.getElementById('set-hybrid-coding');
+    if (hcEl) hcEl.checked = !!d.hybrid_coding_enabled;
+
     // Toggles
     const el = id => document.getElementById(id);
     if (el('set-streaming')) el('set-streaming').checked = d.streaming !== false;
     if (el('set-nitro-only')) el('set-nitro-only').checked = !!d.nitro_only;
+    if (el('set-require-approval')) el('set-require-approval').checked = !!d.require_approval;
 
     // Voice & Personality
     if (d.voice && el('set-voice')) {
@@ -4274,7 +4854,14 @@ async function saveModelSettings() {
   const plfModel = document.getElementById('set-planner_fallback-model')?.value || '';
   const sumProv = document.getElementById('set-summarizer-provider')?.value || '';
   const sumModel = document.getElementById('set-summarizer-model')?.value || '';
-  
+  const boProv = document.getElementById('set-boost-provider')?.value || '';
+  const boModel = document.getElementById('set-boost-model')?.value || '';
+  const arProv = document.getElementById('set-architect-provider')?.value || '';
+  const arModel = document.getElementById('set-architect-model')?.value || '';
+  const buProv = document.getElementById('set-builder-provider')?.value || '';
+  const buModel = document.getElementById('set-builder-model')?.value || '';
+  const hybridOn = document.getElementById('set-hybrid-coding')?.checked || false;
+
   if (!primProv || !primModel) { showToast('Select a primary model', 'error', 3000); return; }
   if (!fbProv || !fbModel) { showToast('Select a fallback model', 'error', 3000); return; }
   try {
@@ -4286,8 +4873,13 @@ async function saveModelSettings() {
         planner_provider: plProv, planner_model: plModel,
         planner_fallback_provider: plfProv, planner_fallback_model: plfModel,
         summarizer_provider: sumProv, summarizer_model: sumModel,
+        boost_provider: boProv, boost_model: boModel,
+        hybrid_coding_enabled: hybridOn,
+        architect_provider: arProv, architect_model: arModel,
+        builder_provider: buProv, builder_model: buModel,
         streaming: document.getElementById('set-streaming').checked,
         nitro_only: document.getElementById('set-nitro-only')?.checked || false,
+        require_approval: document.getElementById('set-require-approval')?.checked || false,
       })
     });
     const d = await r.json();
@@ -4786,6 +5378,7 @@ function switchTab(name) {
     loadRuns();
     refreshSubagents(); // Refresh HIVE MIND when Thinking tab is opened
   }
+  if (name === 'swarm') { refreshSubagents(); loadBlackboard(); }
   // Scroll to bottom when switching to content tabs (newest-last layout)
   if (name === 'chat') {
     requestAnimationFrame(() => {
@@ -4814,10 +5407,23 @@ function escHtml(s) {
 }
 
 function formatMsg(text) {
-  // Render markdown-ish formatting for chat bubbles
+  // Render markdown-ish formatting for chat bubbles.
+  // SECURITY: code blocks are extracted to inert placeholder tokens FIRST (while
+  // their raw <, >, & are still intact), then the ENTIRE remaining string is
+  // HTML-escaped before any inline-markdown regex runs. This guarantees that
+  // literal markup in the AI's prose — e.g. an <img src=x onerror=...> echoed
+  // back from a hostile page summary — can never reach innerHTML as live HTML.
+  // Rendered code HTML (already built safely with escHtml on its own content)
+  // is restored last. The placeholder uses Private-Use-Area chars so it can't
+  // collide with real text and survives escaping and every markdown regex.
   let s = String(text);
-  
-  // Smart Code Artifacts
+  const blocks = [];
+  const stash = (html) => {
+    blocks.push(html);
+    return 'GALX' + (blocks.length - 1) + '';
+  };
+
+  // Smart Code Artifacts (must run before escaping — matches raw <galactic_code> tags)
   s = s.replace(/<galactic_code\s+(?:description=['"]([^'"]*)['"]\s+)?language=['"]([^'"]*)['"][^>]*>([\s\S]*?)(?:<\/galactic_code>|$)/g, function(_, desc, lang, code) {
     const raw = code.replace(/^\n+|\n+$/g, '');
     const safeRaw = encodeURIComponent(raw);
@@ -4835,7 +5441,7 @@ function formatMsg(text) {
     </div>`;
     const pre = `<pre class="code-artifact" style="margin:0;padding:12px;background:rgba(0,0,0,0.3);overflow-x:auto;font-size:0.82em;line-height:1.6">${escHtml(raw)}</pre>`;
     const output = `<div class="artifact-output" id="out-${uid}" style="display:none"></div>`;
-    return `<div class="smart-artifact" style="margin:12px 0;border:1px solid var(--border);border-radius:8px;overflow:hidden;box-shadow:0 8px 30px rgba(0,0,0,0.5);background:var(--glass);">${header}${pre}${output}</div>`;
+    return stash(`<div class="smart-artifact" style="margin:12px 0;border:1px solid var(--border);border-radius:8px;overflow:hidden;box-shadow:0 8px 30px rgba(0,0,0,0.5);background:var(--glass);">${header}${pre}${output}</div>`);
   });
 
   // Fenced code blocks (```lang\n...\n``` or ```\n...\n```)
@@ -4846,10 +5452,14 @@ function formatMsg(text) {
     const L = (lang || '').toLowerCase();
     if (L === 'html' || L === 'css' || L === 'javascript' || L === 'js') {
       const enc = encodeURIComponent(raw);
-      return '<div class="artifact-wrap">' + pre + '<button class="run-sandbox-btn" data-lang="' + L + '" data-code="' + enc + '" onclick="runArtifact(this)">&#9654;&#65039; Run Sandbox</button></div>';
+      return stash('<div class="artifact-wrap">' + pre + '<button class="run-sandbox-btn" data-lang="' + L + '" data-code="' + enc + '" onclick="runArtifact(this)">&#9654;&#65039; Run Sandbox</button></div>');
     }
-    return pre;
+    return stash(pre);
   });
+
+  // ── Escape everything that's left (prose + placeholders) BEFORE inline markdown ──
+  s = escHtml(s);
+
   // Inline code `...`
   s = s.replace(/`([^`\n]+)`/g, '<code style="background:rgba(255,255,255,0.07);border-radius:4px;padding:1px 5px;font-size:0.88em">$1</code>');
   // Bold **text**
@@ -4866,6 +5476,9 @@ function formatMsg(text) {
   s = s.replace(/^[ \t]*(\d+)\.\s+(.+)$/gm, '<div style="padding-left:14px;margin:1px 0">$1. $2</div>');
   // Newlines to <br> (after block-level replacements)
   s = s.replace(/\n/g, '<br>');
+
+  // Restore extracted code blocks (already-safe HTML built above)
+  s = s.replace(/GALX(\d+)/g, (_, i) => blocks[+i] || '');
   return s;
 }
 function handleKey(e) { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendChatMain(); } }
@@ -6171,8 +6784,11 @@ body[data-viz-theme="solaris"] #topbar-right{justify-content:flex-start}
   
   function draw(time) {
     requestAnimationFrame(draw);
+    // Tab backgrounded: keep the loop alive so it resumes on refocus, but skip
+    // all canvas work — no reason to burn CPU/battery drawing an unseen animation.
+    if (document.hidden) return;
     const currentTheme = document.body.getAttribute('data-viz-theme');
-    
+
     if (currentTheme === 'lightspeed') {
       // Light-speed Warp Animation
       if (time - lastTime < 16) return;

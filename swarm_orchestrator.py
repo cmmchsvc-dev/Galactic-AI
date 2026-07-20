@@ -151,6 +151,19 @@ class SwarmOrchestrator:
             for tid, result in results:
                 blackboard[tid] = result
                 pending.pop(tid, None)
+                # Mirror each agent's result into the shared live Blackboard so the
+                # Swarm-tab panel (and any peers using blackboard_read) can see it.
+                try:
+                    shared = getattr(self.core, 'blackboard', None)
+                    if shared is None:
+                        from blackboard import Blackboard
+                        shared = self.core.blackboard = Blackboard()
+                    bkey = f"swarm/{swarm_id}/{tid}"
+                    shared.write(bkey, result, by=f"swarm-{tid}")
+                    await self.core.relay.emit(3, "blackboard_update", {
+                        "key": bkey, "by": f"swarm-{tid}", "preview": str(result)[:200]})
+                except Exception:
+                    pass
 
         digest = "\n\n".join(
             f"### Agent {t['id']} ({t['role']})\nTask: {t['prompt'][:200]}\nResult:\n{blackboard[t['id']][:4000]}"

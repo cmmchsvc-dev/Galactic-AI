@@ -57,6 +57,10 @@ class GalacticWebDeck:
         self.app.router.add_get('/api/ollama_status', self.handle_ollama_status)
         # Control APIs
         self.app.router.add_post('/api/chat', self.handle_chat)
+        self.app.router.add_post('/api/chat/boost', self.handle_chat_boost)
+        self.app.router.add_post('/api/ask_user/respond', self.handle_ask_user_respond)
+        self.app.router.add_post('/api/approval/respond', self.handle_approval_respond)
+        self.app.router.add_get('/api/blackboard', self.handle_blackboard)
         self.app.router.add_get('/api/status', self.handle_status)
         self.app.router.add_get('/api/cost-stats', self.handle_cost_stats)
         self.app.router.add_post('/api/plugin_toggle', self.handle_plugin_toggle)
@@ -567,7 +571,7 @@ class GalacticWebDeck:
           - multipart/form-data: message field + files parts (text) + optional images_json field
         Images are sent as base64 data URLs and forwarded to the LLM as vision content.
         """
-        import base64 as _b64, json as _json
+        import base64 as _b64, json as _json, time as _time
         try:
             user_msg = ''
             file_context = ''
@@ -693,6 +697,9 @@ class GalacticWebDeck:
                     "- `/compact` — summarize & archive old history to free context\n"
                     "- `/clear` — wipe the current conversation\n"
                     "- `/rewind [n]` — undo the last *n* messages (default 2)\n"
+                    "- `/boost [model]` — re-run the last answer on your boost model (big cloud brain)\n"
+                    "- `/retry` — re-run the last answer on the current model\n"
+                    "- `/hybrid [on|off]` — toggle Hybrid Coding (cloud Architect writes, local Builder applies)\n"
                     "- `switch personality to <name>` — hot-swap persona (e.g. byte, homer, generic)\n\n"
                     "💡 The topbar **CTX** chip shows live context usage; the 👂 button toggles wake-word listening; "
                     "the 🗂️ Session bar saves/switches named chats."
@@ -746,6 +753,45 @@ class GalacticWebDeck:
                 self.core.gateway.history = compacted
                 return web.json_response({'response': "🧹 **Manual Compaction Successful.** Context summarized and archived in Vector DB."})
 
+            if cmd_base == "/hybrid":
+                arg = (cmd_parts[1].lower() if len(cmd_parts) > 1 else '').strip()
+                cfg = self.core.config
+                hc = cfg.setdefault('models', {}).setdefault('hybrid_coding', {})
+                cur = bool(hc.get('enabled'))
+                new_state = {'on': True, 'off': False}.get(arg, not cur)
+                hc['enabled'] = new_state
+                try:
+                    self._save_config(cfg)
+                except Exception as e:
+                    return web.json_response({'response': f"⚠️ Could not save hybrid mode: {e}"})
+                arch = (f"{hc.get('architect_provider')}/{hc.get('architect_model')}"
+                        if hc.get('architect_provider') and hc.get('architect_model')
+                        else 'planner model (set an Architect in Settings → Models)')
+                bld = (f"{hc.get('builder_provider')}/{hc.get('builder_model')}"
+                       if hc.get('builder_provider') and hc.get('builder_model')
+                       else 'local fallback model')
+                await self.core.log(f"🧬 Hybrid Coding Mode {'ENABLED' if new_state else 'DISABLED'}", priority=2)
+                if new_state:
+                    return web.json_response({'response': (
+                        "🧬 **Hybrid Coding Mode ON**\n\n"
+                        f"- **Architect (writes the code):** `{arch}`\n"
+                        f"- **Builder (applies it locally):** `{bld}`\n\n"
+                        "Coding tasks now get a big-brain blueprint, executed by the local model. "
+                        "Configure the roles in Settings → Model Configuration."
+                    )})
+                return web.json_response({'response': "🧬 **Hybrid Coding Mode OFF** — coding runs on the primary model as usual."})
+
+            if cmd_base in ("/boost", "/retry"):
+                arg = user_msg.strip()[len(cmd_base):].strip()
+                result = await self._boost_last_exchange(
+                    retry=(cmd_base == "/retry"),
+                    model_query=arg or None,
+                )
+                # Chat-command path: always speak the outcome as a normal response
+                if 'error' in result:
+                    return web.json_response({'response': f"⚠️ {result['error']}"})
+                return web.json_response(result)
+
             if cmd == "/context":
                 gw = self.core.gateway
                 usage, ctx_max = self._context_usage()
@@ -782,6 +828,7 @@ class GalacticWebDeck:
             if 'multipart/form-data' not in content_type:
                 isolated = data.get('isolated', False)
 
+            _t0 = _time.monotonic()
             if isolated:
                 try:
                     # Execute in isolation to prevent polluting the history
@@ -822,7 +869,8 @@ class GalacticWebDeck:
             await self.core.log(f"[Core] {getattr(self.core.gateway.personality, 'display_name', self.core.gateway.personality.name)}: {response}", priority=2)
 
             # Deliver any generated image inline — fix path for new images/ subfolders
-            resp_data = {'response': response}
+            resp_data = {'response': response,
+                         'meta': self._response_meta(_time.monotonic() - _t0)}
             image_file = getattr(self.core.gateway, 'last_image_file', None)
             await self.core.log(
                 f"[Image Delivery] last_image_file={image_file!r}, "
@@ -882,6 +930,230 @@ class GalacticWebDeck:
             return web.json_response(resp_data)
         except Exception as e:
             return web.json_response({'error': str(e)}, status=500)
+
+    # ── Per-message provenance + Boost/Retry ────────────────────────────────
+
+    def _response_meta(self, elapsed):
+        """Who actually answered, and how it went — attached to chat responses.
+
+        llm.provider/model are contextvar-backed, so after awaiting speak()
+        they reflect the model that really served the reply (including any
+        mid-request fallback), not just the one selected in the UI.
+        """
+        gw = self.core.gateway
+        meta = {
+            'provider': getattr(gw.llm, 'provider', None),
+            'model': getattr(gw.llm, 'model', None),
+            'elapsed': round(elapsed, 1),
+        }
+        mm = getattr(self.core, 'model_manager', None)
+        if mm:
+            try:
+                meta['mode'] = mm.current_mode
+            except Exception:
+                pass
+        usage = getattr(gw, '_last_usage', None)
+        if isinstance(usage, dict):
+            meta['tokens_in'] = usage.get('prompt_tokens')
+            meta['tokens_out'] = usage.get('completion_tokens')
+        return meta
+
+    def _resolve_boost_target(self, model_query=None):
+        """Pick the (provider, model) to boost to.
+
+        Priority: explicit query > config models.boost_provider/boost_model >
+        first configured cloud model. Returns (provider, model) or (None, err).
+        """
+        mm = getattr(self.core, 'model_manager', None)
+        if model_query and mm:
+            resolved = mm.resolve_model_id(model_query)
+            if '/' in resolved:
+                prov, mod = resolved.split('/', 1)
+                return prov, mod
+            return None, f"Could not resolve '{model_query}' to a known provider/model."
+        mcfg = self.core.config.get('models', {})
+        prov = mcfg.get('boost_provider')
+        mod = mcfg.get('boost_model')
+        if prov and mod:
+            return prov, mod
+        # Auto-pick: prefer the user's own "king tier" curation — models whose
+        # config/models.yaml name carries 👑 — falling back to the first cloud
+        # model with a configured key. get_all_models() already excludes
+        # providers without keys.
+        if mm:
+            cloud = [m for m in mm.get_all_models()
+                     if m.get('id') and '/' in m['id']
+                     and not m['id'].startswith('ollama/')]
+            crowned = [m for m in cloud if '\U0001F451' in (m.get('name') or '')]
+            pick = crowned[0] if crowned else (cloud[0] if cloud else None)
+            if pick:
+                prov, mod = pick['id'].split('/', 1)
+                return prov, mod
+        return None, ("No boost model available. Set models.boost_provider / "
+                      "boost_model in config.local.yaml or add a cloud API key.")
+
+    async def _boost_last_exchange(self, retry=False, model_query=None,
+                                   provider=None, model=None):
+        """Rewind the last user↔assistant exchange and re-run it.
+
+        retry=True re-runs on the current model; otherwise on the boost target.
+        The model override is temporary — nothing is persisted to config.
+        Returns {'response', 'meta', ...} or {'error': str}.
+        """
+        import time as _time
+        gw = self.core.gateway
+        if getattr(gw, '_speaking', False):
+            return {'error': 'The agent is busy with a task — wait for it to finish, then boost.'}
+
+        history = gw.history
+        last_user_idx = None
+        for i in range(len(history) - 1, -1, -1):
+            if history[i].get('role') == 'user':
+                last_user_idx = i
+                break
+        if last_user_idx is None:
+            return {'error': 'Nothing to re-run yet — the conversation is empty.'}
+
+        user_content = history[last_user_idx].get('content', '')
+        if isinstance(user_content, list):
+            # Vision turn: content is [{type:text},{type:image_url},...] — replay text only
+            user_content = ' '.join(
+                part.get('text', '') for part in user_content
+                if isinstance(part, dict) and part.get('type') == 'text'
+            ).strip()
+        if not user_content:
+            return {'error': 'The last message had no replayable text (image-only turn).'}
+
+        # Resolve target before touching history so failures are side-effect free
+        mm = getattr(self.core, 'model_manager', None)
+        if retry:
+            target = None
+        elif provider and model:
+            target = (provider, model)
+        else:
+            prov, mod = self._resolve_boost_target(model_query)
+            if prov is None:
+                return {'error': mod}
+            target = (prov, mod)
+
+        # Rewind through the last user message (same persistence as /rewind)
+        del history[last_user_idx:]
+        h_file = getattr(gw, 'history_file', None)
+        if h_file and os.path.exists(h_file):
+            try:
+                with open(h_file, 'w', encoding='utf-8') as f:
+                    for msg in history:
+                        f.write(json.dumps(msg, ensure_ascii=False) + "\n")
+            except Exception as e:
+                await self.core.log(f"⚠️ Boost: failed to rewrite history file: {e}", priority=1)
+
+        saved = None
+        if target and mm:
+            saved = (mm.primary_provider, mm.primary_model, mm.current_mode)
+            mm.primary_provider, mm.primary_model = target
+            mm.current_mode = 'primary'
+            await self.core.log(
+                f"🚀 Boosting last exchange on {target[0]}/{target[1]}", priority=2
+            )
+        elif retry:
+            await self.core.log("⟳ Retrying last exchange on the current model", priority=2)
+
+        _t0 = _time.monotonic()
+        try:
+            response = await gw.speak(user_content)
+        finally:
+            if saved and mm:
+                # Restore selection without persisting — boost is a one-shot
+                mm.primary_provider, mm.primary_model, mm.current_mode = saved
+                mm._set_api_key(mm.get_current_model().get('provider'))
+        meta = self._response_meta(_time.monotonic() - _t0)
+        if target:
+            # Report the boost target even if provider internals shifted mid-run
+            meta['boosted'] = True
+        return {'response': response, 'meta': meta,
+                'boosted': bool(target), 'retried': retry}
+
+    async def handle_chat_boost(self, request):
+        """POST /api/chat/boost — {retry?: bool, provider?: str, model?: str}
+
+        Re-runs the last exchange: on the configured boost (cloud) model by
+        default, or on the current model when retry=true. One-shot override —
+        the primary model selection is restored afterwards.
+        """
+        try:
+            data = await request.json() if request.can_read_body else {}
+        except Exception:
+            data = {}
+        try:
+            result = await self._boost_last_exchange(
+                retry=bool(data.get('retry')),
+                provider=data.get('provider'),
+                model=data.get('model'),
+            )
+            if 'error' in result:
+                return web.json_response(result, status=409)
+            return web.json_response(result)
+        except Exception as e:
+            return web.json_response({'error': str(e)}, status=500)
+
+    async def handle_ask_user_respond(self, request):
+        """POST /api/ask_user/respond — {id, answer} resolves a pending ask_user prompt.
+
+        The gateway's ask_user tool is blocked awaiting an asyncio.Future keyed by
+        `id`; setting its result unblocks the ReAct loop with the user's answer.
+        Same event loop as the gateway, so set_result is safe here.
+        """
+        try:
+            data = await request.json()
+        except Exception:
+            return web.json_response({'ok': False, 'error': 'Invalid JSON'}, status=400)
+        req_id = (data.get('id') or '').strip()
+        answer = data.get('answer', '')
+        pending = getattr(self.core.gateway, '_pending_asks', {})
+        fut = pending.get(req_id)
+        if fut is None or fut.done():
+            return web.json_response(
+                {'ok': False, 'error': 'This question has expired or was already answered.'},
+                status=409)
+        try:
+            fut.set_result(str(answer))
+        except Exception as e:
+            return web.json_response({'ok': False, 'error': str(e)}, status=500)
+        return web.json_response({'ok': True})
+
+    async def handle_approval_respond(self, request):
+        """POST /api/approval/respond — {id, approved: bool, feedback?} for The Crucible.
+
+        Resolves the asyncio.Future that write_file/edit_file/replace_function is
+        blocked on when models.require_approval is enabled.
+        """
+        try:
+            data = await request.json()
+        except Exception:
+            return web.json_response({'ok': False, 'error': 'Invalid JSON'}, status=400)
+        req_id = (data.get('id') or '').strip()
+        pending = getattr(self.core.gateway, '_pending_approvals', {})
+        fut = pending.get(req_id)
+        if fut is None or fut.done():
+            return web.json_response(
+                {'ok': False, 'error': 'This approval request has expired or was already answered.'},
+                status=409)
+        try:
+            fut.set_result({'approved': bool(data.get('approved')),
+                            'feedback': data.get('feedback', '')})
+        except Exception as e:
+            return web.json_response({'ok': False, 'error': str(e)}, status=500)
+        return web.json_response({'ok': True})
+
+    async def handle_blackboard(self, request):
+        """GET /api/blackboard — current shared Blackboard state for the Swarm panel."""
+        bb = getattr(self.core, 'blackboard', None)
+        if bb is None:
+            return web.json_response({'entries': []})
+        try:
+            return web.json_response({'entries': bb.snapshot()})
+        except Exception as e:
+            return web.json_response({'entries': [], 'error': str(e)})
 
     async def handle_cost_stats(self, request):
         """GET /api/cost-stats — cost dashboard data."""
@@ -975,6 +1247,16 @@ class GalacticWebDeck:
             'fallback_model': f"{mm.fallback_provider}/{mm.fallback_model}" if mm else '--',
             'planner_model': f"{models_cfg.get('planner_provider', 'openrouter')}/{models_cfg.get('planner_model', 'openai/gpt-5.2')}",
             'planner_fallback_model': f"{models_cfg.get('planner_fallback_provider', 'openrouter')}/{models_cfg.get('planner_fallback_model', 'openai/gpt-5.2-codex')}",
+            'boost_model': (f"{models_cfg['boost_provider']}/{models_cfg['boost_model']}"
+                            if models_cfg.get('boost_provider') and models_cfg.get('boost_model') else ''),
+            'require_approval': bool(models_cfg.get('require_approval')),
+            'hybrid_coding_enabled': bool((models_cfg.get('hybrid_coding') or {}).get('enabled')),
+            'architect_model': (lambda hc: f"{hc['architect_provider']}/{hc['architect_model']}"
+                                if hc.get('architect_provider') and hc.get('architect_model') else '')(
+                                    models_cfg.get('hybrid_coding') or {}),
+            'builder_model': (lambda hc: f"{hc['builder_provider']}/{hc['builder_model']}"
+                              if hc.get('builder_provider') and hc.get('builder_model') else '')(
+                                  models_cfg.get('hybrid_coding') or {}),
             'summarizer_model': f"{models_cfg.get('summarizer_provider', 'ollama')}/{models_cfg.get('summarizer_model', 'qwen3.6:27b')}",
             'auto_fallback': mm.auto_fallback_enabled if mm else False,
             'smart_routing': models_cfg.get('smart_routing', False),
@@ -1225,7 +1507,35 @@ class GalacticWebDeck:
                     cfg['models']['summarizer_provider'] = sp
                     cfg['models']['summarizer_model'] = sm
                     toggle_changed = True
-                    
+
+            # 🚀 Boost model (one-shot escalation target)
+            bp = data.get('boost_provider', '').strip()
+            bm = data.get('boost_model', '').strip()
+            if bp and bm:
+                if cfg['models'].get('boost_provider') != bp or cfg['models'].get('boost_model') != bm:
+                    cfg['models']['boost_provider'] = bp
+                    cfg['models']['boost_model'] = bm
+                    toggle_changed = True
+
+            # 🧬 Hybrid Coding Mode (Architect writes, Builder applies)
+            if any(k in data for k in ('hybrid_coding_enabled', 'architect_provider', 'builder_provider')):
+                hc = cfg['models'].setdefault('hybrid_coding', {})
+                if 'hybrid_coding_enabled' in data and hc.get('enabled') != bool(data['hybrid_coding_enabled']):
+                    hc['enabled'] = bool(data['hybrid_coding_enabled'])
+                    toggle_changed = True
+                ap = data.get('architect_provider', '').strip()
+                am = data.get('architect_model', '').strip()
+                if ap and am and (hc.get('architect_provider') != ap or hc.get('architect_model') != am):
+                    hc['architect_provider'] = ap
+                    hc['architect_model'] = am
+                    toggle_changed = True
+                bup = data.get('builder_provider', '').strip()
+                bum = data.get('builder_model', '').strip()
+                if bup and bum and (hc.get('builder_provider') != bup or hc.get('builder_model') != bum):
+                    hc['builder_provider'] = bup
+                    hc['builder_model'] = bum
+                    toggle_changed = True
+
             if 'auto_fallback' in data:
                 mm.auto_fallback_enabled = bool(data['auto_fallback'])
                 cfg['models']['auto_fallback'] = mm.auto_fallback_enabled
@@ -1238,6 +1548,9 @@ class GalacticWebDeck:
                 toggle_changed = True
             if 'nitro_only' in data:
                 cfg['models']['nitro_only'] = bool(data['nitro_only'])
+                toggle_changed = True
+            if 'require_approval' in data:
+                cfg['models']['require_approval'] = bool(data['require_approval'])
                 toggle_changed = True
             if toggle_changed:
                 self._save_config(cfg)

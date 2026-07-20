@@ -789,6 +789,41 @@ The popup authenticates using a SHA-256 hash of the user's passphrase, matching 
 - **Ollama** — Health status, discovered models, context window sizes
 - **Logs** — Real-time system log stream with tool call highlighting (cyan), tool result lines (indented/italic), chronological order (newest at bottom), 500-line restore
 
+### 🚀 Boost & Retry (Hybrid Escalation)
+
+Run cheap and local by default — escalate on demand. Hovering the newest answer reveals **🚀 Boost** (rewind the exchange and re-run it on your designated cloud "big brain") and **⟳ Retry** (same model, fresh roll). The boost is a one-shot override: your primary model selection is untouched afterwards, and nothing is written to config.
+
+- **Boost target:** `models.boost_provider` / `boost_model` in `config.local.yaml`; if unset, auto-picks your top-tier cloud model — the first 👑-marked model in `config/models.yaml` whose provider has an API key (then the first cloud model with a key)
+- **Everywhere:** `/boost [model]` and `/retry` work in deck chat, the CLI, and the Ctrl+K palette
+- **Honest labeling:** boosted answers carry a gold `🚀 boosted` chip and a gold left border; the superseded answer dims
+
+### 🧬 Hybrid Coding Mode
+
+The split-brain money-saver for coding tasks, toggleable in Settings → Model Configuration or with `/hybrid [on|off]` (deck, CLI, palette):
+
+- **🏛️ Architect** (cloud big brain) — on any detected coding task, it scans the codebase and produces a blueprint that *contains the exact final code* (fenced blocks, file paths, placement instructions)
+- **🔨 Builder** (cheap/local) — takes over the execution loop and applies the blueprint with file tools, verifies, and reports; it is explicitly told to apply, not redesign
+- **Economics:** the expensive model is called once per task for the thinking; the many tool-call round trips (reads, writes, test runs, retries) burn free local tokens
+- **Defaults:** Architect falls back to the Planner model, Builder to your local fallback model; both selectable per-role in Settings
+- **Scope:** main chat only (subagents keep their own routing); when the mode is off, behavior is identical to before
+
+### Per-Message Provenance
+
+Every reply's meta line shows **which model actually answered** — not just which one was selected: model chip, response time, token counts (↑in ↓out), and an amber **⚠ fallback** chip + toast when the primary errored and the fallback model silently served the reply.
+
+### Message Hover Toolbar
+
+Hover any message for instant actions: **📋 Copy** (raw markdown, not rendered HTML) on everything, **🔊 Speak** (reads the reply via the unified TTS engine) on bot replies, **✏️ Edit** (load your last prompt back into the input to tweak & resend) on your newest message.
+
+### Input QOL: Drafts & Prompt Recall
+
+- **Draft persistence** — a half-typed message survives a page refresh (`localStorage`)
+- **Shell-style recall** — ArrowUp in the input cycles back through your last 50 sent prompts, ArrowDown returns to what you were typing; slash commands are excluded
+
+### Chat Export
+
+**⬇ Export** in the session bar (or via Ctrl+K) downloads the current conversation as a clean Markdown file (`galactic-chat-<session>-<timestamp>.md`) — role-labeled, timestamped, ready to archive or share. The CLI equivalent is `/export md`.
+
 ### Real-Time Updates
 
 Persistent WebSocket connection for live status, chat, Ollama health, logs, and streaming responses. No manual refresh needed.

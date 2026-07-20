@@ -15,6 +15,7 @@ import webbrowser
 
 from datetime import datetime
 from collections import defaultdict, Counter, deque
+from concurrent.futures import ThreadPoolExecutor
 from personality import GalacticPersonality
 from skills.util.monologue_formatter import MonologueFormatter
 
@@ -498,6 +499,20 @@ class GalacticGateway(GatewayToolsMixin):
         # On every gateway start, purge files older than 7 days to prevent growth.
         self._temp_dir = GALACTIC_TEMP_DIR
         self._purge_old_temp_files(max_age_days=7)
+
+        # Dedicated thread pool for blocking disk/OS tools (read/write/edit/find).
+        # Kept separate from asyncio's shared default executor so a runaway agent
+        # spamming recursive file scans can't starve the pool that the web server,
+        # WebSocket relays, and memory embeddings also depend on.
+        self._io_pool = ThreadPoolExecutor(max_workers=16, thread_name_prefix='galactic-io')
+
+        # Human-in-the-loop: request_id -> asyncio.Future awaiting a user answer
+        # (the ask_user tool). Resolved by web_deck's /api/ask_user/respond.
+        self._pending_asks = {}
+        # The Crucible: request_id -> asyncio.Future awaiting write/edit approval.
+        # Resolved by web_deck's /api/approval/respond. Only used when
+        # models.require_approval is on.
+        self._pending_approvals = {}
         self._consecutive_failures = 0
         self._recent_tools = []
         self._tool_call_history = Counter() # (turn_idx, tool, args_str) -> count
@@ -1400,25 +1415,38 @@ class GalacticGateway(GatewayToolsMixin):
             f"- Sub-Agent Default Model: {subagent_model}\n"
         )
 
-        # Check for MagicDocs Project Map
+        # MagicDocs Project Map. The full map can be large; injecting all of it
+        # into EVERY turn's system prompt is expensive — up to 100k chars (~25k
+        # tokens) re-sent on every ReAct turn, which inflates cost and hurts
+        # time-to-first-token badly on local Ollama models. So we inject only a
+        # compact head and point the model at the file: it can read_file the full
+        # map on the rare turn it actually needs deep structure. (mtime-cached, so
+        # the disk read only happens when the map changes.)
+        _MAP_SUMMARY_CHARS = 5000
         workspace_dir = self.core.config.get("paths", {}).get("workspace", "./workspace")
         map_file = os.path.join(workspace_dir, ".galactic_map.md")
-        map_content = ""
+        map_summary = ""
+        map_truncated = False
         if os.path.exists(map_file):
             try:
                 current_mtime = os.path.getmtime(map_file)
-                if getattr(self, '_map_cache', {}).get('mtime') == current_mtime:
-                    map_content = self._map_cache['content']
-                else:
+                cache = getattr(self, '_map_cache', {})
+                if cache.get('mtime') != current_mtime:
                     with open(map_file, "r", encoding="utf-8") as mf:
-                        # Truncate to reasonable size (e.g. 100,000 chars) to avoid blowing context
-                        map_content = mf.read(100000).strip()
-                    self._map_cache = {'mtime': current_mtime, 'content': map_content}
+                        head = mf.read(_MAP_SUMMARY_CHARS + 1).strip()
+                    cache = {'mtime': current_mtime,
+                             'summary': head[:_MAP_SUMMARY_CHARS],
+                             'truncated': len(head) > _MAP_SUMMARY_CHARS}
+                    self._map_cache = cache
+                map_summary = cache.get('summary', '')
+                map_truncated = cache.get('truncated', False)
             except Exception as e:
                 logger.warning(f"Failed to read MagicDocs map: {e}")
-        
-        if map_content:
-            env_block += f"- Project Architecture Map (MagicDocs):\n{map_content}\n"
+
+        if map_summary:
+            hint = (f" — summary only; use read_file on '{map_file}' for the full map"
+                    if map_truncated else "")
+            env_block += f"- Project Architecture Map (MagicDocs){hint}:\n{map_summary}\n"
 
         behavioral_rules = (
             "AGENT BEHAVIOR RULES (IRONCLAD — MANDATORY COMPLIANCE):\n"
@@ -1649,10 +1677,50 @@ class GalacticGateway(GatewayToolsMixin):
         await self.core.log(f"🔄 Checkpoint restored: {uuid_str}", priority=2)
         return state
 
+    async def _apply_hybrid_builder(self):
+        """Hybrid Coding Mode: point the execution loop at the local Builder.
+
+        Contextvar-backed llm override — lasts this request only; the next
+        speak() re-derives from model_manager, so nothing persists. Falls back
+        to the configured fallback model when no builder is set and the
+        fallback is local.
+        """
+        cfg = self.core.config.get('models', {}).get('hybrid_coding', {}) or {}
+        prov = (cfg.get('builder_provider') or '').strip()
+        mod = (cfg.get('builder_model') or '').strip()
+        if not (prov and mod):
+            mcfg = self.core.config.get('models', {})
+            if mcfg.get('fallback_provider') == 'ollama' and mcfg.get('fallback_model'):
+                prov, mod = 'ollama', mcfg['fallback_model']
+        if not (prov and mod):
+            await self.core.log(
+                "🧬 [Hybrid Coding] No builder model configured — staying on the current model",
+                priority=1
+            )
+            return False
+        if (self.llm.provider, self.llm.model) == (prov, mod):
+            return True
+        self.llm.provider = prov
+        self.llm.model = mod
+        key = self._get_provider_api_key(prov)
+        self.llm.api_key = key or "NONE"
+        await self.core.log(
+            f"🧬 [Hybrid Coding] Builder takes over the tool loop: {prov}/{mod}",
+            priority=2
+        )
+        return True
+
     async def _generate_plan(self, user_input):
         """Generates a step-by-step plan using an isolated planner agent that can scan the codebase."""
         planner_provider = self.core.config.get('models', {}).get('planner_provider')
         planner_model = self.core.config.get('models', {}).get('planner_model')
+
+        # Hybrid Coding Mode: the Architect (big brain) takes the planner slot
+        hybrid = self.core.config.get('models', {}).get('hybrid_coding', {}) or {}
+        hybrid_on = bool(hybrid.get('enabled'))
+        if hybrid_on:
+            planner_provider = hybrid.get('architect_provider') or planner_provider
+            planner_model = hybrid.get('architect_model') or planner_model
 
         planner_fallback_provider = self.core.config.get('models', {}).get('planner_fallback_provider')
         planner_fallback_model = self.core.config.get('models', {}).get('planner_fallback_model')
@@ -1699,13 +1767,30 @@ class GalacticGateway(GatewayToolsMixin):
                 return None
 
         # --- ADVANCED PLANNER LOOP ---
+        if hybrid_on:
+            # Architect mode: the plan must CONTAIN the finished code, because
+            # a smaller local Builder will only apply it, not design it.
+            exec_rule = (
+                "DO NOT apply changes yourself (no file writes, no shell commands). Only explore with tools like `list_dir`, `find_files`, `regex_search`, or `read_file` to gather context.\n"
+                "HYBRID MODE: A smaller LOCAL model will execute your plan. For every code change, INCLUDE THE EXACT FINAL CODE inside the plan step — complete functions/blocks in fenced code blocks, the target file path, and precisely where each block goes (e.g. 'replace function X', 'insert after line containing Y'). "
+                "The executor must never have to design or invent code — only apply yours, run it, verify, and report.\n"
+            )
+            output_rule = (
+                "Once you have fully investigated the problem, output your final blueprint wrapped EXACTLY in <plan>...</plan> tags as a numbered list of steps, with the code blocks inline under their steps.\n"
+            )
+        else:
+            exec_rule = (
+                "DO NOT execute the final changes (do not write the final code). Only explore, use tools like `list_dir`, `find_files`, `regex_search`, or `read_file` to gather information.\n"
+            )
+            output_rule = (
+                "Once you have fully investigated the problem and formulated a plan, output your final plan wrapped EXACTLY in <plan>...</plan> tags as a numbered list.\n"
+            )
         planner_context = (
             "You are the Lead Architect and Strategic Planner.\n"
             "Your job is to thoroughly analyze the user's request, scan the necessary files and codebase to understand the context, "
             "and output a detailed step-by-step implementation plan.\n"
             "CRITICAL: If a plan involves starting a long-running background task (like a download, compile, or extraction), you MUST include a step to use `process_wait` immediately after starting it. NEVER end a plan with a process starting; you must wait for its output to verify success.\n"
-            "DO NOT execute the final changes (do not write the final code). Only explore, use tools like `list_dir`, `find_files`, `regex_search`, or `read_file` to gather information.\n"
-            "Once you have fully investigated the problem and formulated a plan, output your final plan wrapped EXACTLY in <plan>...</plan> tags as a numbered list.\n"
+            + exec_rule + output_rule +
             "Focus on identifying information gaps, research needs, and logical progression.\n"
             "DO NOT use prose or security warnings. Just the plan steps.\n"
             "\n"
@@ -1753,9 +1838,14 @@ class GalacticGateway(GatewayToolsMixin):
 
                 if plan_steps:
                     plan = { "steps": plan_steps, "current_step": 0, "original_query": user_input }
+                    if hybrid_on:
+                        # Keep the Architect's full output — the numbered-step
+                        # regex only captures one line per step, so the fenced
+                        # code blocks live here.
+                        plan['blueprint'] = plan_text.strip()
                     await self.core.log(f"[Planner] Generated plan with {len(plan_steps)} steps.", priority=2)
                     await self._emit_trace("plan_generated", 0, session_id="planner", plan=plan_steps)
-                    
+
                     # Store the plan in long-term memory
                     if "store_memory" in self.tools:
                         formatted_plan = "\n".join([f"{i+1}. {step}" for i, step in enumerate(plan_steps)])
@@ -1938,6 +2028,25 @@ class GalacticGateway(GatewayToolsMixin):
         # Decide if a plan is needed. Trigger on explicit command or complex code tasks.
         needs_plan = False
         lower_input = user_input.lower()
+
+        # Coding-intent detection — word-boundary matching (see note further
+        # down at the Senior Coder block); computed once because both the
+        # planning gate and Senior Coder mode need it.
+        _CODING_VERBS = (
+            "build", "building", "create", "creating", "write", "writing",
+            "implement", "implementing", "refactor", "refactoring",
+            "fix", "fixing", "update", "updating", "add", "adding",
+            "change", "changing", "patch", "patching", "rename", "delete",
+        )
+        _coding_re = re.compile(r'\b(?:' + '|'.join(_CODING_VERBS) + r')(?:s|es|ed|d)?\b')
+        is_coding = bool(_coding_re.search(lower_input)) or lower_input.startswith("/code")
+
+        # Hybrid Coding Mode: the big-brain Architect writes the code into a
+        # blueprint, the cheap local Builder applies it. Main chat only —
+        # subagents keep their own routing.
+        hybrid_cfg = self.core.config.get('models', {}).get('hybrid_coding', {}) or {}
+        hybrid_on = bool(hybrid_cfg.get('enabled')) and not self._session_trace_sid.get()
+
         if not self.active_plan and not skip_planning:
             if lower_input.startswith("/plan ") or "plan out" in lower_input or "scan the codebase" in lower_input:
                 needs_plan = True
@@ -1947,10 +2056,13 @@ class GalacticGateway(GatewayToolsMixin):
                 if not any(meta in lower_input for kw, meta in [("fix", "fix your"), ("fix", "fix the formatting"), ("fix", "fix that name")]):
                      if any(k in lower_input for k in ["fix ", "update ", "add ", "change "]):
                          needs_plan = True
+            if hybrid_on and is_coding and not needs_plan:
+                # Hybrid mode: every coding task goes through the Architect so
+                # the local Builder always has big-brain code to apply.
+                needs_plan = True
+                await self.core.log("🧬 [Hybrid Coding] Architect engaged for this coding task", priority=2)
 
         if needs_plan and not self.active_plan and not skip_planning:
-            # INTEGRATED CODING MODE DETECTION
-            is_coding = any(k in lower_input for k in ["build", "create", "write", "implement", "refactor", "fix", "update", "add", "change"])
             autonomous = "autonomous" in lower_input or "go full" in lower_input or self.core.config.get('coding_agent', {}).get('autonomous', False)
             
             if is_coding:
@@ -1967,25 +2079,31 @@ class GalacticGateway(GatewayToolsMixin):
                 full_context = f"You are currently executing a plan. Here is the plan:\n" \
                           f"{self.format_plan(self.active_plan)}\n\n" \
                           f"Focus on completing the current step before moving to the next.\n\n{full_context}"
+                if plan.get('blueprint'):
+                    # Hybrid Coding: the Architect's full output, exact code included
+                    full_context = (
+                        "ARCHITECT'S BLUEPRINT — contains the exact code to apply. "
+                        "Apply it faithfully with your file tools, verify it works, and report. "
+                        "Do NOT redesign or rewrite the Architect's code:\n\n"
+                        f"{plan['blueprint']}\n\n" + full_context
+                    )
                 await self.core.log(f"[Planner] Activated plan for: {user_input[:80]}...")
 
-        # 1. Detect coding intent (turn-level) BEFORE building the prompt.
-        #    Word-boundary matching: plain substring matching fired on "address"
-        #    and "additional" (containing "add") and "prefix" (containing "fix"),
+        # 1. Coding intent was detected above with word-boundary matching:
+        #    plain substring matching used to fire on "address" and
+        #    "additional" (containing "add") and "prefix" (containing "fix"),
         #    so read-only requests like "scan the codebase and tell me what to
         #    address" were misread as coding work and put into Senior Coder mode.
-        _CODING_VERBS = (
-            "build", "building", "create", "creating", "write", "writing",
-            "implement", "implementing", "refactor", "refactoring",
-            "fix", "fixing", "update", "updating", "add", "adding",
-            "change", "changing", "patch", "patching", "rename", "delete",
-        )
-        _coding_re = re.compile(r'\b(?:' + '|'.join(_CODING_VERBS) + r')(?:s|es|ed|d)?\b')
-        is_coding = bool(_coding_re.search(lower_input)) or lower_input.startswith("/code")
         autonomous = "autonomous" in lower_input or "go full" in lower_input or self.core.config.get('coding_agent', {}).get('autonomous', False)
         # Session-scoped flag: drives the persistence nudge and _call_llm's
         # per-turn prompt rebuild (previously never set, so both misfired).
         self.is_coding = is_coding
+
+        # Hybrid Coding Mode: hand the execution loop to the local Builder.
+        # The Architect (cloud) already ran above; from here on the Builder
+        # applies the blueprint. Contextvar override — this request only.
+        if hybrid_on and is_coding:
+            await self._apply_hybrid_builder()
 
         # 2. Build the initial system prompt once (each _call_llm turn rebuilds
         # it with the active toolset anyway)
