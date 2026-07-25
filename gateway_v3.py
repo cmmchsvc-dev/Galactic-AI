@@ -143,6 +143,16 @@ MODEL_PRICING = {
     "grok-3":                          {"input": 3.00,  "output": 15.00},
     "mistral-large-latest":            {"input": 2.00,  "output": 6.00},
     "deepseek-chat":                   {"input": 0.27,  "output": 1.10},
+
+    # Moonshot direct (platform.kimi.ai). `cached_input` is the cache-HIT rate:
+    # Moonshot does automatic prefix caching, and a hit on K3 is 90% off. These
+    # were missing entirely, so every kimi-k3 call was costed against
+    # _PRICING_FALLBACK ($1/$3) and under-reported real spend by 3-5x.
+    "kimi-k3":                         {"input": 3.00,  "output": 15.00, "cached_input": 0.30},
+    "kimi-k2.7-code":                  {"input": 0.95,  "output": 4.00,  "cached_input": 0.16},
+    "kimi-k2.7-code-highspeed":        {"input": 0.95,  "output": 4.00,  "cached_input": 0.16},
+    "kimi-k2.6":                       {"input": 0.95,  "output": 4.00,  "cached_input": 0.16},
+    "kimi-k2.5":                       {"input": 0.60,  "output": 3.00,  "cached_input": 0.10},
 }
 _PRICING_FALLBACK = {"input": 1.00, "output": 3.00}
 FREE_PROVIDERS = {"nvidia", "cerebras", "groq", "huggingface", "ollama", "lmstudio"}
@@ -191,9 +201,16 @@ class CostTracker:
         loop = asyncio.get_running_loop()
         await loop.run_in_executor(None, _sync_rewrite)
 
-    async def log_usage(self, model, provider, tokens_in, tokens_out, actual_cost=None):
-        """Calculate cost, append to JSONL, update running totals."""
+    async def log_usage(self, model, provider, tokens_in, tokens_out, actual_cost=None,
+                        cached_tokens=0):
+        """Calculate cost, append to JSONL, update running totals.
+
+        cached_tokens: prompt tokens the provider served from its prefix cache.
+        Moonshot bills those at ~10% of the miss rate, so counting them at the
+        full input price overstates spend and hides whether caching is working
+        at all. They are a SUBSET of tokens_in, not an addition to it."""
         is_free = provider in FREE_PROVIDERS
+        cached_tokens = max(0, min(int(cached_tokens or 0), int(tokens_in or 0)))
 
         if actual_cost is not None:
             total_cost = actual_cost
@@ -203,7 +220,12 @@ class CostTracker:
             pricing = MODEL_PRICING.get(model, _PRICING_FALLBACK)
             if is_free:
                 pricing = {"input": 0, "output": 0}
-            cost_in = (tokens_in / 1_000_000) * pricing["input"]
+            fresh = tokens_in - cached_tokens
+            cached_rate = pricing.get("cached_input")
+            if cached_rate is None or is_free:
+                cached_rate = pricing["input"]     # provider has no cache discount
+            cost_in = ((fresh / 1_000_000) * pricing["input"]
+                       + (cached_tokens / 1_000_000) * cached_rate)
             cost_out = (tokens_out / 1_000_000) * pricing["output"]
             total_cost = cost_in + cost_out
 
@@ -213,10 +235,17 @@ class CostTracker:
             "provider": provider,
             "tin": tokens_in,
             "tout": tokens_out,
+            # Prefix-cache hits within tin. hit_rate is the number to watch:
+            # on Moonshot each cached token costs 10% of a fresh one.
+            "cached": cached_tokens,
+            "hit_rate": round(cached_tokens / tokens_in, 3) if tokens_in else 0.0,
             "cost_in": round(cost_in, 6),
             "cost_out": round(cost_out, 6),
             "cost": round(total_cost, 6),
             "free": is_free,
+            # NOTE: "actual" means a real billed COST was fetched from the
+            # provider (OpenRouter only). It says nothing about token counts —
+            # tin/tout are real whenever the provider reports usage.
             "actual": actual_cost is not None,
         }
 
@@ -1700,15 +1729,39 @@ class GalacticGateway(GatewayToolsMixin):
         # call the moment it actually needs to drive a page.
         _wants_browser = _is_local or bool(
             last_user_text and self._BROWSE_SIGNAL_RE.search(last_user_text.lower()))
+        # 💰 Make the decision STICKY for the session rather than per-message.
+        # Toggling ~8.6k tokens of browser schema in and out flips the prefix
+        # back and forth, so a cache-by-prefix provider misses on the browsing
+        # turn AND on the turn after it. Sticky is monotonic: it busts once,
+        # then every later turn matches again.
+        if _wants_browser and not _is_local:
+            self._browser_tools_sticky = True
+        elif getattr(self, '_browser_tools_sticky', False):
+            _wants_browser = True
         if not _wants_browser:
             core = {k: v for k, v in core.items()
                     if not k.startswith(('browser_', 'chrome_'))}
+
+        # 💰 Cache-stable mode. Keyword-relevance rebuilds the tool array from
+        # the CURRENT message, so the array differs almost every turn — and a
+        # provider that caches by prefix then misses every time. That is a bad
+        # trade once hits are 90% off: measured on kimi-k3, ~10k stable tokens
+        # at a 90% hit rate costs $0.0057/turn against $0.0181/turn for the
+        # ~6k varying set we send today. Fewer tokens, 3x the price.
+        # Applies only to paid providers that publish a cached rate; local
+        # backends keep relevance expansion (they bill nothing, and a tighter
+        # set measurably helps their tool selection).
+        _pricing = MODEL_PRICING.get(getattr(self.llm, 'model', ''), {})
+        _cache_stable = (not _is_local
+                         and _pricing.get('cached_input') is not None
+                         and bool(self.core.config.get('models', {})
+                                  .get('cache_stable_tools', True)))
 
         relevant = {}
         # In coding mode, keyword-"relevant" extras are exactly the noise we're
         # trying to remove (a task mentioning "image" or "page" would drag in
         # image/browser tools mid-refactor), so skip that expansion entirely.
-        if last_user_text and not _coding:
+        if last_user_text and not _coding and not _cache_stable:
             words = {w for w in re.findall(r'[a-z0-9]{4,}', last_user_text.lower())}
             for name, spec in active.items():
                 if name in core:
@@ -1728,12 +1781,20 @@ class GalacticGateway(GatewayToolsMixin):
 
         if len(merged) > _max_tools:
             budget = max(0, _max_tools - len(core) - 1)  # -1 reserves find_tools' slot
-            extras = list(relevant.items()) + list(discovered.items())
+            # Sort before slicing: dict iteration order depends on how `relevant`
+            # was assembled, so an unsorted slice could keep a DIFFERENT subset
+            # for the same input on a later turn.
+            extras = sorted(list(relevant.items()) + list(discovered.items()))
             merged = {**core, **dict(extras[:budget])}
             if 'find_tools' in self.tools:
                 merged['find_tools'] = self.tools['find_tools']
 
-        return merged
+        # 💰 Deterministic order is a CACHING requirement, not cosmetics.
+        # Moonshot (and OpenAI) match cached prefixes byte-for-byte from the
+        # start of the request. The tools array is serialized in dict order, so
+        # the identical tool SET assembled in a different order serializes
+        # differently and misses the cache — at 10x the token price on a hit.
+        return dict(sorted(merged.items()))
 
     def _build_system_prompt(self, context, active_tools=None, is_coding=False):
         """
@@ -1868,13 +1929,16 @@ class GalacticGateway(GatewayToolsMixin):
         # catalog (see _get_active_tools). Without this the model concludes it
         # simply *cannot* browse/screenshot/etc. instead of asking for the tool.
         if 'find_tools' in active_tools and len(active_tools) < len(self.tools):
+            # 💰 No live counts here. This block sits in the CACHED PREFIX, and
+            # "you have {N} of {M}" changes almost every turn once relevance
+            # filtering is on — which invalidates the whole cached prefix behind
+            # it (tool schemas included) at 10x the per-token price.
             behavioral_rules += (
-                "20. TOOL DISCOVERY: The tools declared below are a filtered subset — "
-                f"you have {len(active_tools)} of {len(self.tools)} available. If the task needs "
-                "something you don't see (browser/page automation, media, git, social, "
-                "desktop, etc.), call `find_tools` with a keyword FIRST; the matches become "
-                "callable immediately. Never tell the user a capability is missing without "
-                "searching for it.\n"
+                "20. TOOL DISCOVERY: The tools declared below are a filtered subset of the "
+                "full catalog. If the task needs something you don't see (browser/page "
+                "automation, media, git, social, desktop, etc.), call `find_tools` with a "
+                "keyword FIRST; the matches become callable immediately. Never tell the user "
+                "a capability is missing without searching for it.\n"
             )
 
         # Only ship the browser workflow when browser tools are actually on the
@@ -1964,20 +2028,38 @@ class GalacticGateway(GatewayToolsMixin):
             f"{browser_rules}"
         )
 
+        # 💰⚡ ORDERING IS LOAD-BEARING — stable content first, volatile last.
+        #
+        # Both the paid and the local path reward a byte-stable prefix, for
+        # different reasons:
+        #   · Moonshot/OpenAI match cached prefixes character-by-character from
+        #     the start of the request. A cache HIT on kimi-k3 costs $0.30/M
+        #     against $3.00/M for a miss — 90% off — but the first byte that
+        #     differs invalidates everything after it.
+        #   · Ollama/llama.cpp reuse the KV cache across requests for the shared
+        #     prefix. A changed prefix forces the 27B to re-prefill thousands of
+        #     tokens before emitting anything, which is felt directly as
+        #     time-to-first-token.
+        #
+        # env_block used to sit at position 2, so its Date (changes daily) and
+        # ACTIVE PROJECT WORKSPACE (changes whenever the workspace moves)
+        # invalidated the protocol AND the tool schemas behind them. It now sits
+        # with the other volatile content, immediately before Context — which is
+        # also better for recency, since it lands nearer the user's message.
         if self.supports_native_tools:
             system_prompt = (
-                f"{personality_prompt}\n\n"
-                f"{env_block}\n\n"
-                f"{protocol}\n"
-                f"Context: {context}"
+                f"{personality_prompt}\n\n"     # stable per persona/mode
+                f"{protocol}\n\n"               # stable (no live counts — see Rule 20)
+                f"{env_block}\n\n"              # volatile: date, workspace
+                f"Context: {context}"           # volatile: retrieved memories
             )
         else:
             system_prompt = (
                 f"{personality_prompt}\n\n"
-                f"{env_block}\n\n"
                 f"AVAILABLE TOOLS (with parameter schemas):\n{tool_block}\n\n"
                 f"{few_shot}\n"
-                f"{protocol}\n"
+                f"{protocol}\n\n"
+                f"{env_block}\n\n"
                 f"Context: {context}"
             )
 
@@ -3663,9 +3745,11 @@ class GalacticGateway(GatewayToolsMixin):
                 # Log cost with real token counts if available, otherwise estimates
                 if hasattr(self.core, 'cost_tracker'):
                     real = self._last_usage
+                    cached_in = 0
                     if real and (real.get('prompt_tokens') or real.get('completion_tokens')):
                         tin = real['prompt_tokens']
                         tout = real['completion_tokens']
+                        cached_in = int(real.get('cached_tokens') or 0)
                         # Update running totals with real counts (overwrite estimates)
                         self.total_tokens_in += tin - self._estimated_input_tokens
                         self.total_tokens_out += tout - (len(display_text) // 4)
@@ -3685,7 +3769,13 @@ class GalacticGateway(GatewayToolsMixin):
                         tokens_in=tin,
                         tokens_out=tout,
                         actual_cost=actual_cost,
+                        cached_tokens=cached_in,
                     )
+                    if cached_in:
+                        await self.core.log(
+                            f"💰 Prefix cache hit: {cached_in:,}/{tin:,} input tokens "
+                            f"({cached_in / tin * 100:.0f}%) billed at the cached rate",
+                            priority=3)
 
                 # Persist to JSONL
                 source = "telegram" if chat_id else "web"
@@ -6302,6 +6392,8 @@ class GalacticGateway(GatewayToolsMixin):
                                         self._last_usage = {
                                             "prompt_tokens": usage.get('prompt_tokens', 0),
                                             "completion_tokens": usage.get('completion_tokens', 0),
+                                            "cached_tokens": int((usage.get('prompt_tokens_details') or {}).get('cached_tokens')
+                                                                 or usage.get('cached_tokens') or 0),
                                         }
                                         if self.is_main_chat:
                                             self._last_usage_final = dict(self._last_usage)
@@ -6372,6 +6464,8 @@ class GalacticGateway(GatewayToolsMixin):
                                     self._last_usage = {
                                         "prompt_tokens": usage.get('prompt_tokens', 0),
                                         "completion_tokens": usage.get('completion_tokens', 0),
+                                        "cached_tokens": int((usage.get('prompt_tokens_details') or {}).get('cached_tokens')
+                                                             or usage.get('cached_tokens') or 0),
                                     }
                                     if self.is_main_chat:
                                         self._last_usage_final = dict(self._last_usage)
@@ -6558,6 +6652,8 @@ class GalacticGateway(GatewayToolsMixin):
                         self._last_usage = {
                             "prompt_tokens": usage.get('prompt_tokens', 0),
                             "completion_tokens": usage.get('completion_tokens', 0),
+                            "cached_tokens": int((usage.get('prompt_tokens_details') or {}).get('cached_tokens')
+                                                 or usage.get('cached_tokens') or 0),
                         }
                         if self.is_main_chat:
                             self._last_usage_final = dict(self._last_usage)

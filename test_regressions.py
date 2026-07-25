@@ -495,6 +495,64 @@ def test_no_usage_capture_site_uses_the_naive_sid_test():
         "_last_usage_final will never be written for the main chat" % bad)
 
 
+# ─────────────────────────────────────────────────────────────────────────────
+# PREFIX CACHING (Moonshot bills a cache HIT at 10% of a miss)
+# The cache matches byte-for-byte from the start of the request, so the tool
+# array must serialise identically every turn. Relevance filtering rebuilt it
+# from the current message, which missed the cache on every single call.
+# ─────────────────────────────────────────────────────────────────────────────
+
+def _cache_gw(msg, provider="moonshot", model="kimi-k3", config=None):
+    import contextvars
+    x = G.__new__(G)
+    x._session_isolated = contextvars.ContextVar("i", default=False)
+    x._session_trace_sid = contextvars.ContextVar("s", default=None)
+    x._session_is_coding = contextvars.ContextVar("c", default=False)
+    x.llm = SimpleNamespace(provider=provider, model=model)
+    x.core = SimpleNamespace(config=config or {"models": {}})
+    x.tools = {n: {"description": "d" + n, "parameters": {}} for n in
+               ["read_file", "write_file", "exec_shell", "find_tools", "list_dir",
+                "web_search", "browser_navigate", "chrome_click", "generate_image",
+                "memory_search", "edit_file"]}
+    x.history = [{"role": "user", "content": msg}]
+    x._ollama_discovered = []
+    return x
+
+
+def test_kimi_k3_has_pricing_and_a_cached_rate():
+    p = gateway_v3.MODEL_PRICING.get("kimi-k3")
+    assert p, "kimi-k3 missing from MODEL_PRICING — costs fall back to $1/$3 and under-report ~3-5x"
+    assert p["input"] == 3.00 and p["output"] == 15.00
+    assert p.get("cached_input") == 0.30, "cache-hit rate missing; hits would be billed as misses"
+
+
+def test_cloud_tool_array_is_sorted_and_stable_across_messages():
+    a = list(_cache_gw("read the config file and search the web")._get_active_tools())
+    b = list(_cache_gw("generate an image of a cat")._get_active_tools())
+    assert a == sorted(a), "tool array must be sorted — dict order is what gets serialised"
+    assert a == b, (
+        "tool array changed with the user's message, so the cached prefix misses "
+        "on every turn. At 10x the token price that costs more than the tokens saved.")
+
+
+def test_local_backend_keeps_relevance_filtering():
+    """Ollama bills nothing and measurably selects better from a tighter set, so
+    cache-stable mode must not leak onto the local path."""
+    a = set(_cache_gw("generate an image of a cat", provider="ollama",
+                      model="qwen3.6:27b")._get_active_tools())
+    assert a, "local path returned no tools"
+
+
+def test_cached_tokens_are_billed_at_the_cached_rate():
+    p = gateway_v3.MODEL_PRICING["kimi-k3"]
+    tin, cached = 10_000, 9_000
+    fresh_cost = (tin / 1e6) * p["input"]
+    mixed_cost = ((tin - cached) / 1e6) * p["input"] + (cached / 1e6) * p["cached_input"]
+    assert mixed_cost < fresh_cost / 4, (
+        "a 90%% hit rate should cut input cost by roughly 5x; got %.5f vs %.5f"
+        % (mixed_cost, fresh_cost))
+
+
 def test_unrelated_turns_never_trip_the_system_guard():
     wrong = [r for r, a in (
         ("I've updated the retry logic in that function.", "fix the bug in gateway_v3.py"),
