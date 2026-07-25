@@ -625,8 +625,20 @@ class GalacticCore:
                     ch = msvcrt.getch()
                     # 27 is the ASCII code for Escape
                     if ch == b'\x1b':
+                        # A REAL Escape keypress is a lone \x1b. But \x1b is also
+                        # the first byte of every VT/ANSI sequence the terminal
+                        # can push onto stdin — cursor-position replies, focus
+                        # in/out, bracketed paste. Treating those as Escape would
+                        # silently kill every running task. Settle briefly, and
+                        # if more bytes follow, it was a sequence: drain, ignore.
+                        await asyncio.sleep(0.02)
+                        if msvcrt.kbhit():
+                            while msvcrt.kbhit():
+                                msvcrt.getch()
+                            continue
                         gateway = getattr(self, 'gateway', None)
                         if gateway and gateway._active_tasks:
+                            gateway._cancel_reason = "terminal_escape"
                             count = 0
                             for t in list(gateway._active_tasks):
                                 if not t.done():

@@ -2504,9 +2504,31 @@ class GalacticGateway(GatewayToolsMixin):
             except asyncio.CancelledError:
                 # Catch the cancellation here at the top level to return a clean string
                 # instead of letting the exception crash the request handler.
+                #
+                # Only the three deliberate paths (terminal Escape, deck Cancel,
+                # STOP escalation) set _cancel_reason. Anything else is EXTERNAL —
+                # most commonly aiohttp tearing down the request handler because
+                # the browser dropped the connection, which it does silently.
+                # Claiming "cancelled by user" for those sent the user hunting for
+                # a cancel they never made, so say what we actually know.
+                reason = getattr(self, '_cancel_reason', None)
+                self._cancel_reason = None
                 await self._emit_trace("session_abort", 0, session_id=self._trace_sid,
-                                       reason="user_cancelled")
-                cancel_msg = "🛑 Task cancelled by user."
+                                       reason=reason or "external_cancel")
+                if reason:
+                    cancel_msg = "🛑 Task cancelled by user."
+                else:
+                    cancel_msg = (
+                        "🛑 Task aborted — the request was cancelled from outside the agent "
+                        "(usually the browser/CLI closing the connection), not by STOP or Escape. "
+                        "Any tool calls already executed have taken effect."
+                    )
+                    try:
+                        await self.core.log(
+                            "⚠️ Task cancelled with no STOP/Escape/Cancel on record — "
+                            "the HTTP client most likely disconnected mid-turn.", priority=1)
+                    except Exception:
+                        pass
                 self.history.append({"role": "assistant", "content": cancel_msg})
                 if not self._session_trace_sid.get():
                     await self._log_chat("assistant", cancel_msg, source="telegram" if chat_id else "web")

@@ -437,6 +437,7 @@ class GalacticWebDeck:
         """POST /api/cancel_task - Cancels ALL currently active agent tasks."""
         gateway = self.core.gateway
         count = 0
+        gateway._cancel_reason = "deck_cancel"   # so speak() knows this really was the user
         for t in list(gateway._active_tasks):
             if not t.done():
                 t.cancel()
@@ -498,6 +499,7 @@ class GalacticWebDeck:
         if already_stopping:
             # ── Escalation: force-cancel the in-flight tasks ──
             cancelled = 0
+            gateway._cancel_reason = "stop_escalated"  # a real user STOP, not a dropped connection
             for t in list(getattr(gateway, '_active_tasks', []) or []):
                 if not t.done():
                     t.cancel()
