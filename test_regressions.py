@@ -326,11 +326,67 @@ def test_sanitize_does_not_mutate_the_input_list():
 def is_coding(text):
     """Exactly the `fresh_coding` expression from _speak_logic."""
     lower = text.lower()
+    stripped = G._strip_pasted_output(lower)
     return bool(
         lower.startswith("/code")
-        or G._CODING_STRONG_RE.search(lower)
-        or (G._CODING_VERB_RE.search(lower) and G._CODE_CONTEXT_RE.search(lower))
+        or G._CODING_STRONG_RE.search(stripped)
+        or (G._CODING_VERB_RE.search(stripped) and G._CODE_CONTEXT_RE.search(stripped))
     )
+
+
+# 2026-07-25 live incident: a support question about PowerShell versions spawned
+# the cloud Architect. The pasted `$PSVersionTable` table supplied the verb —
+# "Major  Minor  Build  Revision" — and the prose supplied the object, "my
+# windows button". Neither signal came from anything the user meant as a task.
+PASTED_TRANSCRIPTS_NOT_CODING = [
+    ("why i right click on my windows button and seletc powershell and run the "
+     "command this is whta I get.. Windows PowerShell\n"
+     "Copyright (C) Microsoft Corporation. All rights reserved.\n\n"
+     r"PS C:\Users\Chesley> $PSVersionTable.PSVersion" "\n\n"
+     "Major  Minor  Build  Revision\n"
+     "-----  -----  --------\n"
+     "5      1      26100  8894"),
+    # A prompt line carrying a real build/git command must not leak signals
+    # either. re.I on _PASTED_PROMPT_RE is what makes these two pass, because
+    # detection runs on an already-lowercased string.
+    ("here's what I ran, any idea why it errors?\n"
+     r"PS C:\Users\Chesley> npm run build --prefix ./app"),
+    ("what does this mean\n"
+     r"PS C:\dev> git add . ; git commit -m 'fix the api endpoint'"),
+]
+
+
+def test_pasted_console_output_does_not_trigger_coding():
+    wrong = [t.splitlines()[0][:60] for t in PASTED_TRANSCRIPTS_NOT_CODING if is_coding(t)]
+    assert not wrong, (
+        "A pasted terminal transcript supplied the coding signals, spawning the "
+        "paid cloud Architect on a support question: %s" % wrong)
+
+
+# ...but a genuine coding request that HAPPENS to include pasted output must
+# still be detected — stripping must not swallow the user's actual ask.
+def test_real_coding_request_with_pasted_traceback_still_detected():
+    assert is_coding(
+        "fix this error in my python script\n"
+        "Traceback (most recent call last):\n"
+        '  File "app.py", line 3, in <module>\n'
+        "ValueError: bad input")
+
+
+# Same incident: the workspace silently became C:\Users\Chesley because
+# %USERPROFILE%\.claude is a GLOBAL Claude Code config dir that satisfied the
+# project-marker test. Every later prompt then told the agent to do its coding
+# work in the user's home directory.
+def test_home_and_shell_folders_are_never_project_roots():
+    home = os.path.expanduser("~")
+    gw_ = G.__new__(G)
+    wrong = [p for p in (home,
+                         os.path.join(home, "Desktop"),
+                         os.path.join(home, "Downloads"))
+             if gw_._looks_like_project_root(p)]
+    assert not wrong, (
+        "Home/shell folders accepted as project roots — a pasted shell prompt "
+        "will hijack the active workspace: %s" % wrong)
 
 
 # v2.2.0 false positive: this exact sentence launched Senior Coder mode plus a

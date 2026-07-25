@@ -1536,6 +1536,23 @@ class GalacticGateway(GatewayToolsMixin):
         r'algorithm|strategy|latency)(?:s|es)?\b'
         r'|\.[a-z]{2,4}\b'      # file extension / dotted name (.py, .html)
         r'|`[^`]+`')            # inline code span
+    # ── Pasted console output is evidence, not intent ────────────────────────
+    # The two-signal detector assumes BOTH signals come from what the user
+    # WROTE. Pasted terminal transcripts defeat that: a PowerShell version
+    # table supplies the verb ("Major Minor Build Revision") and ordinary prose
+    # supplies the object ("my windows button") — and a support question
+    # launches the cloud Architect. Strip transcripts before detecting.
+    # NOTE re.I is load-bearing: detection runs on an already-lowercased string,
+    # so a case-sensitive "PS " would never match and a pasted
+    # `PS C:\> npm run build` would still hand the detector a verb AND an object.
+    _PASTED_PROMPT_RE = re.compile(
+        r'^\s*(?:PS\s+)?[A-Za-z]:\\[^\n>]*>'          # PS C:\Users\x>  /  C:\x>
+        r'|^\s*[\w.-]+@[\w.-]+:[^\n$#]*[$#]\s'        # user@host:~$
+        r'|^\s*(?:>>>|\.\.\.|\$|>)\s', re.I)          # >>> repl, $ sh, > cmd
+    _PASTED_BANNER_RE = re.compile(
+        r'^\s*(?:Copyright\s*\(C\)|All rights reserved|Microsoft Corporation'
+        r'|Try the new cross-platform|Install the latest PowerShell)', re.I)
+    _PASTED_RULE_RE = re.compile(r'^\s*[-=_|+]{3,}[\s\-=_|+]*$')
     # Explicit "scan/review/analyze <the|this|my|our|your> codebase/repo/project"
     # planning trigger. Was a bare `"scan the codebase" in text` literal that
     # missed "scan THIS codebase" — the exact phrasing a user hit.
@@ -2129,6 +2146,55 @@ class GalacticGateway(GatewayToolsMixin):
     _WS_TRACEBACK_RE = re.compile(
         r'Traceback \(most recent call last\)|^\s{2,}File "', re.MULTILINE)
 
+    @classmethod
+    def _strip_pasted_output(cls, text):
+        """Drop pasted console transcripts so intent detection only ever sees
+        what the user actually wrote. Removes shell-prompt lines, product
+        banners, fenced blocks, and ASCII rules together with the column header
+        above them (that header is where `Build` hides in `$PSVersionTable`)."""
+        lines = (text or '').split('\n')
+        drop = [False] * len(lines)
+        fenced = False
+        for i, ln in enumerate(lines):
+            if ln.strip().startswith('```'):
+                fenced = not fenced
+                drop[i] = True
+                continue
+            if fenced:
+                drop[i] = True
+            elif cls._PASTED_PROMPT_RE.search(ln) or cls._PASTED_BANNER_RE.search(ln):
+                drop[i] = True
+            elif cls._PASTED_RULE_RE.match(ln):
+                drop[i] = True
+                if i:
+                    drop[i - 1] = True      # the column header the rule underlines
+        return '\n'.join(l for i, l in enumerate(lines) if not drop[i])
+
+    def _is_home_or_shell_folder(self, path):
+        """Home, its top-level shell folders, and drive roots are never project
+        roots on their own. %USERPROFILE%\\.claude exists for GLOBAL Claude Code
+        config, so without this the home directory satisfies the project-marker
+        test and any pasted `PS C:\\Users\\you>` prompt hijacks the workspace."""
+        try:
+            p = os.path.normcase(os.path.abspath(path)).rstrip('\\/')
+        except Exception:
+            return True
+        if len(p) <= 3 and p.endswith(':'):
+            return True                     # drive root, e.g. c:
+        try:
+            home = os.path.normcase(os.path.abspath(os.path.expanduser('~'))).rstrip('\\/')
+        except Exception:
+            return False
+        if p == home:
+            return True
+        parent, leaf = os.path.split(p)
+        if parent == home and leaf in (
+                'desktop', 'downloads', 'documents', 'pictures', 'music',
+                'videos', 'onedrive', 'favorites', 'links', 'contacts',
+                'searches', 'saved games', 'appdata'):
+            return True
+        return False
+
     def _is_excluded_ws_path(self, path):
         """True for paths under runtime/vendor/system roots — i.e. everything a
         pasted stack trace is made of."""
@@ -2154,6 +2220,8 @@ class GalacticGateway(GatewayToolsMixin):
 
     def _looks_like_project_root(self, path):
         """True when the directory carries a recognisable project marker."""
+        if self._is_home_or_shell_folder(path):
+            return False    # markers there are user-global config, not a project
         try:
             entries = {e.lower() for e in os.listdir(path)}
         except OSError:
@@ -2614,11 +2682,14 @@ class GalacticGateway(GatewayToolsMixin):
         # Coding-intent detection — two-signal word-boundary matching (see the
         # class-level regexes + note at the Senior Coder block); computed once
         # because both the planning gate and Senior Coder mode need it.
+        # Detect against the user's own words only — a pasted terminal
+        # transcript must not supply the verb or the object.
+        _intent_input = self._strip_pasted_output(lower_input)
         fresh_coding = (
             lower_input.startswith("/code")
-            or bool(self._CODING_STRONG_RE.search(lower_input))
-            or (bool(self._CODING_VERB_RE.search(lower_input))
-                and bool(self._CODE_CONTEXT_RE.search(lower_input)))
+            or bool(self._CODING_STRONG_RE.search(_intent_input))
+            or (bool(self._CODING_VERB_RE.search(_intent_input))
+                and bool(self._CODE_CONTEXT_RE.search(_intent_input)))
         )
         # Follow-up window: a coding turn "arms" the next few turns, so
         # continuation imperatives ("tackle the critical issues first",
