@@ -535,12 +535,34 @@ def test_cloud_tool_array_is_sorted_and_stable_across_messages():
         "on every turn. At 10x the token price that costs more than the tokens saved.")
 
 
-def test_local_backend_keeps_relevance_filtering():
-    """Ollama bills nothing and measurably selects better from a tighter set, so
-    cache-stable mode must not leak onto the local path."""
-    a = set(_cache_gw("generate an image of a cat", provider="ollama",
+def test_local_backends_are_also_cache_stable():
+    """Measured 2026-07-25 on qwen3.6:27b via Ollama, ~8.9k-token prompt,
+    identical total size in both conditions:
+        stable prefix   0.87s prefill / 1.92s wall
+        varying prefix  6.12s prefill / 7.30s wall  -> 74% slower
+    llama.cpp reuses the KV cache for whatever prefix matches, so a tool array
+    that changes per message forces a full re-prefill every turn."""
+    for provider, model in (("ollama", "qwen3.6:27b"),
+                            ("lmstudio", "qwen3.6-27b-mtp@q4_k_s")):
+        a = list(_cache_gw("read the config and search the web",
+                           provider=provider, model=model)._get_active_tools())
+        b = list(_cache_gw("generate an image of a cat",
+                           provider=provider, model=model)._get_active_tools())
+        assert a, "%s returned no tools" % provider
+        assert a == sorted(a), "%s tool array not sorted" % provider
+        assert a == b, (
+            "%s tool array changed with the user's message — that re-prefills "
+            "the whole prompt through the model every turn (~5.4s on a 27B)"
+            % provider)
+
+
+def test_cache_stable_mode_does_not_widen_the_local_tool_set():
+    """Stability must not come at the cost of the tighter set local models
+    select better from — the _OLLAMA_* caps still apply."""
+    n = len(_cache_gw("do something", provider="ollama",
                       model="qwen3.6:27b")._get_active_tools())
-    assert a, "local path returned no tools"
+    assert n <= G._OLLAMA_MAX_TOOLS, (
+        "local tool set (%d) exceeded _OLLAMA_MAX_TOOLS (%d)" % (n, G._OLLAMA_MAX_TOOLS))
 
 
 def test_cached_tokens_are_billed_at_the_cached_rate():

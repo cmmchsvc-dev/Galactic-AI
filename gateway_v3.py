@@ -1751,11 +1751,22 @@ class GalacticGateway(GatewayToolsMixin):
         # Applies only to paid providers that publish a cached rate; local
         # backends keep relevance expansion (they bill nothing, and a tighter
         # set measurably helps their tool selection).
+        # ⚡ LOCAL backends want this just as much, for a different reason.
+        # Measured on qwen3.6:27b via Ollama, ~8.9k-token prompt, identical
+        # total size in both conditions:
+        #     stable prefix   0.87s prefill   1.92s wall
+        #     varying prefix  6.12s prefill   7.30s wall   <- 74% slower
+        # llama.cpp keeps the KV cache in the model slot and reuses whatever
+        # prefix matches, so a stable prompt skips the prefill compute entirely.
+        # (prompt_eval_count still reports the full token count in both cases —
+        # it's prompt_eval_duration that shows the work being skipped.)
+        # This does NOT widen the local tool set: the _OLLAMA_* caps still apply,
+        # so local ends up with a set that is both tighter AND stable, and can
+        # still pull anything else in on demand via find_tools.
         _pricing = MODEL_PRICING.get(getattr(self.llm, 'model', ''), {})
-        _cache_stable = (not _is_local
-                         and _pricing.get('cached_input') is not None
-                         and bool(self.core.config.get('models', {})
-                                  .get('cache_stable_tools', True)))
+        _cache_stable = (bool(self.core.config.get('models', {})
+                              .get('cache_stable_tools', True))
+                         and (_is_local or _pricing.get('cached_input') is not None))
 
         relevant = {}
         # In coding mode, keyword-"relevant" extras are exactly the noise we're
