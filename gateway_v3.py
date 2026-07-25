@@ -1590,6 +1590,58 @@ class GalacticGateway(GatewayToolsMixin):
         r"|\bfiles?\s+ha(?:s|ve)\s+been\s+(?:updated|written|created|saved|deleted|modified)\b"
         r"|\bdone[.!]\s+i(?:'ve| have)\s+(?:made|applied|finished|completed|written|updated|fixed)\b")
 
+    # ── System-state claims (desktop automation) ─────────────────────────────
+    # 2026-07-25: asked to make PowerShell 7 the Windows default, the model
+    # replied "**7.6.4** is locked and loaded!" having called ZERO tools — and
+    # invented the version number too (7.5.5 is what's installed). The file and
+    # browser detectors have no concept of "claimed to change the machine".
+    #
+    # Two layers, because the phrasing layer alone cannot catch persona slang
+    # like "locked and loaded" or "riding on the latest tech":
+    #   1. _SYSTEM_CLAIM_RE  — explicit claims (high precision)
+    #   2. _SYSTEM_TASK_RE   — matched against what the USER asked for. If they
+    #      asked the machine to be changed and the whole turn called no
+    #      execution tool, the claim is unbacked no matter how it's worded.
+    _SYSTEM_OBJECT = (
+        r"(?:default|registry|regedit|hkcu|hklm|service|startup|scheduled\s+task|"
+        r"environment\s+variable|path\s+variable|shortcut|\.lnk|taskbar|start\s+menu|"
+        r"win\s*\+?\s*x|winx|driver|firewall|group\s+policy|policy|file\s+association|"
+        r"association|profile|powershell|pwsh|terminal|shell|wsl|setting)s?\b")
+    _SYSTEM_CLAIM_RE = re.compile(
+        r"\bi(?:'ve| have)(?: just| now| already| also)?\s+"
+        r"(?:set|changed|switched|installed|uninstalled|enabled|disabled|configured|"
+        r"registered|unregistered|repinned|pinned|unpinned|applied|restarted|reset|"
+        r"assigned|associated|updated)\b"
+        r"[^.!?\n]{0,80}?\b" + _SYSTEM_OBJECT
+        + r"|\b(?:is|are|has\s+been|have\s+been)\s+now\s+"
+          r"(?:set|pointing|repinned|pinned|configured|enabled|disabled|installed|"
+          r"the\s+default|your\s+default|running|using|active)\b"
+          r"|\bsuccessfully\s+(?:set|changed|switched|installed|enabled|disabled|"
+          r"configured|registered|repinned|pinned|applied|restarted)\b")
+    # What the user asked for. Deliberately matched against their OWN words
+    # (pasted transcripts stripped) so console output can't trigger it.
+    # Both an imperative ("set X as default") and a request ("I WANT the latest
+    # powershell TO BE the windows default") have to count — the real incident
+    # used the second form, which a verb list alone misses. The request form
+    # additionally requires "default"/"instead of" next to the system object so
+    # "can you explain the default behavior" stays out.
+    _SYSTEM_INTENT = (r"(?:i\s+want|i\s+need|i'?d\s+like|i\s+would\s+like|"
+                      r"can\s+you|could\s+you|please|make\s+sure)")
+    _SYSTEM_TASK_RE = re.compile(
+        r"\b(?:set|make|change|switch|configure|install|uninstall|enable|disable|"
+        r"turn\s+(?:on|off)|pin|unpin|register|assign)\w*\b"
+        r"[^.!?\n]{0,60}?\b" + _SYSTEM_OBJECT
+        + r"|\b" + _SYSTEM_INTENT + r"\b[^.!?\n]{0,80}?\b" + _SYSTEM_OBJECT
+        + r"[^.!?\n]{0,40}?\b(?:default|instead\s+of)\b"
+        + r"|\b" + _SYSTEM_INTENT + r"\b[^.!?\n]{0,80}?\b(?:default|instead\s+of)\b"
+        + r"[^.!?\n]{0,40}?\b" + _SYSTEM_OBJECT)
+    # The model declining, asking, or advising is NOT a false completion claim.
+    _NO_CLAIM_HEDGE_RE = re.compile(
+        r"\b(?:would you like|do you want|should i|shall i|can you (?:confirm|check|run)|"
+        r"i can't|i cannot|i'm unable|i am unable|you'll need to|you will need to|"
+        r"you need to|please run|try running|here's how|here is how|to do this,|"
+        r"i don't have|i do not have|requires admin|needs admin|manually)\b")
+
     def _get_active_tools(self):
         """
         Returns a filtered subset of tools to prevent overloading models with 189+ definitions.
@@ -2848,6 +2900,7 @@ class GalacticGateway(GatewayToolsMixin):
         _nudge_half_sent = False   # Track whether 50% nudge was sent
         _nudge_80_sent = False     # Track whether 80% nudge was sent
         _text_only_action_turns = 0  # Consecutive turns where model claimed an action but called no tools
+        _system_claim_turns = 0      # Consecutive turns claiming a MACHINE change with no execution tool
         _empty_final_retries = 0     # Think-only final turns we've already re-prompted for a real answer
         _persistence_nudges = 0      # "Senior Coder" nudges sent (hard-capped — see below)
         _recent_response_fingerprints = []  # Rolling hashes of recent responses for text-loop detection
@@ -2898,6 +2951,7 @@ class GalacticGateway(GatewayToolsMixin):
             nonlocal turn_count, last_tool_call, messages, duplicate_count, stagnation_count
             nonlocal consecutive_failures, recent_tools, _nudge_half_sent, _nudge_80_sent
             nonlocal _text_only_action_turns, _recent_response_fingerprints
+            nonlocal _system_claim_turns
             nonlocal _discovery_calls_used, _tool_name_counts  # V17
             # Counters incremented below — without nonlocal, the `+=` makes them
             # local to _react_loop and reading them first raises UnboundLocalError.
@@ -3468,6 +3522,59 @@ class GalacticGateway(GatewayToolsMixin):
                     continue
                 else:
                     _text_only_action_turns = 0  # Reset on a clean turn
+
+                # ── SYSTEM-STATE HALLUCINATION DETECTOR ──────────────────
+                # 2026-07-25: asked to make PowerShell 7 the Windows default,
+                # the model answered "**7.6.4** is locked and loaded!" having
+                # called ZERO tools — and invented the version (7.5.5 is what's
+                # installed). Desktop automation is the whole point of this app,
+                # so a false "done" is worse here than anywhere else.
+                #
+                # Layer 1 catches explicit claims. Layer 2 is the safety net for
+                # persona slang no regex will match: if the USER asked for the
+                # machine to change and the turn ends with no execution tool
+                # having run, the claim is unbacked however it's phrased.
+                _sys_backed = any(t in recent_tools for t in (
+                    'exec_shell', 'execute_python', 'process_start',
+                    'write_file', 'edit_file', 'replace_function'))
+                # Declining, asking, or explaining how is not a completion claim.
+                _sys_hedged = (bool(self._NO_CLAIM_HEDGE_RE.search(_rt_lower))
+                               or _rt_lower.rstrip().endswith('?'))
+                claimed_system = (
+                    bool(self._SYSTEM_CLAIM_RE.search(_rt_lower))
+                    or (bool(self._SYSTEM_TASK_RE.search(_intent_input)) and not _sys_hedged)
+                )
+                if (claimed_system and not _sys_backed and not tool_calls
+                        and not _sys_hedged and is_main_chat):
+                    _system_claim_turns += 1
+                    await self.core.log(
+                        f"🚫 System-state hallucination (turn {_system_claim_turns}/2): "
+                        f"model reported a machine change but ran no shell/script tool",
+                        priority=1)
+                    if _system_claim_turns >= 2:
+                        await self.core.log(
+                            "🛑 Repeated system-state hallucination. Aborting.", priority=1)
+                        return (
+                            "⚠️ STOPPING: I was reporting that I'd changed a system setting without "
+                            "actually running anything. **Nothing on your machine was changed.** "
+                            "Please re-issue the request — I'll use exec_shell and show you the real "
+                            "before/after output this time."
+                        )
+                    messages.append({"role": "assistant", "content": response_text})
+                    messages.append({
+                        "role": "user",
+                        "content": (
+                            "⚠️ HALLUCINATION DETECTED. You reported that a system/machine setting was "
+                            "changed, but you did NOT call exec_shell, execute_python, or any other tool "
+                            "this turn — so nothing actually happened on this machine. "
+                            "Do it for real now: call exec_shell, and then VERIFY by reading the setting "
+                            "back and quoting the actual output. Never state a version number, path, or "
+                            "value you have not read from real command output."
+                        )
+                    })
+                    continue
+                else:
+                    _system_claim_turns = 0
 
                 called_type = 'chrome_type' in recent_tools or 'browser_type' in recent_tools
 

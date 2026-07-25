@@ -389,6 +389,72 @@ def test_home_and_shell_folders_are_never_project_roots():
         "will hijack the active workspace: %s" % wrong)
 
 
+# ─────────────────────────────────────────────────────────────────────────────
+# SYSTEM-STATE HALLUCINATION GUARD
+# 2026-07-25: asked to make PowerShell 7 the Windows default, the model replied
+# "**7.6.4** is locked and loaded!" having called ZERO tools — and invented the
+# version number (7.5.5 was installed). Desktop automation is this app's whole
+# purpose, so a false "done" costs more here than anywhere else.
+# ─────────────────────────────────────────────────────────────────────────────
+
+PS_ASK = ("when i right click on my windows button and select PowerShell and run the "
+          "command this is what I get. I want the latest powershell to be the windows "
+          "default..\nWindows PowerShell\n"
+          "Copyright (C) Microsoft Corporation. All rights reserved.\n\n"
+          r"PS C:\Users\Chesley> $PSVersionTable.PSVersion" "\n\n"
+          "Major  Minor  Build  Revision\n-----  -----  --------\n5      1      26100  8894")
+
+
+def system_claim_flagged(reply, user_ask, backed_by_tool=False):
+    """Mirrors the system-state branch of the ReAct loop."""
+    rt = reply.lower()
+    ask = G._strip_pasted_output(user_ask.lower())
+    hedged = bool(G._NO_CLAIM_HEDGE_RE.search(rt)) or rt.rstrip().endswith('?')
+    claimed = (bool(G._SYSTEM_CLAIM_RE.search(rt))
+               or (bool(G._SYSTEM_TASK_RE.search(ask)) and not hedged))
+    return claimed and not backed_by_tool and not hedged
+
+
+def test_slang_completion_claim_with_no_tools_is_caught():
+    # The verbatim reply from the incident. No regex will match "locked and
+    # loaded" — layer 2 catches it via what the USER asked for instead.
+    assert system_claim_flagged(
+        "Hell yeah, brother! **7.6.4** is locked and loaded!\nNow your whole "
+        "Windows shell is riding on the latest tech instead of that old 5.1 hardware.",
+        PS_ASK)
+
+
+def test_explicit_system_claim_with_no_tools_is_caught():
+    assert system_claim_flagged("I've set the default profile to PowerShell 7.", PS_ASK)
+
+
+def test_system_claim_backed_by_a_real_tool_call_is_not_flagged():
+    assert not system_claim_flagged(
+        "Done! Both Win+X shortcuts are now repinned to pwsh.", PS_ASK,
+        backed_by_tool=True)
+
+
+def test_asking_advising_or_declining_is_not_a_completion_claim():
+    wrong = [r for r in (
+        "To make PowerShell 7 the default, you'll need to open Terminal settings. "
+        "Want me to do it?",
+        "Should I change the Windows Terminal default profile for you?",
+        "I can't change that setting without admin rights.",
+        "Here's how the WinX menu works: it launches Windows Terminal, which opens "
+        "whatever profile is set as default.",
+    ) if system_claim_flagged(r, PS_ASK)]
+    assert not wrong, "Hedged/questioning replies wrongly flagged: %s" % wrong
+
+
+def test_unrelated_turns_never_trip_the_system_guard():
+    wrong = [r for r, a in (
+        ("I've updated the retry logic in that function.", "fix the bug in gateway_v3.py"),
+        ("It's sunny and about 84 degrees today.", "what's the weather like today"),
+        ("The deck's settings tab lets you pick a model.", "what's the weather like today"),
+    ) if system_claim_flagged(r, a)]
+    assert not wrong, "Non-system turns wrongly flagged: %s" % wrong
+
+
 # v2.2.0 false positive: this exact sentence launched Senior Coder mode plus a
 # paid cloud planning call, because bare "changed" counted as a coding verb.
 NOT_CODING = [
