@@ -286,7 +286,7 @@ class DiscordBridge:
         """Build a system status report string (mirrors Telegram /status)."""
         from datetime import datetime
         uptime = int(time.time() - self.start_time)
-        plugins = ", ".join([p.name for p in self.core.plugins]) or "none"
+        plugins = ", ".join([getattr(p, 'skill_name', type(p).__name__) for p in self.core.plugins]) or "none"
         mems = len(self.core.memory.index.get('memories', []))
         now = datetime.now().strftime("%H:%M:%S")
         provider = self.core.gateway.llm.provider

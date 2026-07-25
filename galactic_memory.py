@@ -33,11 +33,25 @@ class GalacticMemory:
             self.chroma_path = CHROMA_PATH
 
         # 2. Init Semantic Memory (ChromaDB)
+        # ── Two collections, deliberately ────────────────────────────────────
+        # The Neural Indexer writes tens of thousands of code chunks. When they
+        # shared ONE collection with conversational memory, every recall had to
+        # carry a `$nin: [codebase_index]` filter that masked out ~99.8% of the
+        # index — benchmarked at 0.097s filtered vs 0.001s unfiltered on the
+        # real store. Code now goes to its own collection, so conversational
+        # recall queries a small store with NO filter at all.
         self.chroma_client = chromadb.PersistentClient(path=self.chroma_path)
         self.collection = self.chroma_client.get_or_create_collection(
             name="galactic_memory", # Changed collection name
             metadata={"hnsw:space": "cosine"} # Retained metadata
         )
+        self.code_collection = self.chroma_client.get_or_create_collection(
+            name="galactic_codebase",
+            metadata={"hnsw:space": "cosine"}
+        )
+        # Tri-state: None = not checked yet, True/False = legacy code rows are
+        # (aren't) still sitting in the main collection. See _has_legacy_code().
+        self._legacy_code_rows = None
 
         # 1. Init episodic memory (SQLite)
         self.db_conn = sqlite3.connect(self.db_path, check_same_thread=False) # Changed self.conn to self.db_conn, added check_same_thread
@@ -70,19 +84,48 @@ class GalacticMemory:
     async def recall(self, query, limit=5, **kwargs):
         """Compatibility wrapper for 'recall' (calls query_memory).
 
-        By default EXCLUDES codebase_index chunks — the Neural Indexer writes
-        1000+ code fragments into this collection, and without the filter they
-        dominate conversational recall (the "semantic memories" injected per
-        message end up being code instead of facts about the user).
+        Conversational recall must never surface code fragments — the "semantic
+        memories" injected per message would end up being code instead of facts
+        about the user. Code lives in its own collection now, so this is free;
+        the exclude_categories filter is kept only as a fallback for stores that
+        still hold legacy codebase_index rows in the main collection.
         """
         # Supports both 'limit' and legacy 'top_k' parameters
         n_results = kwargs.get('top_k', limit)
-        exclude = kwargs.get('exclude_categories', ('codebase_index',))
+        exclude = kwargs.get('exclude_categories', (self.CODE_CATEGORY,))
         return await self.query_memory(
             query, n_results=n_results,
             category=kwargs.get('category'),
             exclude_categories=exclude,
         )
+
+    # ── Collection routing ───────────────────────────────────────────────
+    CODE_CATEGORY = 'codebase_index'
+
+    def _collection_for(self, category):
+        """Codebase chunks go to their own collection; everything else to main."""
+        return self.code_collection if category == self.CODE_CATEGORY else self.collection
+
+    def _has_legacy_code_sync(self):
+        """True if the MAIN collection still holds codebase_index rows.
+
+        Cached after the first probe. Existing stores were built before the
+        split, so their code chunks are still in `galactic_memory` — until the
+        one-time migration runs, recall keeps the $nin filter for those.
+        """
+        if self._legacy_code_rows is not None:
+            return self._legacy_code_rows
+        where = {"category": self.CODE_CATEGORY}
+        try:
+            hit = self.collection.get(where=where, limit=1, include=[])
+        except Exception:
+            try:  # older Chroma builds reject include=[]
+                hit = self.collection.get(where=where, limit=1)
+            except Exception:
+                self._legacy_code_rows = True  # can't tell → keep the safe filter
+                return True
+        self._legacy_code_rows = bool(hit and hit.get('ids'))
+        return self._legacy_code_rows
 
     @property
     def model(self):
@@ -138,8 +181,9 @@ class GalacticMemory:
                     # Fallback to content hash (no timestamp, allows deduplication)
                     vector_id = hashlib.md5(content.encode()).hexdigest()
                 
-                # 1. Save to Chroma (Semantic Search)
-                self.collection.upsert(
+                # 1. Save to Chroma (Semantic Search) — code chunks are routed
+                #    to their own collection so they never pollute recall.
+                self._collection_for(category).upsert(
                     ids=[vector_id],
                     embeddings=[embedding],
                     documents=[content],
@@ -200,12 +244,17 @@ class GalacticMemory:
                         safe_meta = {k: (str(v) if isinstance(v, (dict, list)) else v) for k, v in m_meta.items()}
                         c_meta.update(safe_meta)
                         
-                self.collection.upsert(
-                    ids=vector_ids,
-                    embeddings=embeddings,
-                    documents=contents,
-                    metadatas=chroma_metadatas
-                )
+                # Split the batch by target collection (the indexer sends pure
+                # codebase_index batches, but a mixed batch must still land in
+                # the right places).
+                buckets = {}
+                for cat, v_id, emb, doc, c_meta in zip(
+                        categories, vector_ids, embeddings, contents, chroma_metadatas):
+                    b = buckets.setdefault(cat == self.CODE_CATEGORY, ([], [], [], []))
+                    b[0].append(v_id); b[1].append(emb); b[2].append(doc); b[3].append(c_meta)
+                for is_code, (ids_, embs_, docs_, metas_) in buckets.items():
+                    coll = self.code_collection if is_code else self.collection
+                    coll.upsert(ids=ids_, embeddings=embs_, documents=docs_, metadatas=metas_)
                 
                 # 2. Save to SQLite (bulk insert)
                 cursor = self.db_conn.cursor()
@@ -244,32 +293,62 @@ class GalacticMemory:
                 None, lambda: self.model.encode([query], show_progress_bar=False)[0].tolist()
             )
 
-            # Build Filter
-            where_filter = None
-            if category:
-                where_filter = {"category": category}
-            elif exclude_categories:
-                where_filter = {"category": {"$nin": list(exclude_categories)}}
-                
-            # Chroma Search (Cosine Similarity)
-            results = self.collection.query(
-                query_embeddings=[query_embedding],
-                n_results=n_results,
-                where=where_filter
-            )
-            
-            # Format Output
-            memories = []
-            if results['ids'] and results['ids'][0]:
-                for i, id in enumerate(results['ids'][0]):
-                    memories.append({
-                        "id": id,
-                        "content": results['documents'][0][i],
-                        "distance": results['distances'][0][i], # Lower is better match
-                        "metadata": results['metadatas'][0][i]
-                    })
-            
-            return memories
+            # ── Chroma search (cosine) — OFF the event loop ──────────────────
+            # collection.query() is fully synchronous and was being called right
+            # here, once per user message, two lines after the embedding was
+            # correctly offloaded. The whole plan+query now runs in the executor
+            # (the legacy probe below hits Chroma too).
+            def _run_query():
+                # Which collection(s), and what filter?
+                plan = []  # [(collection, where_filter), ...]
+                if category == self.CODE_CATEGORY:
+                    # Code has its own collection now; pre-split stores still
+                    # keep it in main, so query both and merge.
+                    plan.append((self.code_collection, None))
+                    if self._has_legacy_code_sync():
+                        plan.append((self.collection, {"category": self.CODE_CATEGORY}))
+                elif category:
+                    plan.append((self.collection, {"category": category}))
+                elif exclude_categories:
+                    # With code in its own collection the $nin is unnecessary —
+                    # it was masking ~99.8% of the store on every recall. It is
+                    # re-added ONLY while legacy code rows remain in main.
+                    excl = [c for c in exclude_categories if c != self.CODE_CATEGORY]
+                    if self.CODE_CATEGORY in tuple(exclude_categories) and self._has_legacy_code_sync():
+                        excl.append(self.CODE_CATEGORY)
+                    plan.append((self.collection,
+                                 {"category": {"$nin": excl}} if excl else None))
+                else:
+                    plan.append((self.collection, None))
+
+                out = []
+                for coll, where_filter in plan:
+                    try:
+                        r = coll.query(query_embeddings=[query_embedding],
+                                       n_results=n_results, where=where_filter)
+                    except Exception:
+                        continue
+                    if not (r.get('ids') and r['ids'][0]):
+                        continue
+                    for i, vid in enumerate(r['ids'][0]):
+                        out.append({
+                            "id": vid,
+                            "content": r['documents'][0][i],
+                            "distance": r['distances'][0][i],  # Lower is better match
+                            "metadata": r['metadatas'][0][i],
+                        })
+                # Merging two collections can duplicate a chunk that was
+                # re-indexed after the split — keep the nearest, re-rank, trim.
+                if len(plan) > 1:
+                    best = {}
+                    for m in out:
+                        prev = best.get(m['id'])
+                        if prev is None or (m['distance'] or 1.0) < (prev['distance'] or 1.0):
+                            best[m['id']] = m
+                    out = sorted(best.values(), key=lambda m: m['distance'] or 1.0)[:n_results]
+                return out
+
+            return await loop.run_in_executor(None, _run_query)
 
     async def get_all_memories(self, limit: int = 10):
         """Get the most recent episodic memories."""
@@ -317,10 +396,13 @@ class GalacticMemory:
         if not vector_id:
             return False
         async with self._lock:
-            try:
-                self.collection.delete(ids=[vector_id])
-            except Exception:
-                pass  # may already be gone from Chroma
+            # Try both collections — the caller doesn't know (or care) whether
+            # this id is a conversational memory or a code chunk.
+            for coll in (self.collection, self.code_collection):
+                try:
+                    coll.delete(ids=[vector_id])
+                except Exception:
+                    pass  # may already be gone from Chroma
             c = self.db_conn.cursor()
             c.execute("DELETE FROM episodic_memories WHERE vector_id = ?", (vector_id,))
             deleted = c.rowcount

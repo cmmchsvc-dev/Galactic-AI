@@ -163,10 +163,4 @@ aliases: {}
 gateway:
   provider: ollama
   model: hf.co/unsloth/Qwen3-Coder-30B-A3B-Instruct-GGUF:Q4_K_M
-model_overrides:
-  hf.co/unsloth/Qwen3-Coder-30B-A3B-Instruct-GGUF:Q4_K_M:
-    max_tokens: 0
-    context_window: 65536
-  qwen3.5:27b-q4_K_M:
-    max_tokens: 0
-    context_window: 18000
+model_overrides: {}

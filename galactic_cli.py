@@ -23,6 +23,10 @@ from prompt_toolkit.patch_stdout import patch_stdout
 from prompt_toolkit.styles import Style
 from prompt_toolkit.shortcuts import button_dialog, radiolist_dialog
 from prompt_toolkit.completion import Completer, Completion
+from prompt_toolkit.history import FileHistory
+from prompt_toolkit.auto_suggest import AutoSuggestFromHistory
+from prompt_toolkit.formatted_text import HTML
+import shutil
 import glob
 import colorama
 colorama.init()
@@ -31,8 +35,28 @@ colorama.init()
 _highlighter = ReprHighlighter()
 
 console = Console()
+# Full palette drives the "app-like" chrome: framed prompt, bottom status bar,
+# completion dropdown, and inline history suggestions.
 custom_style = Style.from_dict({
     'prompt': 'ansicyan bold',
+    'frame': '#22d3ee',                                    # box-drawing edges (cyan)
+    'promptmark': '#22d3ee bold',
+    'bottom-toolbar': 'bg:#12122a #8be9fd noreverse',      # the persistent status bar
+    'bt-sep': 'bg:#12122a #3a3a5a',
+    'bt-key': 'bg:#12122a #50fa7b',
+    'bt-model': 'bg:#12122a #bd93f9 bold',
+    'bt-flag': 'bg:#12122a #ffb86c bold',
+    'bt-dim': 'bg:#12122a #6272a4',
+    # completion dropdown (the "selectable box" for /commands and @files)
+    'completion-menu': 'bg:#12122a',
+    'completion-menu.completion': 'bg:#12122a #c6c6c6',
+    'completion-menu.completion.current': 'bg:#22d3ee #06060f bold',
+    'completion-menu.meta.completion': 'bg:#0d0d1e #6272a4',
+    'completion-menu.meta.completion.current': 'bg:#1fb6d4 #06060f',
+    'scrollbar.background': 'bg:#1a1a33',
+    'scrollbar.button': 'bg:#22d3ee',
+    'auto-suggestion': '#556074 italic',                   # inline ghost text from history
+    'placeholder': '#556074 italic',
 })
 
 class MentionCompleter(Completer):
@@ -74,10 +98,19 @@ current_response = ""
 current_thinking = ""
 current_trace = ""
 in_progress_tool = None
+current_model_label = ""          # short active-model name shown in the prompt
+_session_started = time.monotonic()  # for the exit summary
+
+# Cross-session command history (arrow-up recalls previous sessions)
+CLI_HISTORY_FILE = os.path.join(os.path.expanduser('~'), '.galactic_cli_history')
 
 # Global toggles
 VERBOSE_MODE = True
 THINKING_MODE = False
+# When on, the CLI auto-answers Crucible approval gates (approve) instead of
+# prompting — for hands-off autonomous runs. The server-side diff + VCR backup
+# still happen; you just don't have to click each one. Toggle with /autoapprove.
+AUTO_APPROVE = False
 
 # Thinking effort level: low, medium, high, max (maps to backend reasoning intensity)
 EFFORT_LEVEL = "medium"
@@ -450,9 +483,175 @@ class StreamRenderer:
 
 stream_renderer = StreamRenderer()
 
+# ==========================================
+# INTERACTIVE GATES — approval + ask_user (CLI parity with the deck)
+# The core blocks a coding turn on a human decision (Crucible approval) or an
+# ask_user question and broadcasts it over the SAME event stream the deck uses.
+# Previously the CLI ignored those events, so an approval-gated run driven from
+# the terminal could only be answered from the web deck. These handlers render
+# the diff/question inline and POST the decision straight back.
+# ==========================================
+_http_session = None          # set in main(); used to POST decisions back to the core
+_interactive_lock = None      # serialize gates so two prompts never overlap
+_handled_gate_ids = set()     # dedupe: each gate id is prompted at most once
+
+
+def _get_interactive_lock():
+    global _interactive_lock
+    if _interactive_lock is None:
+        _interactive_lock = asyncio.Lock()
+    return _interactive_lock
+
+
+def _render_diff(diff_str):
+    """Colorize a unified diff for the terminal."""
+    out = Text()
+    for ln in (diff_str or "").splitlines():
+        if ln.startswith(('+++', '---')):
+            out.append(ln + "\n", style="bright_black")
+        elif ln.startswith('+'):
+            out.append(ln + "\n", style="green")
+        elif ln.startswith('-'):
+            out.append(ln + "\n", style="red")
+        elif ln.startswith('@@'):
+            out.append(ln + "\n", style="cyan")
+        else:
+            out.append(ln + "\n", style="white")
+    if not str(diff_str or "").strip():
+        out.append("(new file / no prior content)\n", style="dim")
+    return out
+
+
+async def _post_json(path, payload):
+    """POST JSON to the core; tolerant of a missing session or non-200."""
+    if _http_session is None:
+        return {'ok': False, 'error': 'no session'}
+    try:
+        async with _http_session.post(f"{API_URL}{path}", json=payload) as resp:
+            try:
+                body = await resp.json()
+            except Exception:
+                body = {}
+            body.setdefault('ok', resp.status == 200)
+            body['status'] = resp.status
+            return body
+    except Exception as e:
+        return {'ok': False, 'error': str(e)}
+
+
+async def _prompt_line(prompt_text):
+    """Read one line via a fresh prompt session. Works while a turn is streaming
+    (the main input prompt isn't active then). Returns None if it can't read."""
+    try:
+        with patch_stdout():
+            return await PromptSession().prompt_async(prompt_text, style=custom_style)
+    except Exception:
+        return None
+
+
+async def _handle_approval_request(data):
+    req_id = data.get('id')
+    if not req_id or req_id in _handled_gate_ids:
+        return
+    _handled_gate_ids.add(req_id)
+    async with _get_interactive_lock():
+        if req_id not in _pending_gate_ids():   # deck/timeout may have resolved it while we queued
+            return
+        action = data.get('action', 'change')
+        path = data.get('path', '?')
+        # Hands-off mode: auto-approve without prompting (diff still logged server-side).
+        if AUTO_APPROVE:
+            res = await _post_json('/api/approval/respond', {'id': req_id, 'approved': True, 'feedback': ''})
+            if res.get('ok'):
+                safe_print(f"[green]✅ Auto-approved[/green] [dim]{action} → {path}[/dim]")
+            elif res.get('status') != 409:
+                safe_print(f"[yellow]⚠️ Auto-approve failed: {res.get('error') or res.get('status')}[/yellow]")
+            return
+        stream_renderer.flush_now()
+        safe_print(Panel(_render_diff(data.get('diff', '')),
+                         title=f"⏸️  APPROVAL REQUIRED — {action} → {path}",
+                         border_style="yellow", box=ROUNDED))
+        ans = await _prompt_line("Approve? [y]es / [n]o / type a reason to reject ➤ ")
+        if ans is None:
+            safe_print("[yellow]⚠️ Couldn't read approval in the terminal — approve/reject from the deck, or it times out.[/yellow]")
+            return
+        low = ans.strip().lower()
+        if low in ('y', 'yes', 'a', 'approve'):
+            approved, feedback = True, ''
+        elif low in ('n', 'no', 'r', 'reject', ''):
+            approved, feedback = False, ''
+        else:
+            approved, feedback = False, ans.strip()   # free text = rejection reason
+        res = await _post_json('/api/approval/respond',
+                               {'id': req_id, 'approved': approved, 'feedback': feedback})
+        if res.get('ok'):
+            safe_print("[green]✅ Approved — applying.[/green]" if approved
+                       else "[red]✋ Rejected.[/red]" + (f" [dim]{feedback}[/dim]" if feedback else ""))
+        elif res.get('status') == 409:
+            safe_print("[dim]That approval was already resolved (deck or timeout).[/dim]")
+        else:
+            safe_print(f"[yellow]⚠️ Couldn't submit decision: {res.get('error') or res.get('status')}[/yellow]")
+
+
+async def _handle_ask_user(data):
+    req_id = data.get('id')
+    if not req_id or req_id in _handled_gate_ids:
+        return
+    _handled_gate_ids.add(req_id)
+    async with _get_interactive_lock():
+        if req_id not in _pending_gate_ids():
+            return
+        question = data.get('question') or data.get('prompt') or "The agent needs your input."
+        stream_renderer.flush_now()
+        safe_print(Panel(Text(str(question), style="white"),
+                         title="🙋 THE AGENT IS ASKING YOU", border_style="cyan", box=ROUNDED))
+        ans = await _prompt_line("Your answer ➤ ")
+        if ans is None:
+            safe_print("[yellow]⚠️ Couldn't read your answer in the terminal — answer from the deck, or it times out.[/yellow]")
+            return
+        res = await _post_json('/api/ask_user/respond', {'id': req_id, 'answer': ans.strip()})
+        if res.get('ok'):
+            safe_print("[green]✅ Answer sent.[/green]")
+        elif res.get('status') == 409:
+            safe_print("[dim]That question was already answered (deck or timeout).[/dim]")
+        else:
+            safe_print(f"[yellow]⚠️ Couldn't submit answer: {res.get('error') or res.get('status')}[/yellow]")
+
+
+# ids currently un-resolved: a gate stays "pending" until we see its *_resolved
+# event. Prevents prompting for something the deck already answered.
+_resolved_gate_ids = set()
+def _pending_gate_ids():
+    return _handled_gate_ids - _resolved_gate_ids
+
+
+def _spawn_gate(coro_fn, data):
+    try:
+        asyncio.get_running_loop().create_task(coro_fn(data))
+    except RuntimeError:
+        pass
+
+
+async def cmd_autoapprove(session, arg):
+    """Toggle auto-approval of Crucible file-write gates for hands-off runs."""
+    global AUTO_APPROVE
+    a = (arg or "").strip().lower()
+    if a in ("on", "yes", "true", "1"):
+        AUTO_APPROVE = True
+    elif a in ("off", "no", "false", "0"):
+        AUTO_APPROVE = False
+    else:
+        AUTO_APPROVE = not AUTO_APPROVE
+    if AUTO_APPROVE:
+        safe_print("[green]✅ Auto-approve ON[/green] — file-write approvals are accepted automatically "
+                   "(diffs + VCR backups still recorded). Use for hands-off autonomous runs.")
+    else:
+        safe_print("[yellow]⏸️ Auto-approve OFF[/yellow] — you'll be prompted to approve each file write.")
+
+
 def handle_ws_event(payload):
 
-    global current_response, current_thinking, current_trace, in_progress_tool, in_think_block, VERBOSE_MODE, auto_mode_active, plan_mode_active, last_event_ts
+    global current_response, current_thinking, current_trace, in_progress_tool, in_think_block, VERBOSE_MODE, auto_mode_active, plan_mode_active, last_event_ts, current_model_label
     last_event_ts = time.monotonic()
     if 'in_think_block' not in globals():
         in_think_block = False
@@ -508,6 +707,12 @@ def handle_ws_event(payload):
         if isinstance(data, dict):
             session_token_counts['input'] = data.get('input_tokens', session_token_counts['input'])
             session_token_counts['output'] = data.get('output_tokens', session_token_counts['output'])
+
+    elif msg_type == 'telemetry':
+        # Core heartbeat carries the ACTIVE model — keeps the prompt badge live
+        # across deck-side switches, fallbacks, and hybrid handoffs.
+        if isinstance(data, dict) and data.get('model'):
+            current_model_label = str(data['model']).split('/')[-1][:24]
             
     elif msg_type == 'agent_trace':
         if isinstance(data, dict):
@@ -617,6 +822,19 @@ def handle_ws_event(payload):
             if VERBOSE_MODE:
                 total = session_token_counts['input'] + session_token_counts['output']
                 safe_print(f"\n[dim]Token Usage — Input: {session_token_counts['input']} | Output: {session_token_counts['output']} | Total: {total}[/dim]\n")
+
+    # ── Interactive gates: answer the Crucible / ask_user right here in the CLI ──
+    elif msg_type == 'approval_request':
+        if isinstance(data, dict):
+            _spawn_gate(_handle_approval_request, data)
+    elif msg_type == 'ask_user':
+        if isinstance(data, dict):
+            _spawn_gate(_handle_ask_user, data)
+    elif msg_type in ('approval_resolved', 'ask_user_resolved'):
+        # Resolved elsewhere (deck or timeout) — record it so a queued CLI prompt
+        # for the same id bows out instead of asking about a settled decision.
+        if isinstance(data, dict) and data.get('id'):
+            _resolved_gate_ids.add(data.get('id'))
 
 async def send_chat(session, text, extra_payload=None):
     global current_response, in_progress_tool, current_plan
@@ -2008,6 +2226,221 @@ async def cmd_shutup(session, arg):
 
 
 
+# ==========================================
+# STARTUP BANNER + MODEL SWITCHING
+# (defined above COMMAND_GRAPH — it references cmd_model at import time)
+# ==========================================
+
+async def show_startup_banner(session):
+    """Professional connect banner: version, active model, backends, uptime."""
+    global current_model_label, current_workspace_label
+    try:
+        async with session.get(f"{API_URL}/api/status", timeout=5) as resp:
+            if resp.status != 200:
+                return
+            d = await resp.json()
+    except Exception:
+        return
+    # Active project workspace → toolbar label
+    try:
+        async with session.get(f"{API_URL}/api/workspaces", timeout=4) as resp:
+            wd = await resp.json() if resp.status == 200 else {}
+        act = wd.get('active') or ''
+        if act:
+            for w in (wd.get('workspaces') or []):
+                if w.get('path') == act:
+                    current_workspace_label = w.get('name') or ''
+                    break
+    except Exception:
+        pass
+    model = d.get('model') or {}
+    cur = f"{model.get('provider', '?')}/{model.get('model', '?')}"
+    current_model_label = str(model.get('model') or '').split('/')[-1][:24]
+    ollama = d.get('ollama') or {}
+    lms = d.get('lmstudio') or {}
+    local_bits = []
+    if ollama:
+        local_bits.append(f"Ollama {ollama.get('model_count', 0)}")
+    if lms.get('enabled'):
+        local_bits.append(f"LM Studio {lms.get('model_count', 0)}")
+
+    # ── Wordmark ──
+    logo = [
+        "  ██████╗  █████╗ ██╗      █████╗  ██████╗████████╗██╗ ██████╗",
+        " ██╔════╝ ██╔══██╗██║     ██╔══██╗██╔════╝╚══██╔══╝██║██╔════╝",
+        " ██║  ███╗███████║██║     ███████║██║        ██║   ██║██║     ",
+        " ██║   ██║██╔══██║██║     ██╔══██║██║        ██║   ██║██║     ",
+        " ╚██████╔╝██║  ██║███████╗██║  ██║╚██████╗   ██║   ██║╚██████╗",
+        "  ╚═════╝ ╚═╝  ╚═╝╚══════╝╚═╝  ╚═╝ ╚═════╝   ╚═╝   ╚═╝ ╚═════╝",
+    ]
+    try:
+        term_w = shutil.get_terminal_size((100, 24)).columns
+    except Exception:
+        term_w = 100
+    try:
+        if term_w >= 66:
+            grad = ["#22d3ee", "#3ec6e0", "#5ab0d6", "#7c94ff", "#a07cff", "#bd93f9"]
+            safe_print("")
+            for i, line in enumerate(logo):
+                safe_print(Text(line, style=f"bold {grad[i % len(grad)]}"))
+            safe_print(Text("  ⬡ Local AI Control Core", style="dim"))
+        else:
+            safe_print(Text("\n⬡ GALACTIC AI", style="bold cyan"))
+    except (UnicodeEncodeError, Exception):
+        safe_print("\n= GALACTIC AI =")  # ASCII-only fallback for legacy consoles
+
+    body = Text()
+    body.append("  Version     ", style="dim");   body.append(f"v{d.get('version', '?')}\n", style="cyan bold")
+    body.append("  Personality ", style="dim");   body.append(f"{d.get('personality', '--')}\n", style="white")
+    body.append("  Model       ", style="dim");   body.append(f"{cur}", style="green bold")
+    body.append(f"  ({(model.get('mode') or 'primary')})\n", style="dim")
+    body.append("  Fallback    ", style="dim");   body.append(f"{d.get('fallback_model', '--')}\n", style="white")
+    body.append("  Local       ", style="dim");   body.append(f"{' · '.join(local_bits) or '--'}\n", style="white")
+    body.append("  Uptime      ", style="dim");   body.append(f"{d.get('uptime_formatted', '--')}", style="white")
+    safe_print(Panel(body, title="⬡ GALACTIC AI — CONTROL CORE", border_style="cyan", box=ROUNDED))
+
+
+async def _switch_model(session, provider, model):
+    """POST the switch and update the prompt badge."""
+    global current_model_label
+    try:
+        async with session.post(f"{API_URL}/api/switch_model",
+                                json={'provider': provider, 'model': model}) as resp:
+            d = await resp.json()
+    except Exception as e:
+        safe_print(f"[red]Switch failed: {e}[/red]")
+        return
+    if d.get('ok'):
+        current_model_label = model.split('/')[-1][:24]
+        extra = " [dim](queued — applies after the current task)[/dim]" if d.get('queued') else ""
+        safe_print(f"[green]✅ Switched to {provider}/{model}[/green]{extra}")
+    elif d.get('needs_key'):
+        safe_print(f"[yellow]🔑 {provider} has no API key — add it in the deck (⚙ Setup) first.[/yellow]")
+    else:
+        safe_print(f"[red]Switch failed: {d.get('error', 'unknown')}[/red]")
+
+
+async def cmd_model(session, arg):
+    """Show the active model, or switch: /model <search | provider/model>."""
+    arg = (arg or "").strip()
+    try:
+        async with session.get(f"{API_URL}/api/status", timeout=5) as resp:
+            st = await resp.json() if resp.status == 200 else {}
+    except Exception:
+        st = {}
+    cur = st.get('model') or {}
+    if not arg:
+        body = Text()
+        body.append("  Active    ", style="dim")
+        body.append(f"{cur.get('provider', '?')}/{cur.get('model', '?')}", style="green bold")
+        body.append(f"  ({cur.get('mode', 'primary')})\n", style="dim")
+        body.append("  Primary   ", style="dim"); body.append(f"{st.get('primary_model', '--')}\n", style="white")
+        body.append("  Fallback  ", style="dim"); body.append(f"{st.get('fallback_model', '--')}\n\n", style="white")
+        body.append("  Switch:  /model kimi   ·   /model qwen3.6:27b   ·   /model google/gemini-3.5-flash", style="dim")
+        safe_print(Panel(body, title="🧠 Model", border_style="cyan", box=ROUNDED))
+        return
+
+    # Gather candidates: configured cloud models + live local discoveries
+    cands = []
+    try:
+        async with session.get(f"{API_URL}/api/models", timeout=8) as resp:
+            d = await resp.json() if resp.status == 200 else {}
+        for prov, models in (d.get('providers') or {}).items():
+            actual = 'openrouter' if prov.lower().startswith('openrouter-') else prov.lower()
+            for m in (models or []):
+                if m.get('id'):
+                    cands.append((m.get('provider') or actual, m['id'], m.get('name') or m['id']))
+    except Exception:
+        pass
+    for ep, prov in (("/api/ollama_status", "ollama"), ("/api/lmstudio_status", "lmstudio")):
+        try:
+            async with session.get(f"{API_URL}{ep}", timeout=4) as resp:
+                dd = await resp.json() if resp.status == 200 else {}
+            for mid in (dd.get('models') or []):
+                cands.append((prov, mid, f"{mid} ({prov})"))
+        except Exception:
+            pass
+
+    # Explicit provider/model form switches directly
+    if '/' in arg:
+        p, m = arg.split('/', 1)
+        known = {c[0] for c in cands} | {'openrouter', 'google', 'anthropic', 'openai', 'moonshot',
+                                         'ollama', 'lmstudio', 'nvidia', 'groq', 'xai', 'huggingface',
+                                         'mistral', 'cerebras', 'deepseek', 'kimi', 'zai', 'minimax'}
+        if p.lower() in known:
+            await _switch_model(session, p.lower(), m)
+            return
+
+    q = arg.lower()
+    seen, matches = set(), []
+    for c in cands:
+        if (q in c[1].lower() or q in c[2].lower() or q in c[0].lower()) and (c[0], c[1]) not in seen:
+            seen.add((c[0], c[1]))
+            matches.append(c)
+    if not matches:
+        safe_print(f"[yellow]No model matching '{arg}'. `/model` alone shows usage.[/yellow]")
+        return
+    if len(matches) == 1:
+        await _switch_model(session, matches[0][0], matches[0][1])
+        return
+    if len(matches) > 12:
+        preview = ", ".join(f"{c[0]}/{c[1]}" for c in matches[:12])
+        safe_print(f"[yellow]{len(matches)} matches — narrow it down:[/yellow] {preview} …")
+        return
+    try:
+        choice = await radiolist_dialog(
+            title="Switch model", text=f"Matches for '{arg}':",
+            values=[((c[0], c[1]), f"{c[0]}/{c[1]}") for c in matches]).run_async()
+        if choice:
+            await _switch_model(session, choice[0], choice[1])
+    except Exception:
+        safe_print("Matches: " + ", ".join(f"{c[0]}/{c[1]}" for c in matches))
+
+
+
+current_workspace_label = ""   # active project workspace shown in the toolbar
+
+
+async def cmd_workspace(session, arg):
+    """List project workspaces or switch: /workspace [name|path]."""
+    global current_workspace_label
+    arg = (arg or "").strip()
+    try:
+        async with session.get(f"{API_URL}/api/workspaces", timeout=5) as resp:
+            d = await resp.json() if resp.status == 200 else {}
+    except Exception:
+        d = {}
+    active = d.get('active') or ''
+    known = d.get('workspaces') or []
+    if not arg:
+        body = Text()
+        body.append("  Active  ", style="dim")
+        body.append(f"{active or '— none —'}\n\n", style="green bold")
+        for w in known[:10]:
+            mark = "→ " if w.get('path') == active else "  "
+            nm = (w.get('name') or '?')[:18]
+            body.append(f"  {mark}{nm:<20}", style="cyan")
+            body.append(f"{w.get('path','')}{'' if w.get('exists') else '  (missing)'}\n", style="dim")
+        if not known:
+            body.append("  (none yet — mention a project path in chat, or /workspace C:\\path)\n", style="dim")
+        body.append("\n  Switch: /workspace <name or path>", style="dim")
+        safe_print(Panel(body, title="📁 Workspaces", border_style="cyan", box=ROUNDED))
+        return
+    payload = {'path': arg} if (':' in arg or '\\' in arg or '/' in arg) else {'name': arg}
+    try:
+        async with session.post(f"{API_URL}/api/workspaces/switch", json=payload) as resp:
+            r = await resp.json()
+    except Exception as e:
+        safe_print(f"[red]Workspace switch failed: {e}[/red]")
+        return
+    if r.get('ok'):
+        current_workspace_label = r.get('name') or ''
+        safe_print(f"[green]📁 Active workspace → {r.get('name')}[/green] [dim]({r.get('active')})[/dim]")
+    else:
+        safe_print(f"[red]{r.get('error', 'Switch failed')}[/red]")
+
+
+
 COMMAND_GRAPH = {
     "help": {"handler": cmd_help, "desc": "Show this help message"},
     "clear": {"handler": cmd_clear, "desc": "Clear context and terminal"},
@@ -2045,6 +2478,10 @@ COMMAND_GRAPH = {
     "worktree": {"handler": cmd_worktree, "desc": "Manage isolated git worktrees"},
     "vcr": {"handler": cmd_vcr, "desc": "Control file-level snapshots (VCR & Thinkback)"},
     "permissions": {"handler": cmd_permissions, "desc": "View or update tool permissions"},
+    "autoapprove": {"handler": cmd_autoapprove, "desc": "Toggle auto-approval of file-write gates (hands-off runs) — /autoapprove [on|off]"},
+    "workspace": {"handler": cmd_workspace, "desc": "List/switch project workspaces — /workspace [name|path]"},
+    "ws": {"handler": cmd_workspace, "desc": "Workspace switcher (alias)"},
+    "model": {"handler": cmd_model, "desc": "Show or switch the active model — /model [search | provider/model]"},
     "shutup": {"handler": cmd_shutup, "desc": "Stop currently playing Text-to-Speech"},
     "quiet": {"handler": cmd_shutup, "desc": "Stop currently playing Text-to-Speech (alias)"},
 }
@@ -2093,25 +2530,69 @@ async def check_background_agents(session):
 # ==========================================
 
 def build_prompt_text():
-    """Build dynamic prompt prefix with CWD + live context usage."""
-    cwd = os.getcwd()
-    project_name = os.path.basename(cwd)
-    prefix = ""
-    if plan_mode_active:
-        prefix += "[PLAN MODE] "
-    if auto_mode_active:
-        prefix += "[AUTO MODE] "
-    ctx = ""
+    """Plain-text prompt (fallback for non-console outputs)."""
+    cwd = os.path.basename(os.getcwd())
     total = session_token_counts['input'] + session_token_counts['output']
+    ctx = ""
     if total > 0 and context_tracker.max_tokens:
         pct = min(100, int(total / context_tracker.max_tokens * 100))
-        icon = "🟢" if pct < 60 else ("🟡" if pct < 85 else "🔴")
-        ctx = f"{icon}{pct}% "
-    return f"{prefix}{ctx}[{project_name}] ❯ "
+        ctx = f"{pct}% "
+    badge = f" {current_model_label}" if current_model_label else ""
+    return f"{ctx}[{cwd}{badge}] > "
+
+
+def _hesc(s):
+    """Escape text for prompt_toolkit HTML."""
+    return str(s).replace('&', '&amp;').replace('<', '&lt;').replace('>', '&gt;')
+
+
+def build_prompt_message():
+    """Framed, app-style prompt: a top rule + a bordered ❯ input line.
+    prompt() can't wrap a full box around editable text, so we draw the top and
+    left edges here and let the bottom status bar close the frame visually."""
+    try:
+        width = min(shutil.get_terminal_size((100, 24)).columns, 120)
+    except Exception:
+        width = 80
+    rule = '╭' + '─' * max(4, width - 2)
+    return HTML(f'<frame>{rule}</frame>\n<frame>│</frame> <promptmark>❯</promptmark> ')
+
+
+def get_bottom_toolbar():
+    """Persistent status bar under the input — the biggest 'pro CLI' cue.
+    Live model · context% · cwd · active modes · key hints."""
+    model = current_model_label or '—'
+    total = session_token_counts['input'] + session_token_counts['output']
+    ctx = '—'
+    if total > 0 and context_tracker.max_tokens:
+        pct = min(100, int(total / context_tracker.max_tokens * 100))
+        ctx = f'{pct}%'
+    cwd = current_workspace_label or os.path.basename(os.getcwd()) or '~'
+    flags = []
+    if AUTO_APPROVE: flags.append('AUTO-APPROVE')
+    if plan_mode_active: flags.append('PLAN')
+    if auto_mode_active: flags.append('AUTO')
+    flagstr = ''.join(f'  <bt-flag>⚡{_hesc(f)}</bt-flag>' for f in flags)
+    sep = '<bt-sep> │ </bt-sep>'
+    return HTML(
+        f' <bt-model>⬡ {_hesc(model)}</bt-model>{sep}'
+        f'ctx <b>{ctx}</b>{sep}'
+        f'📁 {_hesc(cwd)}{flagstr}{sep}'
+        f'<bt-key>/help</bt-key> <bt-dim>·</bt-dim> <bt-key>/model</bt-key> '
+        f'<bt-dim>·</bt-dim> <bt-key>^C</bt-key> <bt-dim>stop</bt-dim> '
+    )
 
 # ==========================================
 # ARGUMENT PARSING & MAIN LOOP
 # ==========================================
+
+def _cli_version_string():
+    try:
+        from version import VERSION as _v
+        return f"Galactic AI CLI — core v{_v}"
+    except Exception:
+        return "Galactic AI CLI"
+
 
 def parse_args():
     parser = argparse.ArgumentParser(description="Galactic AI CLI")
@@ -2120,6 +2601,7 @@ def parse_args():
     parser.add_argument("--fork-session", action="store_true", help="Fork the resumed session into a new ID")
     parser.add_argument("--json-schema", type=str, help="Force structured JSON output matching schema")
     parser.add_argument("--append-system-prompt", type=str, help="Append extra rules to the system prompt")
+    parser.add_argument("--version", action="version", version=_cli_version_string())
     return parser.parse_args()
 
 async def main():
@@ -2149,20 +2631,30 @@ async def main():
     
     if not is_headless:
         os.system('cls' if os.name == 'nt' else 'clear')
-        safe_print(Panel("[bold cyan]GALACTIC AI CLI[/bold cyan]", border_style="cyan"))
-        safe_print("Connected to background core. Type [bold]exit[/bold] or [bold]quit[/bold] to leave. Type [bold]/help[/bold] for commands.\n")
     
     try:
         from prompt_toolkit.output.defaults import create_output
         output = create_output()
-        prompt_session = PromptSession(output=output, completer=MentionCompleter(), complete_while_typing=True)
+        prompt_session = PromptSession(output=output, completer=MentionCompleter(), complete_while_typing=True,
+                                       history=FileHistory(CLI_HISTORY_FILE),
+                                       auto_suggest=AutoSuggestFromHistory())
     except Exception:
         # Fallback for non-console environments
         from prompt_toolkit.output.plain_text import PlainTextOutput
-        prompt_session = PromptSession(output=PlainTextOutput(sys.stdout), completer=MentionCompleter(), complete_while_typing=True)
+        try:
+            prompt_session = PromptSession(output=PlainTextOutput(sys.stdout), completer=MentionCompleter(),
+                                           complete_while_typing=True, history=FileHistory(CLI_HISTORY_FILE),
+                                           auto_suggest=AutoSuggestFromHistory())
+        except Exception:
+            prompt_session = PromptSession(output=PlainTextOutput(sys.stdout), completer=MentionCompleter(),
+                                           complete_while_typing=True)
     headless_done = asyncio.Event()
 
     async with aiohttp.ClientSession(timeout=timeout) as http_session:
+        # Expose the session to the interactive-gate handlers (approval / ask_user),
+        # which fire from the WS event loop and POST decisions back to the core.
+        global _http_session
+        _http_session = http_session
 
         class WSManager:
             """
@@ -2230,6 +2722,10 @@ async def main():
         except asyncio.TimeoutError:
             safe_print("[yellow]Event stream not up yet — continuing, will keep retrying in background.[/yellow]")
 
+        if not is_headless:
+            await show_startup_banner(http_session)
+            safe_print("[dim]Type [/dim][bold]/help[/bold][dim] for commands · [/dim][bold]/model[/bold][dim] to switch models · [/dim][bold]exit[/bold][dim] to leave.[/dim]\n")
+
         # Load skills from disk on startup
         try:
             await _load_skills_from_disk()
@@ -2265,18 +2761,25 @@ async def main():
             
             try:
                 with patch_stdout():
-                    user_input = await prompt_session.prompt_async(build_prompt_text(), style=custom_style)
+                    user_input = await prompt_session.prompt_async(
+                        build_prompt_message(),
+                        style=custom_style,
+                        bottom_toolbar=get_bottom_toolbar,
+                        placeholder=HTML('<placeholder>Message Chong…   (/help · @file · ↑ history)</placeholder>'),
+                    )
+            except KeyboardInterrupt:
+                continue          # Ctrl+C at an idle prompt clears the line
+            except EOFError:
+                break             # Ctrl+D exits
             except Exception:
+                # Terminal/rendering issue → degrade to a plain prompt
                 try:
                     user_input = await prompt_session.prompt_async(build_prompt_text(), style=custom_style)
                 except KeyboardInterrupt:
                     continue
                 except EOFError:
                     break
-                    continue
-                except EOFError:
-                    break
-                    
+
             user_input = user_input.strip()
             if not user_input:
                 continue
@@ -2316,11 +2819,36 @@ async def main():
             reset_stream_state()
             await send_chat(http_session, user_input, extra_payload)
 
+        # ── Session summary on graceful exit ──
+        try:
+            dur = int(time.monotonic() - _session_started)
+            mins, secs = divmod(dur, 60)
+            hrs, mins = divmod(mins, 60)
+            dur_str = (f"{hrs}h {mins}m {secs}s" if hrs else f"{mins}m {secs}s")
+            body = Text()
+            body.append("  Duration   ", style="dim"); body.append(f"{dur_str}\n", style="white")
+            body.append("  Tokens     ", style="dim")
+            body.append(f"↑{cost_analytics.total_input_tokens:,} ↓{cost_analytics.total_output_tokens:,}\n", style="white")
+            body.append("  Est. cost  ", style="dim"); body.append(f"${cost_analytics.session_cost:.4f}", style="green")
+            safe_print(Panel(body, title="👋 Session Summary", border_style="cyan", box=ROUNDED))
+        except Exception:
+            pass
+
 if __name__ == "__main__":
     if sys.platform == 'win32':
         asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
     try:
         asyncio.run(main())
     except KeyboardInterrupt:
+        # Ctrl+C mid-turn: kill the CLI but also STOP the in-flight agent turn on
+        # the core, so it doesn't keep burning tokens into a closed window.
+        try:
+            import urllib.request
+            req = urllib.request.Request(API_URL + "/api/stop_agent", data=b"{}",
+                                         headers={"Content-Type": "application/json"}, method="POST")
+            urllib.request.urlopen(req, timeout=2)
+            print("\n🛑 STOP sent to core — in-flight turn halted.")
+        except Exception:
+            pass
         safe_print("\n[dim]👋 Galactic AI CLI exiting.[/dim]")
         sys.exit(0)

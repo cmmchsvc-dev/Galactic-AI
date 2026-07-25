@@ -32,13 +32,27 @@ def local_path_for(base_path=None):
     return os.path.join(os.path.dirname(os.path.abspath(base_path)), LOCAL_CONFIG_BASENAME)
 
 
+# Keys where the overlay is AUTHORITATIVE — its value REPLACES the base's rather
+# than deep-merging. These are user-managed collections (per-model tuning, command
+# aliases): deep-merging them means the user can never DELETE an entry that also
+# exists in the tracked config.yaml, because the merge keeps re-injecting it every
+# load. The deck's save side already treats these as whole-value replacements, so
+# load must agree or deletions silently "come back". Only applies when the overlay
+# actually contains the key — otherwise the base provides it normally.
+_OVERLAY_AUTHORITATIVE = {'model_overrides', 'aliases'}
+
+
 def deep_merge(base, overlay):
-    """Recursively merge overlay into a copy of base. Overlay values win."""
+    """Recursively merge overlay into a copy of base. Overlay values win.
+    For _OVERLAY_AUTHORITATIVE keys present in the overlay, the overlay value
+    replaces the base's outright (so deletions in the overlay actually stick)."""
     if not isinstance(base, dict) or not isinstance(overlay, dict):
         return overlay if overlay is not None else base
     merged = dict(base)
     for key, value in overlay.items():
-        if key in merged and isinstance(merged[key], dict) and isinstance(value, dict):
+        if key in _OVERLAY_AUTHORITATIVE:
+            merged[key] = value
+        elif key in merged and isinstance(merged[key], dict) and isinstance(value, dict):
             merged[key] = deep_merge(merged[key], value)
         else:
             merged[key] = value

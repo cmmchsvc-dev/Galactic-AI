@@ -91,8 +91,12 @@ class WatchdogSkill(GalacticSkill):
         await self.core.log("Watchdog Guardian Active.", priority=2)
         self._monitor_task = asyncio.create_task(self._monitor_loop())
         try:
-            while self.enabled:
-                await asyncio.sleep(1)
+            # The monitor task IS the work. This used to be a `while self.enabled:
+            # await asyncio.sleep(1)` spin that did nothing but wake the event
+            # loop 86,400 times a day. Awaiting the monitor gives identical
+            # shutdown semantics: it exits on its own when self.enabled flips,
+            # and a cancel of run() still lands in the finally below.
+            await self._monitor_task
         finally:
-            if self._monitor_task:
+            if self._monitor_task and not self._monitor_task.done():
                 self._monitor_task.cancel()

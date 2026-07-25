@@ -60,7 +60,7 @@ class GatewayToolsMixin:
                 "fn": self.tool_read_file
             },
             "write_file": {
-                "description": "Write content to a file. RECOMMENDED: Use absolute paths on Windows (e.g., C:\\Users\\...\\Desktop\\file.txt). Relative paths will resolve to the project root.",
+                "description": "Write content to a file. RECOMMENDED: Use absolute paths on Windows. Relative paths resolve to the project root. Writes are confined to the active workspace, the Galactic install dir, and any configured extra roots — a path outside those is refused with the allowed list.",
                 "parameters": {
                     "type": "object",
                     "properties": {
@@ -1023,10 +1023,84 @@ class GatewayToolsMixin:
             return f"Error reading file: {e}"
         except Exception as e:
             return f"Error reading file: {e}"
+    # ── Write confinement: keep file-mutating tools inside allowed roots ─────
+    # os.path.abspath() on a model-supplied path resolves happily to anywhere
+    # the user can write — including the Windows Startup folder. The basename
+    # check in _PROTECTED_FILES is a typo-guard, not a boundary. Confinement
+    # resolves the target to a real path and requires it to sit under an
+    # allowed root. Opt-out with `security: {confine_writes: false}`.
+    _GALACTIC_ROOT = os.path.dirname(os.path.abspath(__file__))
+
+    def _security_cfg(self):
+        return self.core.config.get('security', {}) or {}
+
+    def _confinement_enabled(self):
+        return bool(self._security_cfg().get('confine_writes', True))
+
+    def _allowed_write_roots(self):
+        """Absolute, symlink-resolved, normcase'd roots that writes may land under."""
+        roots = [self._GALACTIC_ROOT]
+        try:
+            ws = self.get_active_workspace()
+            if ws:
+                roots.append(ws)
+        except Exception:
+            pass
+        paths_cfg = self.core.config.get('paths', {}) or {}
+        for key in ('workspace', 'logs', 'images', 'chroma_data'):
+            if paths_cfg.get(key):
+                roots.append(paths_cfg[key])
+        tmp = getattr(self, '_temp_dir', None)
+        if tmp:
+            roots.append(tmp)
+        extra = self._security_cfg().get('extra_write_roots') or []
+        if isinstance(extra, str):
+            extra = [extra]
+        roots.extend(str(r) for r in extra if r)
+
+        out = []
+        for r in roots:
+            try:
+                rp = os.path.normcase(os.path.realpath(
+                    os.path.abspath(os.path.expanduser(str(r)))))
+            except Exception:
+                continue
+            if rp and rp not in out:
+                out.append(rp)
+        return out
+
+    def _check_write_path(self, path, action="write"):
+        """None if `path` may be mutated, else a [BLOCKED] error string.
+
+        Compares realpath'd, normcase'd prefixes WITH a trailing separator so a
+        sibling like C:\\workspace_backup cannot pass a prefix check against
+        C:\\workspace, and so the match is case-insensitive on Windows.
+        """
+        if not self._confinement_enabled():
+            return None
+        try:
+            target = os.path.realpath(os.path.abspath(os.path.expanduser(str(path))))
+        except Exception as e:
+            return f"[BLOCKED] Could not resolve path for {action}: {e}"
+        norm = os.path.normcase(target)
+        roots = self._allowed_write_roots()
+        for root in roots:
+            if norm == root or norm.startswith(root.rstrip(os.sep) + os.sep):
+                return None
+        return (
+            f"[BLOCKED] {action} refused — '{target}' is outside every allowed write root.\n"
+            f"Allowed roots:\n" + '\n'.join(f"  • {r}" for r in roots) + "\n"
+            f"Write inside the active workspace or the Galactic install dir instead. "
+            f"To permit another location, add it to `security.extra_write_roots` in "
+            f"config, or set `security.confine_writes: false` to disable this guard."
+        )
+
     # ── The Crucible: opt-in approval gate for file-mutating tools ───────────
     # When models.require_approval is on, write_file/edit_file/replace_function
-    # show you a diff and wait for Approve/Reject before touching disk. Default
-    # OFF — when off, _approve_change() short-circuits and behavior is unchanged.
+    # show you a diff — and exec_shell/execute_python/process_start show you the
+    # command — and wait for Approve/Reject before touching disk or spawning a
+    # process. Default OFF — when off, the gate short-circuits and behavior is
+    # unchanged.
     def _approval_enabled(self):
         return bool(self.core.config.get('models', {}).get('require_approval'))
 
@@ -1051,15 +1125,13 @@ class GatewayToolsMixin:
             d = d[:15000] + "\n...[diff truncated — change is large]..."
         return d
 
-    async def _approve_change(self, path, old_content, new_content, action):
-        """Gate a file mutation. Returns (approved: bool, reason: str|None).
+    async def _approve_request(self, path, action, diff):
+        """Shared approval plumbing. Returns (decided: bool, decision: dict|None).
 
-        No-op (True, None) when require_approval is off. Otherwise emits an
-        approval_request WS event with a diff and blocks until the user decides
-        or a timeout elapses (timeout -> reject, the safe default).
+        Emits an approval_request WS event and blocks until the user decides or
+        the timeout elapses. On timeout returns (False, None) — the callers turn
+        that into a reject, the safe default.
         """
-        if not self._approval_enabled():
-            return True, None
         import uuid as _uuid
         req_id = _uuid.uuid4().hex[:12]
         loop = asyncio.get_running_loop()
@@ -1070,27 +1142,67 @@ class GatewayToolsMixin:
         store[req_id] = fut
         try:
             await self.core.relay.emit(2, "approval_request", {
-                "id": req_id, "path": path, "action": action,
-                "diff": self._make_unified_diff(path, old_content, new_content)})
+                "id": req_id, "path": path, "action": action, "diff": diff})
             await self.core.log(f"⏸️ Approval required: {action} on {path}", priority=2)
             timeout = int(self.core.config.get('models', {}).get('approval_timeout', 300))
             try:
-                decision = await asyncio.wait_for(fut, timeout=timeout)
+                return True, await asyncio.wait_for(fut, timeout=timeout)
             except asyncio.TimeoutError:
-                return False, (f"[NOT APPLIED] Approval for {action} on {path} timed out after "
-                               f"{timeout}s — no changes were made. Ask the user before retrying.")
-            if decision.get('approved'):
-                return True, None
-            fb = (decision.get('feedback') or '').strip()
-            return False, (f"[CHANGE REJECTED] The user declined the {action} to {path}."
-                           + (f" Their feedback: {fb}" if fb else "")
-                           + " Do NOT re-apply the same change — revise based on this.")
+                return False, None
         finally:
             store.pop(req_id, None)
             try:
                 await self.core.relay.emit(2, "approval_resolved", {"id": req_id})
             except Exception:
                 pass
+
+    async def _approve_change(self, path, old_content, new_content, action):
+        """Gate a file mutation. Returns (approved: bool, reason: str|None).
+
+        No-op (True, None) when require_approval is off. Otherwise shows the
+        user a unified diff and blocks until they decide.
+        """
+        if not self._approval_enabled():
+            return True, None
+        timeout = int(self.core.config.get('models', {}).get('approval_timeout', 300))
+        decided, decision = await self._approve_request(
+            path, action, self._make_unified_diff(path, old_content, new_content))
+        if not decided:
+            return False, (f"[NOT APPLIED] Approval for {action} on {path} timed out after "
+                           f"{timeout}s — no changes were made. Ask the user before retrying.")
+        if decision.get('approved'):
+            return True, None
+        fb = (decision.get('feedback') or '').strip()
+        return False, (f"[CHANGE REJECTED] The user declined the {action} to {path}."
+                       + (f" Their feedback: {fb}" if fb else "")
+                       + " Do NOT re-apply the same change — revise based on this.")
+
+    async def _approve_command(self, action, command, target=None):
+        """Gate a code-execution tool. Returns (approved: bool, reason: str|None).
+
+        exec_shell / execute_python / process_start had NO gate: with
+        require_approval on, injected instructions could still run arbitrary
+        commands while file writes were being diffed. A command has no "before"
+        state, so the command text itself is rendered as an all-additions block
+        the deck's existing diff view shows as-is.
+        """
+        if not self._approval_enabled():
+            return True, None
+        body = '\n'.join('+' + ln for ln in (command or '').splitlines()) or '+(empty)'
+        diff = (f"--- a/(nothing runs yet)\n+++ b/{action}\n"
+                f"@@ this command will RUN on your machine @@\n{body}")
+        label = target or (command or '').strip().splitlines()[0][:120] or action
+        timeout = int(self.core.config.get('models', {}).get('approval_timeout', 300))
+        decided, decision = await self._approve_request(label, action, diff)
+        if not decided:
+            return False, (f"[NOT EXECUTED] Approval for {action} timed out after {timeout}s — "
+                           f"nothing was run. Ask the user before retrying.")
+        if decision.get('approved'):
+            return True, None
+        fb = (decision.get('feedback') or '').strip()
+        return False, (f"[COMMAND REJECTED] The user declined to run this {action}."
+                       + (f" Their feedback: {fb}" if fb else "")
+                       + " Do NOT re-run it — revise based on this.")
 
     async def tool_write_file(self, args):
         """Write content to a file (non-blocking) with robust error handling.
@@ -1110,6 +1222,11 @@ class GatewayToolsMixin:
                 f"[BLOCKED] Cannot overwrite protected core file '{filename}'. "
                 f"Create a new file with a different name instead."
             )
+
+        # Workspace confinement — refuse writes outside the allowed roots.
+        denied = self._check_write_path(path, action="write_file")
+        if denied:
+            return denied
 
         # The Crucible: gate the write behind user approval (no-op when off).
         if self._approval_enabled():
@@ -1571,6 +1688,11 @@ class GatewayToolsMixin:
         if not path:
             return "Error: 'path' parameter is required."
 
+        # Workspace confinement — refuse edits outside the allowed roots.
+        denied = self._check_write_path(path, action="edit_file")
+        if denied:
+            return denied
+
         def _compute_edit():
             """Apply replacements in memory. Returns ('ERR', msg) or
             ('OK', {old, new, replacements})."""
@@ -1804,6 +1926,11 @@ class GatewayToolsMixin:
         if filename in getattr(self, '_PROTECTED_FILES', set()):
             return f"[BLOCKED] Cannot modify protected core file '{filename}'."
 
+        # Workspace confinement — refuse rewrites outside the allowed roots.
+        denied = self._check_write_path(path, action="replace_function")
+        if denied:
+            return denied
+
         def _compute():
             """Build & syntax-validate the new file content. Returns
             ('ERR', msg) or ('OK', {old, new, start, end})."""
@@ -1871,21 +1998,96 @@ class GatewayToolsMixin:
 
         return await loop.run_in_executor(getattr(self, '_io_pool', None), _write)
 
+    # ── Outbound fetch guard (SSRF) ──────────────────────────────────────────
+    # web_fetch used to run with verify=False and follow_redirects=True against
+    # any scheme or host — so it leaked to MITM and could be aimed at
+    # http://127.0.0.1:17789/api/... (the deck's own unauthenticated API) by
+    # injected page content. Every hop is now resolved and IP-checked.
+    @staticmethod
+    def _ip_is_internal(ip_str):
+        import ipaddress
+        try:
+            ip = ipaddress.ip_address(ip_str)
+        except ValueError:
+            return True  # unparseable → treat as unsafe
+        if ip.version == 6 and ip.ipv4_mapped is not None:
+            ip = ip.ipv4_mapped
+        return bool(ip.is_private or ip.is_loopback or ip.is_link_local
+                    or ip.is_reserved or ip.is_multicast or ip.is_unspecified)
+
+    async def _check_fetch_url(self, url):
+        """(ok, err) for an outbound fetch target — scheme + resolved-IP check."""
+        import socket
+        from urllib.parse import urlparse
+        try:
+            u = urlparse(url or '')
+        except Exception:
+            return False, f"[BLOCKED] Unparseable URL: {url!r}"
+        scheme = (u.scheme or '').lower()
+        if scheme not in ('http', 'https'):
+            return False, (f"[BLOCKED] web_fetch only handles http:// and https:// URLs "
+                           f"(got '{u.scheme or 'no scheme'}'). file://, ftp:// and data: "
+                           f"are refused.")
+        host = u.hostname
+        if not host:
+            return False, f"[BLOCKED] URL has no host: {url}"
+        if self._security_cfg().get('allow_private_fetch'):
+            return True, None
+        try:
+            infos = await asyncio.get_running_loop().getaddrinfo(
+                host, u.port or (443 if scheme == 'https' else 80),
+                proto=socket.IPPROTO_TCP)
+        except Exception as e:
+            return False, f"[BLOCKED] Could not resolve host '{host}': {e}"
+        for info in infos:
+            ip = info[4][0]
+            if self._ip_is_internal(ip):
+                return False, (
+                    f"[BLOCKED] '{host}' resolves to an internal address ({ip}). "
+                    f"web_fetch will not reach loopback, link-local or private "
+                    f"network targets — that path leads straight to Galactic's own "
+                    f"local API. Set `security.allow_private_fetch: true` if you "
+                    f"genuinely need this.")
+        return True, None
+
     async def tool_web_fetch(self, args):
         """Fetch and extract readable content from a URL."""
         url = args.get('url')
         mode = args.get('mode', 'markdown')
-        
+        if not url:
+            return "[ERROR] 'url' is required."
+        if not re.match(r'^[a-zA-Z][a-zA-Z0-9+.\-]*:', url):
+            url = 'https://' + url
+
         try:
             import httpx
             from bs4 import BeautifulSoup
-            
-            async with httpx.AsyncClient(follow_redirects=True, timeout=30.0, verify=False) as client:
-                response = await client.get(url, headers={
-                    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
-                })
+            from urllib.parse import urljoin
+
+            # Redirects are followed by hand so every hop gets re-checked — an
+            # allowed host can 302 straight into 127.0.0.1 otherwise.
+            async with httpx.AsyncClient(follow_redirects=False, timeout=30.0) as client:
+                current = url
+                response = None
+                for _hop in range(6):
+                    ok, err = await self._check_fetch_url(current)
+                    if not ok:
+                        return err
+                    response = await client.get(current, headers={
+                        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
+                    })
+                    if response.status_code in (301, 302, 303, 307, 308):
+                        loc = response.headers.get('location')
+                        if not loc:
+                            break
+                        current = urljoin(current, loc)
+                        continue
+                    break
+                else:
+                    return f"[BLOCKED] Too many redirects (>6) starting at {url}."
+
                 response.raise_for_status()
-                
+
                 soup = BeautifulSoup(response.text, 'html.parser')
                 
                 # Remove script and style elements
@@ -1933,7 +2135,15 @@ class GatewayToolsMixin:
         """Start a background process."""
         command = args.get('command')
         session_id = args.get('session_id', f"proc_{int(asyncio.get_event_loop().time())}")
-        
+        if not command:
+            return "[ERROR] 'command' is required."
+
+        # The Crucible: gate the spawn behind user approval (no-op when off).
+        approved, reason = await self._approve_command('process_start', command,
+                                                       target=session_id)
+        if not approved:
+            return reason
+
         try:
             # Store processes in core if not exists
             if not hasattr(self.core, 'processes'):
@@ -3260,7 +3470,13 @@ $notify.Dispose()
         timeout = min(int(args.get('timeout', 60)), 300)
         if not code.strip():
             return "❌ Error: No code provided."
-        
+
+        # The Crucible: gate the execution behind user approval (no-op when off).
+        approved, reason = await self._approve_command('execute_python', code,
+                                                       target='python -c (inline script)')
+        if not approved:
+            return reason
+
         import tempfile
         tmp = None
         try:

@@ -89,6 +89,18 @@ providers:
     fluxDevApiKey: ""
   ollama:
     baseUrl: http://127.0.0.1:11434/v1
+  # LM Studio — the other local backend, interchangeable with Ollama. Its models
+  # appear in the model selector alongside Ollama's whenever LM Studio's local
+  # server is running (Developer tab → Start Server, default port 1234). Add this
+  # section to enable discovery; set enabled: false to turn it off without polling.
+  lmstudio:
+    enabled: true
+    baseUrl: http://localhost:1234/v1
+    # Idle auto-unload (seconds). Galactic sends this as the request 'ttl' so an
+    # idle LM Studio model frees its VRAM instead of sitting loaded while Ollama
+    # (or a game) needs the GPU — the main cause of local OOM crashes when both
+    # backends hold a big model. 0 disables. Older LM Studio builds ignore it.
+    ttl: 600
   huggingface:
     apiKey: YOUR_HF_TOKEN
 telegram:
@@ -136,6 +148,22 @@ web:
   remote_access: false
   jwt_secret: ""
   password_hash: ""
+  # Only honoured if TLS cannot be initialised while remote_access is on.
+  # Leaving this false means remote mode fails SAFE (loopback only) rather than
+  # serving your password and bearer token over plaintext HTTP to the LAN.
+  # allow_insecure_http: false
+
+# ─── Security boundaries ─────────────────────────────────────────────────────
+security:
+  # Confine write_file / edit_file / replace_function to the active workspace,
+  # the Galactic install dir, and any extra_write_roots below. Blocks a
+  # prompt-injected write to e.g. the Windows Startup folder.
+  confine_writes: true
+  extra_write_roots: []     # additional absolute paths writes may target
+  # When false, web_fetch refuses loopback / link-local / RFC1918 targets so
+  # fetched content cannot pivot into the deck's own API (SSRF).
+  allow_private_fetch: false
+
 browser:
   engine: chromium
   headless: false
@@ -178,22 +206,10 @@ aliases: {}
 gateway:
   provider: google
   model: gemini-2.5-flash
-model_overrides:
-  hf.co/unsloth/Qwen3-Coder-30B-A3B-Instruct-GGUF:Q4_K_M:
-    max_tokens: 0
-    context_window: 65536
-  hf.co/unsloth/Qwen3-Coder-30B-A3B-Instruct-GGUF:Q5_K_M:
-    max_tokens: 0
-    context_window: 32768
-  deepseek-r1:32b:
-    max_tokens: 0
-    context_window: 22768
-  hf.co/unsloth/glm-4.7-flash-GGUF:Q4_K_M:
-    max_tokens: 0
-    context_window: 32536
-  qwen3.5:27b-q4_K_M:
-    max_tokens: 0
-    context_window: 20768
-  lfm2:24b-a2b:
-    max_tokens: 0
-    context_window: 131072
+# Per-model tuning (max_tokens / context_window / system_prompt / supports_tools).
+# Leave EMPTY in the template — manage these live from the deck's Models tab.
+# They are written to config.local.yaml, which is authoritative (deletions stick).
+#   model_overrides:
+#     "provider/model-id":
+#       context_window: 32768
+model_overrides: {}

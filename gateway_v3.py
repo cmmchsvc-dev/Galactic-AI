@@ -145,7 +145,7 @@ MODEL_PRICING = {
     "deepseek-chat":                   {"input": 0.27,  "output": 1.10},
 }
 _PRICING_FALLBACK = {"input": 1.00, "output": 3.00}
-FREE_PROVIDERS = {"nvidia", "cerebras", "groq", "huggingface", "ollama"}
+FREE_PROVIDERS = {"nvidia", "cerebras", "groq", "huggingface", "ollama", "lmstudio"}
 
 
 class CostTracker:
@@ -430,10 +430,34 @@ class GalacticGateway(GatewayToolsMixin):
 
         # Set of active speak() asyncio.Tasks for reliable global cancellation
         self._active_tasks = set()
+        # Strong references to fire-and-forget background tasks. asyncio only
+        # keeps a WEAK reference to a running task, so a bare create_task() whose
+        # result nobody stores can be garbage-collected mid-flight and vanish
+        # silently. Everything spawned via _spawn_bg() is retained until it ends.
+        self._bg_tasks = set()
         # Lock to serialize sub-agent speak_isolated() calls (prevents concurrent state corruption)
         self._speak_locks = {}  # session_id -> asyncio.Lock
         self._global_lock = asyncio.Lock()
         
+        # ── Sub-agent isolation marker ──────────────────────────────────────
+        # aiohttp runs EVERY HTTP handler in a fresh asyncio.Task, and a
+        # ContextVar.set() made inside a task is thrown away when that task
+        # returns. So a contextvar can never hold process-global main-chat
+        # state: /compact would "succeed" and change nothing, /api/nudge read
+        # _speaking as forever-False, a session switch left the old convo live.
+        # Fix: main-chat state lives on plain instance attributes (_main_*) and
+        # contextvars isolate ONLY sub-agent runs. speak_isolated() flips this
+        # flag on for the duration of a sub-agent / planner call — it is the
+        # single switch every write-through property below branches on.
+        # (trace_sid is NOT usable for this: most speak_isolated() callers pass
+        # no session_id, so it stays None and would look like the main chat.)
+        self._session_isolated = contextvars.ContextVar('session_isolated', default=False)
+
+        # Main-chat backing store for the write-through properties.
+        self._main_history = []
+        self._main_speaking = False
+        self._main_queued_switch = None
+
         # Session-isolated state using contextvars
         self._session_history = contextvars.ContextVar('session_history', default=[])
         self._session_trace_sid = contextvars.ContextVar('session_trace_sid', default=None)
@@ -447,7 +471,11 @@ class GalacticGateway(GatewayToolsMixin):
         self._session_est_tokens = contextvars.ContextVar('session_est_tokens', default=0)
         self._session_checkpoint_id = contextvars.ContextVar('session_checkpoint_id', default=None)
         self._session_queued_switch = contextvars.ContextVar('session_queued_switch', default=None)
-        
+        # Plain-persona mode for utility agents (the hybrid Architect/planner):
+        # suppresses the personality prompt AND semantic-memory injection so a
+        # 23k-token planning request can't come back as persona small-talk.
+        self._session_plain_persona = contextvars.ContextVar('session_plain_persona', default=False)
+
         # New: Isolated LLM state
         self._session_llm_provider = contextvars.ContextVar('session_llm_provider', default=self.provider)
         self._session_llm_model = contextvars.ContextVar('session_llm_model', default=self.model)
@@ -462,8 +490,7 @@ class GalacticGateway(GatewayToolsMixin):
                 self._parent = parent
             @property
             def is_main_chat(self):
-                sid = self._parent._session_trace_sid.get()
-                return not sid or sid.startswith("m-")
+                return self._parent.is_main_chat  # single source of truth
             @property
             def provider(self):
                 v = self._prov.get()
@@ -493,6 +520,14 @@ class GalacticGateway(GatewayToolsMixin):
         logs_dir = core.config.get('paths', {}).get('logs', './logs')
         self.runs_dir = os.path.join(logs_dir, 'runs')
         os.makedirs(self.runs_dir, exist_ok=True)
+
+        # ── Project Workspaces (Antigravity-style) ──────────────────────────
+        # The "active workspace" is the project the agent is aimed at: injected
+        # into the system prompt, the planner baton, and session metadata.
+        # Auto-registered whenever the user mentions a real directory path.
+        _ws_cfg = core.config.get('workspaces', {}) or {}
+        self._workspaces = list(_ws_cfg.get('known') or [])
+        self._active_workspace = _ws_cfg.get('active') or ''
 
         # ── Temp folder management ──────────────────────────────────────────
         # GALACTIC_TEMP_DIR is module-level so tools can import it directly.
@@ -557,14 +592,29 @@ class GalacticGateway(GatewayToolsMixin):
         self.galactic_memory = None
 
     @property
+    def _is_isolated(self):
+        """True only while running inside a speak_isolated() sub-agent/planner.
+
+        The branch point for every write-through property: isolated runs keep
+        contextvar state, the main chat uses real instance attributes so an
+        HTTP handler's assignment actually sticks (see __init__ note).
+        """
+        return bool(self._session_isolated.get())
+
+    @property
     def history(self):
         """Get the history for the current session/task."""
-        return self._session_history.get()
+        if self._is_isolated:
+            return self._session_history.get()
+        return self._main_history
 
     @history.setter
     def history(self, value):
         """Set the history for the current session/task."""
-        self._session_history.set(value)
+        if self._is_isolated:
+            self._session_history.set(value)
+        else:
+            self._main_history = value
 
     @property
     def _trace_sid(self):
@@ -578,17 +628,30 @@ class GalacticGateway(GatewayToolsMixin):
 
     @property
     def is_main_chat(self):
-        """Check if this is the main user-facing chat session (not a sub-agent)."""
+        """Check if this is the main user-facing chat session (not a sub-agent).
+
+        The isolation flag is checked FIRST because session_id is optional on
+        speak_isolated() and most callers (skills, swarm, ambient) omit it — a
+        sub-agent with sid=None used to report itself as the main chat and would
+        stream its tokens into the user's chat window and eat pending nudges.
+        """
+        if self._is_isolated:
+            return False
         sid = self._session_trace_sid.get()
         return not sid or sid.startswith("m-")
 
     @property
     def _speaking(self):
-        return self._session_speaking.get()
+        if self._is_isolated:
+            return self._session_speaking.get()
+        return self._main_speaking
 
     @_speaking.setter
     def _speaking(self, value):
-        self._session_speaking.set(value)
+        if self._is_isolated:
+            self._session_speaking.set(value)
+        else:
+            self._main_speaking = value
 
     @property
     def is_coding(self):
@@ -600,11 +663,24 @@ class GalacticGateway(GatewayToolsMixin):
 
     @property
     def active_plan(self):
-        return self._session_active_plan.get()
+        """Main chat: plans must SURVIVE across messages. Each web request runs
+        in its own task context, so a bare contextvar silently dropped the plan
+        between turns — the next message ("start phase 1") re-planned from
+        scratch with zero context and the Architect explored the wrong repo.
+        Dual-track: isolated agents stay contextvar-only; main chat mirrors to a
+        plain attr that persists across requests (the relay-race baton)."""
+        v = self._session_active_plan.get()
+        if v is None and not self._session_trace_sid.get():
+            return getattr(self, '_main_active_plan', None)
+        return v
 
     @active_plan.setter
     def active_plan(self, value):
         self._session_active_plan.set(value)
+        if not self._session_trace_sid.get():
+            self._main_active_plan = value
+            if value is not None:
+                self._last_plan = value   # survives replacement/clear — planner baton
 
     @property
     def last_voice_file(self):
@@ -656,11 +732,58 @@ class GalacticGateway(GatewayToolsMixin):
 
     @property
     def _queued_switch(self):
-        return self._session_queued_switch.get()
+        if self._is_isolated:
+            return self._session_queued_switch.get()
+        return self._main_queued_switch
 
     @_queued_switch.setter
     def _queued_switch(self, value):
-        self._session_queued_switch.set(value)
+        if self._is_isolated:
+            self._session_queued_switch.set(value)
+        else:
+            self._main_queued_switch = value
+
+    def _spawn_bg(self, coro):
+        """Fire-and-forget a coroutine while holding a strong reference to it.
+
+        asyncio keeps only a weak reference to a running task, so a bare
+        create_task() whose handle is discarded can be collected mid-flight.
+        Returns the task (or None if there's no running loop).
+        """
+        try:
+            task = asyncio.create_task(coro)
+        except RuntimeError:
+            # No running loop — close the coroutine so it doesn't warn.
+            try:
+                coro.close()
+            except Exception:
+                pass
+            return None
+        self._bg_tasks.add(task)
+        task.add_done_callback(self._bg_tasks.discard)
+        return task
+
+    def _save_config_async(self):
+        """Persist config off the event loop.
+
+        save_config() re-reads the merged config from disk, deep-merges, and
+        does an atomic YAML write — tens of milliseconds of blocking work that
+        workspace activation used to run straight from the async request path,
+        stalling the web server and the WebSocket relay along with it. Falls
+        back to a direct synchronous save when no loop is running.
+        """
+        def _do():
+            try:
+                self.core.save_config()
+            except Exception as e:
+                # Never silent: a dropped workspace write is confusing later.
+                logger.warning(f"⚠️ Background config save failed: {e}")
+        try:
+            asyncio.get_running_loop()
+        except RuntimeError:
+            _do()
+            return
+        self._spawn_bg(asyncio.to_thread(_do))
 
     _MAX_SESSION_LOCKS = 256
 
@@ -707,6 +830,37 @@ class GalacticGateway(GatewayToolsMixin):
             logger.info(f"💾 Restored {len(self.history)} messages from persistent log.")
         except Exception as e:
             logger.error(f"Failed to load history: {e}")
+
+    # ── History growth cap ────────────────────────────────────────────
+    # self.history is the durable main-chat transcript. _trim_messages only
+    # ever pops from the per-call COPY that _call_llm builds, so its trimming
+    # never reached back here and this list grew for the entire lifetime of the
+    # process — _load_history's 20-message cap applied only at startup.
+    # Capping at the append sites (rather than writing _trim_messages' result
+    # back) keeps the ReAct loop's tool-call scaffolding out of the transcript,
+    # which is what the deck renders and what the JSONL log mirrors.
+    _HISTORY_MAX_MESSAGES = 60
+
+    def _cap_history(self):
+        """Drop the oldest turns once history passes the cap.
+
+        Mutates the list in place so anything holding a reference (the deck's
+        /api/history, the compaction splice) sees the same object.
+        """
+        if self._is_isolated:
+            return  # sub-agent history dies with the call; nothing to bound
+        try:
+            cap = int(self.core.config.get('models', {}).get(
+                'max_history_messages', self._HISTORY_MAX_MESSAGES))
+        except (TypeError, ValueError):
+            cap = self._HISTORY_MAX_MESSAGES
+        if cap <= 0:
+            return
+        h = self.history
+        if h and len(h) > cap:
+            dropped = len(h) - cap
+            del h[:dropped]
+            logger.info(f"✂️ History capped at {cap} messages ({dropped} oldest dropped).")
 
     async def _log_chat(self, role, content, source="web", reasoning_details=None):
         """Append a chat entry to the persistent JSONL log and update the 30-min hot buffer."""
@@ -855,7 +1009,7 @@ class GalacticGateway(GatewayToolsMixin):
                 }]
             }
 
-            async with httpx.AsyncClient(timeout=90.0, verify=False) as client:
+            async with httpx.AsyncClient(timeout=90.0) as client:
                 response = await client.post(url, json=payload)
                 data = response.json()
                 if 'choices' in data and data['choices']:
@@ -1018,7 +1172,7 @@ class GalacticGateway(GatewayToolsMixin):
                 }]
             }
 
-            async with httpx.AsyncClient(timeout=90.0, verify=False) as client:
+            async with httpx.AsyncClient(timeout=90.0) as client:
                 response = await client.post(url, json=payload)
                 data = response.json()
                 if 'choices' in data and data['choices']:
@@ -1048,7 +1202,7 @@ class GalacticGateway(GatewayToolsMixin):
                 "max_tokens": 1024,
             }
 
-            async with httpx.AsyncClient(timeout=60.0, verify=False) as client:
+            async with httpx.AsyncClient(timeout=60.0) as client:
                 response = await client.post(url, headers=headers, json=payload)
                 data = response.json()
                 if 'choices' in data and data['choices']:
@@ -1285,14 +1439,18 @@ class GalacticGateway(GatewayToolsMixin):
         provider = self.llm.provider.lower()
         model = self.llm.model.lower()
 
-        if provider in ("openai", "anthropic", "google", "xai", "nvidia", "groq", "mistral", "cerebras", "huggingface", "kimi", "minimax", "ollama", "openrouter"):
+        # NOTE: every provider routed through _call_llm must appear here. A missing
+        # entry silently falls back to text-injecting the whole tool schema (~20k
+        # tokens) into the system prompt — that bug hit lmstudio and moonshot in
+        # v2.2.0 and zai after it. test_regressions.py guards this list.
+        if provider in ("openai", "anthropic", "google", "xai", "nvidia", "groq", "mistral", "cerebras", "huggingface", "kimi", "moonshot", "deepseek", "minimax", "ollama", "lmstudio", "openrouter", "zai"):
             return True
         return False
 
-    # Ollama-only always-on allowlist. Kept intentionally small — local
-    # models degrade sharply (bad tool selection, malformed args, or the
-    # tool call being silently dropped) once declared-schema count climbs
-    # past ~25-30, regardless of context window size.
+    # Local-backend (Ollama / LM Studio) always-on allowlist. Kept
+    # intentionally small — local models degrade sharply (bad tool selection,
+    # malformed args, or the tool call being silently dropped) once
+    # declared-schema count climbs past ~25-30, regardless of context window.
     _OLLAMA_CORE_TOOLS = {
         'read_file', 'write_file', 'edit_file', 'list_dir', 'find_files',
         'exec_shell', 'web_search', 'web_fetch', 'memory_search', 'memory_imprint',
@@ -1313,15 +1471,119 @@ class GalacticGateway(GatewayToolsMixin):
     }
     _OLLAMA_CODING_MAX_TOOLS = 14
 
+    # Cloud/paid providers used to be handed the ENTIRE ~145-tool set on every
+    # single turn — roughly 15.6k tokens of JSON schema, billed as input, before
+    # the user's message was even read. Big models don't degrade at 145 choices
+    # the way local ones do, so they get a roomier ceiling than Ollama, but they
+    # get the same core-set + relevance treatment. find_tools recovers anything
+    # left out, on demand, in one call.
+    _CLOUD_MAX_TOOLS = 40
+
+    # Browsing signal. The 89 browser_*/chrome_* schemas are the single largest
+    # block of tool tokens (~8.6k) and the overwhelming majority of turns need
+    # none of them, so on cloud they are withheld unless the request actually
+    # smells like browsing. Local is untouched — its cap already excludes them.
+    _BROWSE_SIGNAL_RE = re.compile(
+        r'\b(?:browse|browser|browsing|chrome|tab|tabs|url|urls|website|websites|'
+        r'webpage|webpages|web\s?page|web\s?site|link|links|navigate|navigating|'
+        r'screenshot|scroll|youtube|online|internet|selenium|playwright|'
+        r'dom|localhost|href|href)\b'
+        r'|https?://|www\.|\.com\b|\.org\b|\.net\b|\.io\b|\.dev\b')
+
+    # Coding-intent detection (used in _speak_logic). Two signals required:
+    # everyday "weak" verbs ("fix", "add", "changed", "scan", "review") only
+    # count as coding when a code-ish OBJECT appears in the same message;
+    # "strong" verbs (refactor, debug, implement) are unambiguous alone. Casual
+    # chat like "Nice, it worked!! Changed a setting and testing again." must
+    # NOT launch Senior Coder mode or the hybrid Architect/Planner/Builder
+    # pipeline, but "scan this codebase and offer improvements" MUST.
+    _CODING_STRONG_RE = re.compile(
+        r'\b(?:refactor|refactoring|debug|debugging|implement|implementing)(?:s|es|ed|d)?\b')
+    # Weak verbs: mutating ("build", "fix") + analysis/review ("scan",
+    # "review", "analyze", "audit", "optimize", "improve", "inspect"). The
+    # review verbs matter for the Architect, which explores a codebase and
+    # produces a blueprint — "scan/review/analyze the codebase" is exactly the
+    # hybrid entry point, and requiring a code object keeps "review my resume"
+    # or "analyze the market" out.
+    _CODING_VERB_RE = re.compile(
+        r'\b(?:build|building|create|creating|write|writing|fix|fixing|'
+        r'update|updating|add|adding|change|changing|patch|patching|'
+        r'rename|delete|scan|scanning|review|reviewing|analyze|analyzing|'
+        r'analyse|analysing|audit|auditing|optimize|optimizing|optimise|'
+        r'optimising|improve|improving|inspect|inspecting|profile|profiling|'
+        r'tackle|tackling|handle|handling|address|addressing|resolve|'
+        r'resolving|solve|solving|apply|applying|work|working)'
+        r'(?:s|es|ed|d)?\b')
+    # Continuation imperatives — "tackle the critical issues first", "go ahead
+    # with #2", "do the rest" carry no coding verb+object of their own, but
+    # right after coding work they ARE the coding task. Only honored while the
+    # session is "armed" by a recent coding turn (see _speak_logic).
+    _CODING_FOLLOWUP_RE = re.compile(
+        r'\b(?:tackle|handle|address|resolve|solve|proceed|continue|go ahead|'
+        r'do (?:it|that|those|them|all)|knock (?:it|them|those|these|that) out|'
+        r'start with|the rest|all of (?:them|those)|next (?:one|item|issue|step|fix|phase)|'
+        r'first (?:one|item|issue|fix|phase)|critical (?:issues?|ones?|fixes?)|'
+        r'(?:start|begin|execute|run|implement) phase ?\d*|'
+        r'(?:number|item|issue|option|step|phase) ?\d+)\b'
+        r'|(?:^|\s)#\d+\b')
+    _CODE_CONTEXT_RE = re.compile(
+        r'\b(?:code|codebase|script|function|method|class|module|bug|error|'
+        r'exception|traceback|file|folder|repo|repository|api|endpoint|'
+        r'server|database|sql|regex|variable|syntax|app|website|webpage|'
+        r'page|frontend|backend|html|css|python|javascript|typescript|json|'
+        r'yaml|config|deck|skill|plugin|tool|ui|tab|button|menu|modal|'
+        r'dropdown|panel|dashboard|settings|feature|test|issue|bot|'
+        r'algorithm|strategy|latency)(?:s|es)?\b'
+        r'|\.[a-z]{2,4}\b'      # file extension / dotted name (.py, .html)
+        r'|`[^`]+`')            # inline code span
+    # Explicit "scan/review/analyze <the|this|my|our|your> codebase/repo/project"
+    # planning trigger. Was a bare `"scan the codebase" in text` literal that
+    # missed "scan THIS codebase" — the exact phrasing a user hit.
+    _SCAN_CODEBASE_RE = re.compile(
+        r'\b(?:scan|review|analyz|analys|audit|explore|map|understand|examine)\w*\s+'
+        r'(?:out\s+|through\s+|over\s+|across\s+)?'   # optional adverb: "map OUT this repo"
+        r'(?:the|this|my|our|your)\s+'
+        r'(?:code|codebase|repo|repository|project|source)\b')
+
+    # ── Hallucination detectors (used by the ReAct loop) ──────────────
+    # The model narrating an action it never took. Hoisted to class level for
+    # the same reason as the coding-intent regexes above: they were tuned
+    # against real false positives and need to be reachable from tests.
+    # Both are matched against the LOWERCASED, <think>-stripped visible text.
+    #
+    # Browser: "I clicked...", "I've typed...", "I am clicking...", plus
+    # sentence-initial narration ("Now clicking the 'Submit' button."). Bare
+    # substrings used to flag innocent chat ("she starts typing", "re-searching").
+    _BROWSER_CLAIM_RE = re.compile(
+        r"\bi(?:'ve| have| am|'m| just| now| already| then)*\s+"
+        r"(?:clicked|clicking|typed|typing|searched|searching|submitted|submitting|entered|entering)\b"
+        r"|(?:^|(?<=[.!?:])\s|(?<=\n))(?:now\s+|just\s+)?"
+        r"(?:clicked|clicking|typed|typing|submitted|submitting|entered|entering)\s+"
+        r"(?:the|on|in|into|my|your|it|that|[\"'])")
+    # File: "I've written X to file.md", "Done. I've updated SOUL.md". A
+    # past-tense claim must sit near a file-ish object so "I've created a table
+    # below" no longer trips it. Future intent ("I'll add...") is NOT flagged —
+    # promise-then-stop turns are the Persistence Nudge's job.
+    _FILE_CLAIM_RE = re.compile(
+        r"\bi(?:'ve| have)(?: just| now| already| also)?\s+"
+        r"(?:written|saved|updated|added|created|appended|patched|deleted|removed|moved|renamed)\b"
+        r"[^.!?\n]{0,80}?"
+        r"(?:\bfiles?\b|\bdisk\b|\bconfig(?:uration)?\b|\bmemor(?:y|ies)\b|[\w\-\\/]+\.[a-z0-9]{1,5}\b)"
+        r"|\bsuccessfully\s+(?:written|saved|updated|created|deleted|patched)\b"
+        r"|\bfiles?\s+ha(?:s|ve)\s+been\s+(?:updated|written|created|saved|deleted|modified)\b"
+        r"|\bdone[.!]\s+i(?:'ve| have)\s+(?:made|applied|finished|completed|written|updated|fixed)\b")
+
     def _get_active_tools(self):
         """
         Returns a filtered subset of tools to prevent overloading models with 189+ definitions.
         Essential tools include File I/O, Chrome automation, Image generation, and Basic Search.
 
-        For Ollama (local models), this goes further: instead of the ~60-100
-        tool subset below, it sends a tiny core set + tools relevant to the
-        last user message + tools the model has explicitly discovered this
-        session via `find_tools`, hard-capped at _OLLAMA_MAX_TOOLS.
+        Every provider then goes further: instead of the ~145-tool subset
+        below, it sends a small core set + tools relevant to the last user
+        message + tools the model has explicitly discovered this session via
+        `find_tools`, hard-capped (_OLLAMA_*_MAX_TOOLS locally, the roomier
+        _CLOUD_MAX_TOOLS for paid providers). Cloud used to be exempt from all
+        of this and paid ~15.6k tokens of tool schema on every single turn.
         """
         # Prefix list for essential tools — broadened to include vision, subagents, memory, etc.
         essential_prefixes = (
@@ -1338,14 +1600,19 @@ class GalacticGateway(GatewayToolsMixin):
         for meta in ['test_driven_coder', 'invoke_gemini_cli', 'generate_agent_spec', 'invoke_superpower', 'browser_pro']:
             active.pop(meta, None)
 
-        if str(getattr(self.llm, 'provider', '')).lower() != "ollama":
-            return active
-
-        # ── Ollama tool-overload guard ──
+        # ── Tool-overload guard (all backends) ──
+        # Local backends degrade at tool *selection* past ~25-30 schemas; cloud
+        # models don't, but every declared schema is billed as input on EVERY
+        # turn, so the uncapped ~145-tool set was pure waste. Same core-set +
+        # relevance + cap pipeline for both, different ceilings.
         # Coding work uses a tighter, focused set (see _OLLAMA_CODING_TOOLS).
+        _is_local = str(getattr(self.llm, 'provider', '')).lower() in ("ollama", "lmstudio")
         _coding = bool(getattr(self, 'is_coding', False))
         _core_names = self._OLLAMA_CODING_TOOLS if _coding else self._OLLAMA_CORE_TOOLS
-        _max_tools = self._OLLAMA_CODING_MAX_TOOLS if _coding else self._OLLAMA_MAX_TOOLS
+        if _is_local:
+            _max_tools = self._OLLAMA_CODING_MAX_TOOLS if _coding else self._OLLAMA_MAX_TOOLS
+        else:
+            _max_tools = self._CLOUD_MAX_TOOLS
         core = {k: v for k, v in self.tools.items() if k in _core_names}
 
         last_user_text = ""
@@ -1358,6 +1625,16 @@ class GalacticGateway(GatewayToolsMixin):
                     last_user_text = " ".join(p.get('text', '') for p in c if isinstance(p, dict))
                 break
 
+        # 🌐 Browser withholding — cloud only, so the local path is untouched.
+        # Without a browsing signal the browser_*/chrome_* schemas are dropped
+        # (~8.6k tokens); the model pulls any of them back with one find_tools
+        # call the moment it actually needs to drive a page.
+        _wants_browser = _is_local or bool(
+            last_user_text and self._BROWSE_SIGNAL_RE.search(last_user_text.lower()))
+        if not _wants_browser:
+            core = {k: v for k, v in core.items()
+                    if not k.startswith(('browser_', 'chrome_'))}
+
         relevant = {}
         # In coding mode, keyword-"relevant" extras are exactly the noise we're
         # trying to remove (a task mentioning "image" or "page" would drag in
@@ -1366,6 +1643,8 @@ class GalacticGateway(GatewayToolsMixin):
             words = {w for w in re.findall(r'[a-z0-9]{4,}', last_user_text.lower())}
             for name, spec in active.items():
                 if name in core:
+                    continue
+                if not _wants_browser and name.startswith(('browser_', 'chrome_')):
                     continue
                 haystack = (name + " " + spec.get('description', '')).lower()
                 if any(w in haystack for w in words):
@@ -1394,9 +1673,19 @@ class GalacticGateway(GatewayToolsMixin):
         if active_tools is None:
             active_tools = self.tools
 
-        is_ollama = (self.llm.provider == "ollama")
+        is_ollama = (self.llm.provider in ("ollama", "lmstudio"))  # local backends share the slim-prompt path
         personality_prompt = self.personality.get_system_prompt(is_coding=is_coding)
-        
+
+        # Plain-persona utility agents (hybrid Architect/planner): a 23k-token
+        # planning request once came back as 76 chars of persona small-talk
+        # because the persona + injected identity memories drowned the task.
+        if self._session_plain_persona.get():
+            personality_prompt = (
+                "You are a senior software architect and planning agent. "
+                "No persona, no banter, no greetings — respond with precise technical "
+                "content only, exactly in the format the task specifies."
+            )
+
         # Override system prompt if specific model override exists
         model_prompt_override = self._get_model_override('system_prompt')
         if model_prompt_override:
@@ -1409,6 +1698,11 @@ class GalacticGateway(GatewayToolsMixin):
         user_name = os.getenv('USERNAME', 'User')
         home_dir = os.path.expanduser('~')
         subagent_model = self.core.config.get("subagents", {}).get("default_model", "Auto-Resolve")
+        _ws = ''
+        try:
+            _ws = self.get_active_workspace()
+        except Exception:
+            pass
         env_block = (
             f"CURRENT ENVIRONMENT:\n"
             f"- Date: {curr_time}\n"
@@ -1418,6 +1712,8 @@ class GalacticGateway(GatewayToolsMixin):
             f"- Home Directory: {home_dir}\n"
             f"- Terminal Syntax: PowerShell (Use backslashes for paths, e.g., C:\\Users\\...)\n"
             f"- Sub-Agent Default Model: {subagent_model}\n"
+            + (f"- ACTIVE PROJECT WORKSPACE: {_ws} — when the user says 'this codebase/this project', "
+               f"they mean this directory; default coding work and file exploration here.\n" if _ws else "")
         )
 
         # MagicDocs Project Map. The full map can be large; injecting all of it
@@ -1496,10 +1792,32 @@ class GalacticGateway(GatewayToolsMixin):
 
         if is_ollama:
             behavioral_rules += (
-                "19. LOCAL MODEL TOOL DIRECTIVE: You are running locally via Ollama. You MUST use native tool calling. Do NOT output raw JSON blocks in your text response. When you need to SAVE a file, you MUST use the `write_file` tool directly. However, if the user asks you to write a quick script or show them code IN THE CHAT, you MUST use the `<galactic_code>` tag (Rule 18) to display it.\n"
+                "19. LOCAL MODEL TOOL DIRECTIVE: You are running locally. You MUST use native tool calling. Do NOT output raw JSON blocks in your text response. When you need to SAVE a file, you MUST use the `write_file` tool directly. However, if the user asks you to write a quick script or show them code IN THE CHAT, you MUST use the `<galactic_code>` tag (Rule 18) to display it.\n"
             )
 
-        browser_rules = (
+        # The declared toolset is a cost/attention-filtered slice of the full
+        # catalog (see _get_active_tools). Without this the model concludes it
+        # simply *cannot* browse/screenshot/etc. instead of asking for the tool.
+        if 'find_tools' in active_tools and len(active_tools) < len(self.tools):
+            behavioral_rules += (
+                "20. TOOL DISCOVERY: The tools declared below are a filtered subset — "
+                f"you have {len(active_tools)} of {len(self.tools)} available. If the task needs "
+                "something you don't see (browser/page automation, media, git, social, "
+                "desktop, etc.), call `find_tools` with a keyword FIRST; the matches become "
+                "callable immediately. Never tell the user a capability is missing without "
+                "searching for it.\n"
+            )
+
+        # Only ship the browser workflow when browser tools are actually on the
+        # table. _get_active_tools now withholds the browser_*/chrome_* schemas
+        # on turns with no browsing signal, and a "MANDATORY browser workflow"
+        # block describing tools the model cannot see is both wasted tokens and
+        # an invitation to narrate a click it never made. The prompt is rebuilt
+        # every turn, so this comes straight back the moment find_tools (or a
+        # browsing signal) puts the tools back in the active set.
+        _has_browser_tools = any(
+            k.startswith(('browser_', 'chrome_')) for k in active_tools)
+        browser_rules = "" if not _has_browser_tools else (
             "BROWSER TOOL WORKFLOW (MANDATORY for all browser_* tasks):\n"
             "1. ALWAYS call browser_snapshot FIRST after navigating to scan the page.\n"
             "2. browser_type does NOT auto-submit by default. Set `\"press_enter\": true` in the arguments to press Enter, OR follow it with a `browser_click` on the search/submit button.\n"
@@ -1690,6 +2008,14 @@ class GalacticGateway(GatewayToolsMixin):
         to the configured fallback model when no builder is set and the
         fallback is local.
         """
+        # HARD GUARD: never run inside an isolated sub-agent. The Architect
+        # (planner) IS an isolated agent running on the cloud model; if this
+        # ran there it would overwrite the Architect's model with the local
+        # Builder — the exact bug that made moonshot/kimi-k3 silently execute on
+        # Ollama and charge zero credits. Only the main chat hands off to the
+        # Builder, and only AFTER the Architect's plan is already in hand.
+        if self._session_trace_sid.get():
+            return False
         cfg = self.core.config.get('models', {}).get('hybrid_coding', {}) or {}
         prov = (cfg.get('builder_provider') or '').strip()
         mod = (cfg.get('builder_model') or '').strip()
@@ -1714,6 +2040,184 @@ class GalacticGateway(GatewayToolsMixin):
             priority=2
         )
         return True
+
+    # ── Project Workspaces ───────────────────────────────────────────────
+    def get_active_workspace(self):
+        """Absolute path of the active project workspace, '' if none/gone."""
+        p = getattr(self, '_active_workspace', '') or ''
+        return p if p and os.path.isdir(p) else ''
+
+    def get_workspaces(self):
+        """Known workspaces, most-recent first, with liveness flag."""
+        out = []
+        for w in getattr(self, '_workspaces', []) or []:
+            p = w.get('path') or ''
+            out.append({'name': w.get('name') or os.path.basename(p) or p,
+                        'path': p, 'last_used': w.get('last_used', 0),
+                        'exists': os.path.isdir(p)})
+        return out
+
+    def set_active_workspace(self, path, name=None):
+        """Activate (and remember) a workspace. Persists to config.local.yaml."""
+        path = os.path.abspath(path)
+        if not os.path.isdir(path):
+            raise ValueError(f"Not a directory: {path}")
+        name = (name or os.path.basename(path.rstrip('\\/')) or path).strip()
+        norm = os.path.normcase(path)
+        known = [w for w in (getattr(self, '_workspaces', []) or [])
+                 if os.path.normcase(w.get('path', '')) != norm]
+        known.insert(0, {'name': name, 'path': path, 'last_used': int(time.time())})
+        self._workspaces = known[:12]
+        self._active_workspace = path
+        self.core.config.setdefault('workspaces', {})
+        self.core.config['workspaces']['active'] = path
+        self.core.config['workspaces']['known'] = self._workspaces
+        self._save_config_async()  # blocking disk I/O — keep it off the hot path
+        return name
+
+    def remove_workspace(self, path):
+        norm = os.path.normcase(os.path.abspath(path or ''))
+        self._workspaces = [w for w in (getattr(self, '_workspaces', []) or [])
+                            if os.path.normcase(w.get('path', '')) != norm]
+        if os.path.normcase(getattr(self, '_active_workspace', '') or '') == norm:
+            self._active_workspace = ''
+        self.core.config.setdefault('workspaces', {})
+        self.core.config['workspaces']['active'] = self._active_workspace
+        self.core.config['workspaces']['known'] = self._workspaces
+        try:
+            self.core.save_config()
+        except Exception:
+            pass
+
+    _WS_PATH_RE = re.compile(r'([A-Za-z]:[\\/][^\s"\'<>|*?]+)')
+
+    # ── Workspace auto-detect guards ─────────────────────────────────────
+    # The FIRST absolute path in a message used to win outright, so pasting a
+    # traceback containing ...\site-packages\httpx\_client.py silently repointed
+    # the active workspace at httpx's source — and it was persisted to config,
+    # so it survived a restart. Three guards now stand between a path and a
+    # workspace switch: excluded roots, a project-root check, and explicit
+    # user intent.
+    #
+    # (a) Runtime / vendor / system roots that are never a user project.
+    #     Matched against a normcased path with backslash separators and a
+    #     trailing separator appended, so these fragments are anchored to whole
+    #     directory names ("myvenvproject" won't match "\\venv\\").
+    _WS_EXCLUDED_PARTS = (
+        '\\site-packages\\', '\\dist-packages\\', '.dist-info\\', '.egg-info\\',
+        '\\node_modules\\', '\\__pycache__\\', '\\.git\\', '\\.svn\\',
+        '\\.venv\\', '\\venv\\', '\\env\\', '\\.tox\\', '\\.nox\\',
+        '\\.mypy_cache\\', '\\.pytest_cache\\', '\\.ruff_cache\\',
+        '\\appdata\\local\\temp\\', '\\appdata\\roaming\\',
+        '\\windows\\', '\\program files', '\\programdata\\',
+        '\\$recycle.bin\\', '\\anaconda3\\', '\\miniconda3\\',
+    )
+    # (b) A directory only counts as a project ROOT if it carries a marker.
+    _WS_PROJECT_MARKERS = (
+        '.git', '.hg', 'package.json', 'pyproject.toml', 'requirements.txt',
+        'setup.py', 'setup.cfg', 'cargo.toml', 'go.mod', 'pom.xml',
+        'build.gradle', 'composer.json', 'gemfile', 'makefile',
+        '.claude', 'claude.md', '.galactic',
+    )
+    #     ...unless the user is plainly ASKING to work there.
+    _WS_INTENT_RE = re.compile(
+        r'\b(?:work(?:ing)?\s+(?:on|in|from)|switch(?:\s+to)?|cd(?:\s+(?:to|into))?|'
+        r'point(?:\s+(?:at|to))?|open|set|use)\b[^.\n]{0,40}?'
+        r'\b(?:workspace|project|repo|repository|codebase|directory|folder|dir)\b'
+        r'|\b(?:workspace|project\s+root)\s*(?:=|:|is)\b')
+    # (c) A pasted traceback is evidence, not an instruction.
+    _WS_TRACEBACK_RE = re.compile(
+        r'Traceback \(most recent call last\)|^\s{2,}File "', re.MULTILINE)
+
+    def _is_excluded_ws_path(self, path):
+        """True for paths under runtime/vendor/system roots — i.e. everything a
+        pasted stack trace is made of."""
+        try:
+            p = os.path.normcase(os.path.abspath(path)).replace('/', '\\')
+        except Exception:
+            return True
+        if not p.endswith('\\'):
+            p += '\\'
+        if any(part in p for part in self._WS_EXCLUDED_PARTS):
+            return True
+        # The running interpreter's own tree (…\Python313\, an active venv, …).
+        for root in (sys.prefix, getattr(sys, 'base_prefix', ''), os.path.dirname(sys.executable)):
+            if not root:
+                continue
+            try:
+                r = os.path.normcase(os.path.abspath(root)).replace('/', '\\').rstrip('\\')
+            except Exception:
+                continue
+            if r and p.startswith(r + '\\'):
+                return True
+        return False
+
+    def _looks_like_project_root(self, path):
+        """True when the directory carries a recognisable project marker."""
+        try:
+            entries = {e.lower() for e in os.listdir(path)}
+        except OSError:
+            return False
+        return any(mk in entries for mk in self._WS_PROJECT_MARKERS)
+
+    def _maybe_set_workspace_from(self, text):
+        """Auto-register: a real project directory mentioned in the user's
+        message becomes the active workspace (a file path activates its parent
+        dir). Returns (name, path) when the active workspace CHANGED, else None."""
+        text = text or ''
+        if self._WS_TRACEBACK_RE.search(text):
+            return None  # (c) pasted traceback — its paths are data, not intent
+        explicit = bool(self._WS_INTENT_RE.search(text.lower()))
+        for m in self._WS_PATH_RE.finditer(text):
+            cand = m.group(1).rstrip('".\',;:)]}').rstrip('\\/')
+            target = None
+            if os.path.isdir(cand):
+                target = cand
+            elif os.path.isfile(cand):
+                target = os.path.dirname(cand)
+            if not target:
+                continue
+            if self._is_excluded_ws_path(target):
+                continue  # (a) vendor/system root
+            if not explicit and not self._looks_like_project_root(target):
+                continue  # (b) doesn't look like a project and wasn't asked for
+            if os.path.normcase(os.path.abspath(target)) == os.path.normcase(self.get_active_workspace() or ''):
+                return None  # already active
+            name = self.set_active_workspace(target)
+            return name, os.path.abspath(target)
+        return None
+
+    def _build_planner_baton(self):
+        """Context handoff for a re-spawned Architect. The isolated planner
+        starts with EMPTY history, so a follow-up like "start phase 1" used to
+        reach it as three bare words — no previous plan, no conversation, no
+        target path — and it explored the DEFAULT workspace (Galactic's own
+        repo) instead of the user's project. Hand it the baton instead."""
+        parts = []
+        ws = self.get_active_workspace()
+        if ws:
+            parts.append(f"ACTIVE PROJECT WORKSPACE: {ws}\n"
+                         "This is the codebase the user is working on — explore and plan "
+                         "against THIS directory unless the task names another.")
+        prev = self.active_plan or getattr(self, '_last_plan', None)
+        if prev:
+            parts.append(
+                "PREVIOUS PLAN CONTEXT (the user is likely continuing this work — "
+                "keep working on the SAME target/project):\n"
+                f"- Original task: {prev.get('original_query', '')}\n"
+                f"- Plan:\n{self.format_plan(prev)}"
+            )
+        recap = []
+        for m in (self.history or [])[-6:]:
+            c = m.get('content', '')
+            if isinstance(c, list):
+                c = ' '.join(str(p.get('text', '')) for p in c if isinstance(p, dict))
+            c = str(c).strip()
+            if c:
+                recap.append(f"{str(m.get('role', '')).upper()}: {c[:400]}")
+        if recap:
+            parts.append("RECENT CONVERSATION:\n" + "\n".join(recap))
+        return ("\n\n".join(parts) + "\n\n") if parts else ""
 
     async def _generate_plan(self, user_input):
         """Generates a step-by-step plan using an isolated planner agent that can scan the codebase."""
@@ -1817,12 +2321,21 @@ class GalacticGateway(GatewayToolsMixin):
                 # Run the isolated ReAct loop using the planner model with a strict timeout
                 result = await asyncio.wait_for(
                     self.speak_isolated(
-                        user_input=f"Analyze and plan the following task:\n\n{user_input}",
+                        user_input=(
+                            f"{self._build_planner_baton()}"
+                            f"Analyze and plan the following task:\n\n{user_input}\n\n"
+                            "DELIVERABLE (mandatory): after exploring, END your reply with the "
+                            "complete plan wrapped in <plan>...</plan> tags — a numbered, "
+                            "step-by-step implementation plan. A reply without <plan> tags "
+                            "is a failed run."
+                        ),
                         context=planner_context,
                         override_provider=prov,
                         override_model=mod,
                         use_lock=False, # ALREADY LOCKED BY SPEAK()
-                        skip_planning=True # PREVENT RECURSION
+                        skip_planning=True, # PREVENT RECURSION
+                        session_id="planner", # isolate: not the main chat (no auto-route, no chat-log pollution)
+                        plain_persona=True    # architect voice, not the chat persona
                     ),
                     timeout=300
                 )
@@ -1830,16 +2343,41 @@ class GalacticGateway(GatewayToolsMixin):
                 if result and result.startswith("[ERROR]"):
                     raise Exception(result)
 
-                # Extract the <plan> from the result
-                match = re.search(r'<plan>(.*?)</plan>', result, re.DOTALL)
-                plan_text = match.group(1).strip() if match else result
-                
+                # Reasoning-model Architects (kimi-k3, deepseek-r1, …) return
+                # their thinking wrapped in synthesized <think>...</think> tags.
+                # Strip it BEFORE parsing — otherwise plan_text captures the
+                # reasoning noise, the numbered-step regex misfires, and the plan
+                # (and, in hybrid mode, the blueprint) degenerates into a junk
+                # "1 step" that carries none of the Architect's actual output.
+                clean = re.sub(r'<think>.*?</think>', '', result or '', flags=re.DOTALL).strip()
+                if not clean:
+                    clean = (result or '').strip()  # all-reasoning, no answer: keep something
+                await self.core.log(
+                    f"[Planner] {label} result: {len(result or '')} chars raw, "
+                    f"{len(clean)} after de-think — {clean[:140].replace(chr(10), ' ')}",
+                    priority=2)
+
+                # Extract the <plan> from the cleaned result
+                match = re.search(r'<plan>(.*?)</plan>', clean, re.DOTALL)
+                plan_text = match.group(1).strip() if match else clean
+
                 # Extract the numbered list
                 plan_steps = re.findall(r'^\s*\d\.\s*(.*)', plan_text, re.MULTILINE)
-                
+
                 if not plan_steps:
                     # Fallback if no numbers were used (split by lines)
                     plan_steps = [s.strip() for s in plan_text.split('\n') if s.strip()][:10]
+
+                # Junk-plan rejection: a one-liner with no structure is the model
+                # chatting, not planning ("Right on, let me crack this thing
+                # open..." became a 1-step 'plan' once). Retry the next attempt
+                # instead of executing garbage.
+                if plan_steps and len(plan_steps) < 2 and len(plan_text.strip()) < 300 and '<plan>' not in (result or ''):
+                    await self.core.log(
+                        f"[Planner] {label} returned a trivial non-plan "
+                        f"({len(plan_text.strip())} chars, no <plan> block) — trying next planner attempt.",
+                        priority=1)
+                    continue
 
                 if plan_steps:
                     plan = { "steps": plan_steps, "current_step": 0, "original_query": user_input }
@@ -1943,8 +2481,11 @@ class GalacticGateway(GatewayToolsMixin):
         model_mgr = None
 
         # 1. Semantic Memory Retrieval
+        # Skipped for plain-persona utility agents (planner/Architect): personal
+        # memories ("Chong runs on Kimi K3", ...) are noise there and actively
+        # reinforce persona chatter in the model that's supposed to output a plan.
         semantic_context = ""
-        if self.galactic_memory:
+        if self.galactic_memory and not self._session_plain_persona.get():
             try:
                 # Retrieve relevant bits from long-term memory based on user input
                 memories = await self.galactic_memory.recall(user_input, limit=5)
@@ -2028,6 +2569,7 @@ class GalacticGateway(GatewayToolsMixin):
             self.history.append({"role": "user", "content": content})
         else:
             self.history.append({"role": "user", "content": user_input})
+        self._cap_history()
 
         # Persist to JSONL
         source = "telegram" if chat_id else "web"
@@ -2039,7 +2581,17 @@ class GalacticGateway(GatewayToolsMixin):
         if is_main_chat:
             _amb = getattr(self.core, 'ambient_agent', None)
             if _amb:
-                asyncio.create_task(_amb.capture_from_message(user_input))
+                self._spawn_bg(_amb.capture_from_message(user_input))
+
+            # Workspace auto-detect: mentioning a real directory makes it the
+            # active project (Antigravity-style) — the agent, planner, and
+            # session history all anchor to it from here on.
+            try:
+                _ws_change = self._maybe_set_workspace_from(user_input)
+                if _ws_change:
+                    await self.core.log(f"📁 Active workspace → {_ws_change[0]}  ({_ws_change[1]})", priority=2)
+            except Exception:
+                pass
 
             # Smart model routing — pick the best model for this task type (opt-in via config)
             model_mgr = getattr(self.core, 'model_manager', None)
@@ -2059,17 +2611,32 @@ class GalacticGateway(GatewayToolsMixin):
         needs_plan = False
         lower_input = user_input.lower()
 
-        # Coding-intent detection — word-boundary matching (see note further
-        # down at the Senior Coder block); computed once because both the
-        # planning gate and Senior Coder mode need it.
-        _CODING_VERBS = (
-            "build", "building", "create", "creating", "write", "writing",
-            "implement", "implementing", "refactor", "refactoring",
-            "fix", "fixing", "update", "updating", "add", "adding",
-            "change", "changing", "patch", "patching", "rename", "delete",
+        # Coding-intent detection — two-signal word-boundary matching (see the
+        # class-level regexes + note at the Senior Coder block); computed once
+        # because both the planning gate and Senior Coder mode need it.
+        fresh_coding = (
+            lower_input.startswith("/code")
+            or bool(self._CODING_STRONG_RE.search(lower_input))
+            or (bool(self._CODING_VERB_RE.search(lower_input))
+                and bool(self._CODE_CONTEXT_RE.search(lower_input)))
         )
-        _coding_re = re.compile(r'\b(?:' + '|'.join(_CODING_VERBS) + r')(?:s|es|ed|d)?\b')
-        is_coding = bool(_coding_re.search(lower_input)) or lower_input.startswith("/code")
+        # Follow-up window: a coding turn "arms" the next few turns, so
+        # continuation imperatives ("tackle the critical issues first",
+        # "go ahead with #2", "do the rest") stay on the coding/hybrid pipeline
+        # even though they carry no coding verb+object of their own. Casual
+        # turns tick the window down; any coding turn re-arms it.
+        _armed = int(getattr(self, '_coding_armed_turns', 0) or 0)
+        followup_coding = (not fresh_coding and _armed > 0 and is_main_chat
+                           and bool(self._CODING_FOLLOWUP_RE.search(lower_input)))
+        is_coding = fresh_coding or followup_coding
+        if is_main_chat:
+            if is_coding:
+                self._coding_armed_turns = 6
+                if followup_coding:
+                    await self.core.log(
+                        "🧬 Coding follow-up detected — continuing on the coding/hybrid pipeline", priority=2)
+            elif _armed > 0:
+                self._coding_armed_turns = _armed - 1
 
         # Hybrid Coding Mode: the big-brain Architect writes the code into a
         # blueprint, the cheap local Builder applies it. Main chat only —
@@ -2077,8 +2644,22 @@ class GalacticGateway(GatewayToolsMixin):
         hybrid_cfg = self.core.config.get('models', {}).get('hybrid_coding', {}) or {}
         hybrid_on = bool(hybrid_cfg.get('enabled')) and not self._session_trace_sid.get()
 
+        # Relay-race plan lifecycle: a brand-NEW coding task (own verb+object)
+        # replaces any lingering plan; a FOLLOW-UP ("start phase 1", "do the
+        # rest") keeps the existing plan and continues executing it below.
+        if is_main_chat and fresh_coding and not followup_coding and self.active_plan and not skip_planning:
+            await self.core.log("🧬 New coding task — retiring the previous plan and re-planning fresh", priority=2)
+            self.active_plan = None
+            # Drop the planner baton too. `_last_plan` deliberately survives a
+            # plain clear (it's what lets a follow-up re-spawn the Architect on
+            # the same target), but an explicitly RETIRED plan is stale — leaving
+            # it here handed the Architect the OLD project's plan and a
+            # "keep working on the SAME target/project" instruction on a brand
+            # new task. See _build_planner_baton.
+            self._last_plan = None
+
         if not self.active_plan and not skip_planning:
-            if lower_input.startswith("/plan ") or "plan out" in lower_input or "scan the codebase" in lower_input:
+            if lower_input.startswith("/plan ") or "plan out" in lower_input or self._SCAN_CODEBASE_RE.search(lower_input):
                 needs_plan = True
                 user_input = user_input.replace("/plan ", "").strip()
             elif any(kw in lower_input for kw in ["refactor", "build a ", "create a ", "write a script", "complex task", "implement"]):
@@ -2118,12 +2699,32 @@ class GalacticGateway(GatewayToolsMixin):
                         f"{plan['blueprint']}\n\n" + full_context
                     )
                 await self.core.log(f"[Planner] Activated plan for: {user_input[:80]}...")
+        elif self.active_plan and is_main_chat and not skip_planning and is_coding:
+            # CONTINUATION TURN — the plan survived from a previous message
+            # (relay baton). Without this injection the model executing "start
+            # phase 1" had never seen the plan it was supposed to continue.
+            _p = self.active_plan
+            _bp = _p.get('blueprint') or ''
+            await self.core.log(
+                f"🧬 Continuing existing plan ({len(_p.get('steps') or [])} steps): {str(_p.get('original_query',''))[:70]}", priority=2)
+            full_context = (
+                "You are CONTINUING a plan already in progress. The user's message tells you "
+                "which part to do now — execute it against the plan's original target.\n"
+                f"ORIGINAL TASK: {_p.get('original_query', '')}\n"
+                f"PLAN:\n{self.format_plan(_p)}\n\n"
+                + (f"ARCHITECT'S BLUEPRINT (apply faithfully, do not redesign):\n{_bp[:20000]}\n\n" if _bp else "")
+                + full_context
+            )
 
-        # 1. Coding intent was detected above with word-boundary matching:
-        #    plain substring matching used to fire on "address" and
-        #    "additional" (containing "add") and "prefix" (containing "fix"),
-        #    so read-only requests like "scan the codebase and tell me what to
-        #    address" were misread as coding work and put into Senior Coder mode.
+        # 1. Coding intent was detected above with two-signal word-boundary
+        #    matching. History of false positives this guards against:
+        #    - substring matching fired on "address"/"additional" ("add") and
+        #      "prefix" ("fix"), so read-only requests like "scan the codebase
+        #      and tell me what to address" entered Senior Coder mode;
+        #    - bare-verb matching fired on casual chat like "Nice, it worked!!
+        #      Changed a setting and testing again." ("changed"), launching the
+        #      hybrid Architect/Planner/Builder pipeline for small talk. Weak
+        #      verbs now also require a code-ish object in the same message.
         autonomous = "autonomous" in lower_input or "go full" in lower_input or self.core.config.get('coding_agent', {}).get('autonomous', False)
         # Session-scoped flag: drives the persistence nudge and _call_llm's
         # per-turn prompt rebuild (previously never set, so both misfired).
@@ -2161,11 +2762,16 @@ class GalacticGateway(GatewayToolsMixin):
         _discovery_calls_used = 0  # V17: Running counter
         _tool_name_counts = Counter()  # V17: Fuzzy per-tool-name counter (ignores args)
 
-        # Clear any pending stop request at the start of a new speak() call
-        self._stop_requested = False
-        # A nudge belongs to the turn it's typed during, not a stale prior one.
-        self._pending_nudge = None
-        self._nudge_interrupted = False
+        # Clear any pending stop request at the start of a new speak() call.
+        # Main chat ONLY: these three are plain process-global attributes, and a
+        # nested speak_isolated() (the hybrid Architect/planner runs INSIDE the
+        # main speak) used to wipe them on entry — press STOP during planning
+        # and the request was silently swallowed.
+        if not self._is_isolated:
+            self._stop_requested = False
+            # A nudge belongs to the turn it's typed during, not a stale prior one.
+            self._pending_nudge = None
+            self._nudge_interrupted = False
 
         # Tools allowed to be repeated with same args (snapshots, searches, images, health)
         _DUPLICATE_EXEMPT = {
@@ -2458,8 +3064,10 @@ class GalacticGateway(GatewayToolsMixin):
                             prefix = f" [{sid}]" if sid else ""
                             await self.core.log(f"🛠️ Executing{prefix}: {actual_tool_name}{_arg_hint}", priority=2)
                             
-                            # Add a brief settle delay between sequential tool calls in a single turn
-                            if len(tool_calls) > 1 and i > 0:
+                            # Add a brief settle delay between sequential tool calls
+                            # in a single turn — cloud backends only (local tool
+                            # execution never touches a rate-limited API).
+                            if len(tool_calls) > 1 and i > 0 and not self._is_local_backend():
                                 await asyncio.sleep(0.5)
                             
                             try:
@@ -2594,7 +3202,7 @@ class GalacticGateway(GatewayToolsMixin):
                                 # Instantly display in the Web UI orb
                                 if not chat_id and getattr(self, 'core', None) and hasattr(self.core, 'relay'):
                                     # Use a background task so it doesn't delay the LM loop
-                                    asyncio.create_task(self.core.relay.emit(2, "orb_snapshot", result['__image_b64__']))
+                                    self._spawn_bg(self.core.relay.emit(2, "orb_snapshot", result['__image_b64__']))
                             elif self.llm.provider == "ollama":
                                 # Ollama renders messages through the model's own GGUF chat template
                                 # server-side. Many community templates have no branch for role="tool"
@@ -2671,11 +3279,18 @@ class GalacticGateway(GatewayToolsMixin):
                             })
                     # V17: REMOVED recent_tools.clear() — deque now accumulates across turns
 
-                    # ── Mandatory Turn Pacing ──
-                    # Always add a settle delay before the next turn to mitigate LLM API rate limits
-                    await asyncio.sleep(2.0)
-                    
-                    # If browser tools were used, add an extra settle delay
+                    # ── Turn Pacing ──
+                    # Rate-limit insurance for cloud APIs only. This used to be a
+                    # flat 2s on EVERY turn regardless of backend — ollama and
+                    # lmstudio have no rate limits at all, so a 30-turn hybrid
+                    # coding task pre-paid a full minute of dead time for nothing.
+                    _pace = self._turn_pacing_delay()
+                    if _pace:
+                        await asyncio.sleep(_pace)
+
+                    # If browser tools were used, add an extra settle delay.
+                    # This one is about the PAGE loading, not rate limits, so it
+                    # stays for every backend — but only when a browser tool ran.
                     current_tool_names = [tc[0] for tc in tool_calls]
                     if any(t.startswith('chrome_') for t in current_tool_names):
                         await asyncio.sleep(1.0)
@@ -2696,11 +3311,17 @@ class GalacticGateway(GatewayToolsMixin):
 
                 # ── BROAD HALLUCINATION DETECTOR (browser + file actions) ──
                 # V14: Extended from browser-only to cover file write/edit/delete claims
-                _rt_lower = response_text.lower()
-                claimed_browser_action = any(kw in _rt_lower for kw in [
-                    "clicked", "clicking", "typed", "typing", "searched", "searching",
-                    "submitted", "entered", "finding the", "found the"
-                ])
+                # Precision pass: bare substrings flagged innocent chat ("she starts
+                # typing", "re-searching", think-block reasoning). Now we (1) strip
+                # <think> — reasoning ABOUT an action is not a claim of action;
+                # (2) require a first-person or narrated claim on word boundaries;
+                # (3) only arm the browser guard once a browser tool has actually
+                # been used this task — pure conversation can never trip it.
+                _visible_text = re.sub(r'<think>.*?</think>', '', response_text, flags=re.DOTALL)
+                _visible_text = re.sub(r'<think>.*\Z', '', _visible_text, flags=re.DOTALL)
+                _rt_lower = _visible_text.lower()
+                _browser_engaged = any(t.startswith(('chrome_', 'browser_')) for t in recent_tools)
+                claimed_browser_action = _browser_engaged and self._BROWSER_CLAIM_RE.search(_rt_lower)
                 actual_browser_action = any(t in recent_tools for t in [
                     'chrome_click', 'chrome_type', 'browser_click', 'browser_type',
                     'browser_click_by_ref', 'browser_type_by_ref'
@@ -2721,15 +3342,11 @@ class GalacticGateway(GatewayToolsMixin):
 
                 # ── FILE-WRITE HALLUCINATION DETECTOR ──
                 # Catch "I've written X to file.md", "Done. I've updated SOUL.md", "I have saved...", etc.
-                claimed_file_action = any(kw in _rt_lower for kw in [
-                    "i've written", "i have written", "i've saved", "i have saved",
-                    "i've updated", "i have updated", "i've added", "i have added",
-                    "i've created", "i have created", "i'll add", "i will add",
-                    "done. i\'ve", "done. i have", "i've appended", "i've patched",
-                    "i've deleted", "i have deleted", "i've moved", "i have moved",
-                    "successfully written", "successfully saved", "successfully updated",
-                    "file has been updated", "file has been written", "file has been created"
-                ])
+                # A past-tense claim must sit near a file-ish object (filename/file/
+                # disk/config/memory) so chat like "I've created a table below" no
+                # longer trips it. Future intent ("I'll add...") is not flagged —
+                # promise-then-stop turns are the Persistence Nudge's job.
+                claimed_file_action = self._FILE_CLAIM_RE.search(_rt_lower)
                 actual_file_action = any(t in recent_tools for t in [
                     'write_file', 'edit_file', 'delete_file', 'move_file', 'copy_file',
                     'save_memory', 'memory_imprint', 'exec_shell', 'execute_python'
@@ -2829,6 +3446,7 @@ class GalacticGateway(GatewayToolsMixin):
                 if getattr(self, 'last_reasoning_details', None):
                     assistant_msg["reasoning_details"] = self.last_reasoning_details
                 self.history.append(assistant_msg)
+                self._cap_history()
                 # Only emit "thought" to the web UI if this is a web chat request.
                 # Telegram calls are handled by process_and_respond which emits
                 # "chat_from_telegram" — emitting "thought" here too causes duplicates.
@@ -2954,7 +3572,7 @@ class GalacticGateway(GatewayToolsMixin):
 
     # ── Isolated speak for sub-agents ─────────────────────────────────
 
-    async def speak_isolated(self, user_input, context="", chat_id=None, images=None, override_provider=None, override_model=None, use_lock=True, skip_planning=False, session_id=None):
+    async def speak_isolated(self, user_input, context="", chat_id=None, images=None, override_provider=None, override_model=None, use_lock=True, skip_planning=False, session_id=None, plain_persona=False):
         """
         Run speak() with isolated state for sub-agents or planners.
         Saves and restores all mutable gateway state so concurrent calls
@@ -2962,6 +3580,10 @@ class GalacticGateway(GatewayToolsMixin):
         Now supports per-session locking via session_id.
         """
         # Prepare session tokens (individual variables for type safety/linting)
+        # NOTE: the isolation marker must go FIRST — every write-through
+        # property below (history/_speaking/_queued_switch) branches on it, so
+        # until it flips the sets would land on the main chat's attributes.
+        t_iso = self._session_isolated.set(True)
         t_h = self._session_history.set([])
         t_sid = self._session_trace_sid.set(session_id)
         t_sp = self._session_speaking.set(False)
@@ -2974,11 +3596,26 @@ class GalacticGateway(GatewayToolsMixin):
         t_et = self._session_est_tokens.set(0)
         t_cp = self._session_checkpoint_id.set(None)
         t_qs = self._session_queued_switch.set(None)
-        
+        t_pp = self._session_plain_persona.set(bool(plain_persona))
+
         # Isolated LLM state
         t_lp = self._session_llm_provider.set(override_provider or self.provider)
         t_lm = self._session_llm_model.set(override_model or self.model)
-        t_lk = self._session_llm_api_key.set(self.api_key) # API key override not yet supported here
+        # Derive the key for the OVERRIDE provider. Previously this copied
+        # self.api_key (the MAIN model's key), so an isolated agent overriding to a
+        # cloud provider — e.g. a hybrid Architect on moonshot while the main model
+        # is local LM Studio (key "NONE") — authenticated with the wrong/empty key,
+        # 401'd, and silently fell back off its assigned model (the fallback path
+        # DID fix the key via _set_api_key, which is why fallbacks worked but the
+        # override never did). Local backends legitimately have no key.
+        if override_provider:
+            # ignore_live: resolve moonshot's OWN key from config, not whatever
+            # provider's key is currently live (a prior fallback could have left
+            # Google's key active, which would 401 the override).
+            _iso_key = self._get_provider_api_key(override_provider, ignore_live=True) or "NONE"
+        else:
+            _iso_key = self.api_key
+        t_lk = self._session_llm_api_key.set(_iso_key)
 
         try:
             if use_lock:
@@ -2999,9 +3636,11 @@ class GalacticGateway(GatewayToolsMixin):
             self._session_est_tokens.reset(t_et)
             self._session_checkpoint_id.reset(t_cp)
             self._session_queued_switch.reset(t_qs)
+            self._session_plain_persona.reset(t_pp)
             self._session_llm_provider.reset(t_lp)
             self._session_llm_model.reset(t_lm)
             self._session_llm_api_key.reset(t_lk)
+            self._session_isolated.reset(t_iso)
 
     async def _speak_isolated_internal(self, user_input, context, chat_id, images, override_provider, override_model, skip_planning):
         """
@@ -3052,10 +3691,73 @@ class GalacticGateway(GatewayToolsMixin):
         'post_reddit': 30, 'read_reddit_inbox': 30, 'reply_reddit': 30,
     }
 
+    # ── Crucible approval gate ───────────────────────────────────────
+    # Tools that block on a HUMAN decision before they act. File mutation was
+    # covered from day one, but code EXECUTION was not — so a prompt-injected
+    # `exec_shell` could write the same file (or anything else) without ever
+    # touching the gate, which made the whole gate bypassable in one hop.
+    _APPROVAL_GATED_TOOLS = (
+        'write_file', 'edit_file', 'replace_function',
+        'exec_shell', 'execute_python', 'process_start',
+    )
+
     def _get_tool_timeout(self, tool_name):
-        """Per-tool timeout: config override > built-in default > 60s."""
+        """Per-tool timeout: config override > built-in default > 60s.
+
+        When the Crucible approval gate is ON, the file-mutation tools block
+        inside their own call waiting on a HUMAN decision (up to
+        approval_timeout, default 300s). That human wait is wrapped by this
+        same timeout at the tool-dispatch site, so a 10s write_file timeout
+        kills the approval before the user can ever click Approve — the write
+        always "times out". Give the gated tools a ceiling above the approval
+        window so the human, not the clock, decides.
+        """
         overrides = self.core.config.get('tool_timeouts', {})
-        return overrides.get(tool_name, self._TOOL_TIMEOUTS.get(tool_name, 60))
+        base = overrides.get(tool_name, self._TOOL_TIMEOUTS.get(tool_name, 60))
+        if tool_name in self._APPROVAL_GATED_TOOLS:
+            models_cfg = self.core.config.get('models', {})
+            if models_cfg.get('require_approval'):
+                approval_timeout = int(models_cfg.get('approval_timeout', 300))
+                return max(base, approval_timeout + 30)
+        return base
+
+    # ── Reasoning models ─────────────────────────────────────────────
+    # Models that expect the assistant's thinking in `reasoning_content` with
+    # `content` blanked. Kept deliberately narrow: the previous gate was "any
+    # OpenAI-compatible provider that isn't Google", which silently erased the
+    # chain of thought for lmstudio and moonshot once they were routed here.
+    # When in doubt, DON'T match — the cost of a false positive is the agent
+    # forgetting its own reasoning between turns.
+    _REASONING_MODEL_RE = re.compile(
+        r'(?:^|[/:_-])o[134](?:$|[-_.])'          # openai o1 / o3 / o4 family
+        r'|deepseek-r\d'                          # deepseek-r1, -r2, …
+        r'|deepseek[-_]?reasoner'
+        r'|\bqwq\b'
+        r'|-thinking\b|-think\b')
+
+    # ── Turn pacing ──────────────────────────────────────────────────
+
+    _LOCAL_BACKENDS = ("ollama", "lmstudio")
+
+    def _is_local_backend(self):
+        """True when the live model runs on this machine (no API rate limits)."""
+        return str(getattr(self.llm, 'provider', '')).lower() in self._LOCAL_BACKENDS
+
+    def _turn_pacing_delay(self):
+        """Seconds to idle between ReAct turns, purely as rate-limit insurance.
+
+        Local backends get 0 — they have no quota to trip. Cloud gets a light
+        1s, escalating to the old 2s only while that provider is actually
+        carrying rate-limit strikes (ProviderCooldowns is the real defence:
+        it benches a 429'd provider with exponential backoff and walks the
+        fallback chain, so pre-paying 2s on every healthy turn bought nothing).
+        """
+        if self._is_local_backend():
+            return 0.0
+        cooldowns = getattr(self, 'provider_cooldowns', None)
+        if cooldowns and cooldowns._strikes.get(getattr(self.llm, 'provider', '')):
+            return 2.0
+        return 1.0
 
     # ── Resilient LLM call with fallback chain ───────────────────────
 
@@ -3097,6 +3799,14 @@ class GalacticGateway(GatewayToolsMixin):
             f"⚠️ LLM error ({error_type}): {self.llm.provider}/{self.llm.model} — {result[:150]}",
             priority=1
         )
+
+        if self.llm.provider == 'lmstudio' and 'exceeds the available context' in result:
+            await self.core.log(
+                "💡 LM Studio rejected the request: its loaded context window is smaller than "
+                "Galactic's prompt. Reload the model in LM Studio with a bigger Context Length "
+                "(32768 recommended) — Galactic trims history to fit, but never the system prompt.",
+                priority=2
+            )
 
         # For transient errors, retry the SAME model once with a short delay
         if error_type in TRANSIENT_ERRORS:
@@ -3492,6 +4202,39 @@ class GalacticGateway(GatewayToolsMixin):
         await self.core.log(f"🧹 Background Compaction ready: {len(old_text)} -> {len(summary)} chars ({reduction:.1f}% reduction).", priority=2)
         return summary
 
+    @staticmethod
+    def _sanitize_tool_pairing(msgs):
+        """Enforce the strict OpenAI tool-calling invariant: every assistant
+        message with tool_calls is immediately followed by tool messages
+        answering EVERY tool_call_id (missing ones get a stub), and orphan /
+        duplicate / unknown tool replies are dropped. Lenient providers ignore
+        the difference; strict ones (Moonshot) hard-400 without it."""
+        out, i = [], 0
+        while i < len(msgs):
+            m = msgs[i]
+            role = m.get('role')
+            if role == 'assistant' and m.get('tool_calls'):
+                ids = [tc.get('id') for tc in (m.get('tool_calls') or []) if tc.get('id')]
+                out.append(m)
+                j, answered = i + 1, set()
+                while j < len(msgs) and msgs[j].get('role') == 'tool':
+                    tid = msgs[j].get('tool_call_id')
+                    if tid in ids and tid not in answered:
+                        out.append(msgs[j])
+                        answered.add(tid)
+                    j += 1  # duplicates / unknown ids are dropped
+                for tid in ids:
+                    if tid not in answered:
+                        out.append({"role": "tool", "tool_call_id": tid,
+                                    "content": "[result unavailable — proceed with what you have]"})
+                i = j
+            elif role == 'tool':
+                i += 1  # orphan tool reply with no owning assistant — drop
+            else:
+                out.append(m)
+                i += 1
+        return out
+
     async def _trim_messages(self, messages, limit_tokens=None):
         """
         Trim messages to fit within a token limit.
@@ -3507,6 +4250,21 @@ class GalacticGateway(GatewayToolsMixin):
         # 1. Determine the limit
         if not limit_tokens:
             limit_tokens = self._get_context_window_for_model() or 32768
+
+            # 💸 Billable cap. The context window is what the model CAN take,
+            # not what's worth paying for: kimi-k3 advertises 1,048,576 tokens,
+            # which works out to a 3.57M-char limit — history was effectively
+            # never trimmed and every turn re-sent (and re-billed) the entire
+            # conversation. Paid providers get min(window, max_billable_context).
+            # Local backends are free, so they keep the full window.
+            if not self._is_local_backend():
+                models_cfg = self.core.config.get('models', {}) or {}
+                try:
+                    billable = int(models_cfg.get('max_billable_context', 32768))
+                except (TypeError, ValueError):
+                    billable = 32768
+                if billable > 0:
+                    limit_tokens = min(int(limit_tokens), billable)
 
         # 2. Rough heuristic: 1 token ≈ 4 chars; leave 15% headroom for the response
         char_limit = int(limit_tokens * 4 * 0.85)
@@ -3605,7 +4363,7 @@ class GalacticGateway(GatewayToolsMixin):
 
                     # create_task copies the current contextvars, so the summarizer's
                     # temporary provider/model override cannot leak into this loop's llm state
-                    state['task'] = asyncio.create_task(_bg_compact())
+                    state['task'] = self._spawn_bg(_bg_compact())
 
         # 5. Hard over-limit: wait for an already-running summary before truncating.
         # Worst case this matches the old blocking behavior; typical case the
@@ -3621,12 +4379,19 @@ class GalacticGateway(GatewayToolsMixin):
                 total_chars = _total(messages)
 
         # 6. HARD TRUNCATION FAILSAFE — running total instead of full recount per pop
+        # Pops start at the first NON-system message. _apply_ready_summary splices
+        # the compaction summary in at index 1 with role "system", so a fixed
+        # "skip index 0" popped the summary we'd just paid a whole model call for —
+        # and, because the guard correctly refuses to decrement total_chars for a
+        # system message, immediately ate a real message on the very next pass too.
         while total_chars > char_limit and len(messages) > 4:
-            # Skip system prompt at index 0
-            idx = 1 if (messages[0].get('role') == 'system') else 0
+            idx = 0
+            while idx < len(messages) and messages[idx].get('role') == 'system':
+                idx += 1
+            if idx >= len(messages):
+                break  # nothing but system messages left — nothing safe to drop
             removed = messages.pop(idx)
-            if removed.get('role') != 'system':
-                total_chars -= len(str(removed.get('content', '')))
+            total_chars -= len(str(removed.get('content', '')))
 
         return messages
 
@@ -3696,6 +4461,16 @@ class GalacticGateway(GatewayToolsMixin):
                     self.llm.model = model_suffix
                 else:
                     self.llm.model = current_model # Keep hf.co/ etc. as is
+            elif base_provider == "lmstudio":
+                # Strip only our UI namespace prefix; LM Studio IDs may themselves
+                # contain slashes (e.g. "lmstudio-community/Model-GGUF"), so keep
+                # everything after the first "lmstudio/".
+                self.llm.model = model_suffix if prefix == "lmstudio" else current_model
+            elif prefix == base_provider and base_provider != "openrouter":
+                # Redundant self-namespacing, e.g. "moonshot/kimi-k3" on the
+                # moonshot provider. Strip it so the raw model id reaches the API.
+                # (OpenRouter is excluded — it legitimately uses provider/model.)
+                self.llm.model = model_suffix
             elif prefix in known and base_provider not in ("openrouter", "ollama"):
                 if prefix == "nvidia" and base_provider == "nvidia":
                      # Strip nvidia/ prefix for direct NVIDIA NIM calls
@@ -3727,7 +4502,7 @@ class GalacticGateway(GatewayToolsMixin):
                     if m["role"] == "system": system_msg = m["content"]
                     else: msg_list.append(m)
                 return await self._call_anthropic_messages(system_msg, msg_list, active_tools=active_tools)
-            elif base_provider in ("deepseek", "openrouter", "openai"):
+            elif base_provider in ("deepseek", "openrouter", "openai", "lmstudio"):
                 return await self._call_openai_compatible_messages(messages, active_tools=active_tools)
             elif base_provider == "ollama":
                 return await self._call_ollama_native_messages(messages, active_tools=active_tools)
@@ -3747,8 +4522,10 @@ class GalacticGateway(GatewayToolsMixin):
         url = f"https://generativelanguage.googleapis.com/v1beta/models/{self.llm.model}:generateContent?key={self.llm.api_key}"
         payload = {"contents": [{"parts": [{"text": f"SYSTEM CONTEXT: {context}\n\nUser: {prompt}"}]}]}
         try:
+            if getattr(self, '_last_usage', None) and not self._session_trace_sid.get():
+                self._last_usage_final = self._last_usage
             self._last_usage = None
-            async with httpx.AsyncClient(timeout=60.0, verify=False) as client:
+            async with httpx.AsyncClient(timeout=60.0) as client:
                 response = await client.post(url, json=payload)
                 data = response.json()
                 if 'candidates' not in data or not data['candidates']:
@@ -3765,6 +4542,8 @@ class GalacticGateway(GatewayToolsMixin):
                     "prompt_tokens": um.get('promptTokenCount', 0),
                     "completion_tokens": um.get('candidatesTokenCount', 0),
                 }
+                if not self._session_trace_sid.get():
+                    self._last_usage_final = dict(self._last_usage)
                 return candidate['content']['parts'][0]['text']
         except Exception as e:
             return f"[ERROR] Google: {str(e)}"
@@ -3994,6 +4773,8 @@ class GalacticGateway(GatewayToolsMixin):
                     "prompt_tokens": response.usage_metadata.prompt_token_count,
                     "completion_tokens": response.usage_metadata.candidates_token_count,
                 }
+                if not self._session_trace_sid.get():
+                    self._last_usage_final = dict(self._last_usage)
             except: pass
 
             return result
@@ -4119,6 +4900,8 @@ class GalacticGateway(GatewayToolsMixin):
             ]
 
         try:
+            if getattr(self, '_last_usage', None) and not self._session_trace_sid.get():
+                self._last_usage_final = self._last_usage
             self._last_usage = None
             async with httpx.AsyncClient(timeout=120.0) as client:
                 response = await client.post(url, headers=headers, json=payload)
@@ -4129,6 +4912,8 @@ class GalacticGateway(GatewayToolsMixin):
                     "prompt_tokens": usage.get('input_tokens', 0),
                     "completion_tokens": usage.get('output_tokens', 0),
                 }
+                if not self._session_trace_sid.get():
+                    self._last_usage_final = dict(self._last_usage)
                 if "content" in data and data["content"]:
                     text_blocks = [b["text"] for b in data["content"] if b.get("type") == "text"]
                     return "\n".join(text_blocks) if text_blocks else "[ERROR] Anthropic: Empty response"
@@ -4154,11 +4939,13 @@ class GalacticGateway(GatewayToolsMixin):
             "openrouter":   "https://openrouter.ai/api/v1",
             "huggingface":  "https://router.huggingface.co/v1",
             "kimi":         "https://api.kimi.com/v1",
+            "moonshot":     "https://api.moonshot.ai/v1",
             "zai":          "https://api.z.ai/api/paas/v4",
             "minimax":      "https://api.minimax.io/v1",
             "nvidia":       "https://integrate.api.nvidia.com/v1",
             "xai":          "https://api.x.ai/v1",
             "ollama":       "http://127.0.0.1:11434/v1",
+            "lmstudio":     "http://localhost:1234/v1",
         }
         configured = providers_cfg.get(provider, {}).get('baseUrl', '')
         # BUGFIX: If 'openrouter' key is missing, try the original provider name (e.g. 'openrouter-frontier')
@@ -4169,23 +4956,31 @@ class GalacticGateway(GatewayToolsMixin):
                      configured = p_cfg['baseUrl']
                      break
         base = configured or default_urls.get(provider, '')
-        # Normalize Ollama URL — ensure it ends with /v1
-        if provider == "ollama" and not base.rstrip('/').endswith('/v1'):
+        # Normalize local OpenAI-compatible URLs — ensure they end with /v1
+        if provider in ("ollama", "lmstudio") and base and not base.rstrip('/').endswith('/v1'):
             base = base.rstrip('/') + '/v1'
         return base.rstrip('/')
 
-    def _get_provider_api_key(self, provider):
-        """Return the API key for a provider from config."""
+    def _get_provider_api_key(self, provider, ignore_live=False):
+        """Return the API key for a provider from config.
+
+        ignore_live: skip the live self.llm.api_key shortcut and resolve strictly
+        from config for the REQUESTED provider. Required when deriving a key for a
+        provider that is NOT the currently-active one (e.g. a hybrid Architect
+        override to moonshot) — otherwise the live key left over from a different
+        provider (say a Google fallback) is wrongly returned, and the override
+        provider authenticates with someone else's key and 401s.
+        """
         lookup_provider = provider
         if provider and provider.startswith("openrouter-"):
             lookup_provider = "openrouter"
         if provider == "vertex":
             lookup_provider = "google_vertex"
-        
+
         # 1. Use the live llm.api_key if it's set and NOT a placeholder
         key = getattr(self.llm, 'api_key', '')
         placeholders = ("NONE", "", "YOUR_OPENROUTER_KEY", "YOUR_OPENAI_KEY", "YOUR_ANTHROPIC_KEY", "YOUR_API_KEY")
-        if key and key.strip() not in placeholders:
+        if not ignore_live and key and key.strip() not in placeholders:
             return key
         
         # 2. Fall back to config providers section
@@ -4279,20 +5074,98 @@ class GalacticGateway(GatewayToolsMixin):
             val = 0
         return val if val > 0 else default
 
+    async def _refresh_cloud_context_cache(self, provider):
+        """Best-effort: many OpenAI-compatible providers (Moonshot, OpenRouter, …)
+        publish each model's real context_length on GET /v1/models. Cache those
+        numbers so context budgeting uses the provider's own figure instead of a
+        name-based guess — e.g. kimi-k3 reports 1,048,576 (1M), while the old
+        guess fell through to a 32k default and starved it."""
+        try:
+            base = self._get_provider_base_url(provider)
+            if not base:
+                return
+            headers = {}
+            key = self._get_provider_api_key(provider, ignore_live=True)
+            if key:
+                headers["Authorization"] = f"Bearer {key}"
+            async with httpx.AsyncClient(timeout=15.0) as client:
+                resp = await client.get(f"{base.rstrip('/')}/models", headers=headers)
+                if resp.status_code != 200:
+                    return
+                data = resp.json()
+            cache = getattr(self, '_cloud_ctx_cache', None)
+            if cache is None:
+                cache = self._cloud_ctx_cache = {}
+            found = 0
+            for m in (data.get('data') or []):
+                mid = m.get('id')
+                ctx = m.get('context_length') or m.get('max_context_length') or m.get('context_window')
+                if mid and ctx:
+                    try:
+                        cache[(provider, str(mid))] = int(ctx)
+                        found += 1
+                    except (TypeError, ValueError):
+                        pass
+            if found:
+                await self.core.log(
+                    f"📐 {provider}: live context windows cached for {found} model(s) via /models", priority=3)
+        except Exception:
+            pass  # pure enhancement — name-based fallbacks below still apply
+
     def _get_context_window_for_model(self, default=None):
-        """Return context_window: per-model override first, then global config, then model-aware or provider-aware default."""
+        """Return context_window: per-model override first, then global config, then
+        live provider-reported size, then model-aware or provider-aware default."""
         provider = getattr(self.llm, 'provider', '') if hasattr(self, 'llm') else ''
 
         per_model = self._get_model_override('context_window')
-        if per_model:
-            return per_model
         val = self.core.config.get('models', {}).get('context_window', 0)
         try:
             val = int(val)
         except (TypeError, ValueError):
             val = 0
-        if val > 0:
-            return val
+        configured = per_model if per_model else (val if val > 0 else 0)
+
+        if provider == 'lmstudio':
+            # LM Studio loads each model with a FIXED context length and
+            # 400-rejects any request that exceeds it — there is no per-request
+            # num_ctx like Ollama. The discovered loaded window is therefore a
+            # hard cap: clamp even configured values to it.
+            lms_mgr = getattr(self.core, 'lmstudio_manager', None)
+            model_name = getattr(self.llm, 'model', '') if hasattr(self, 'llm') else ''
+            discovered = 0
+            if lms_mgr and model_name:
+                try:
+                    discovered = int(lms_mgr.get_context_window(model_name, default=0) or 0)
+                except (TypeError, ValueError):
+                    discovered = 0
+            if discovered > 0:
+                return min(configured, discovered) if configured else discovered
+            # Nothing discovered yet (server warming up / older build without
+            # /api/v0/models): stay conservative — LM Studio's default load
+            # context is small, and overshooting means a hard 400.
+            return configured if configured else (default or 8192)
+
+        if configured:
+            return configured
+
+        # Live-detected size from the provider's own /models endpoint (cloud only)
+        if provider not in ('', 'ollama', 'lmstudio'):
+            model_id = getattr(self.llm, 'model', '') if hasattr(self, 'llm') else ''
+            cache = getattr(self, '_cloud_ctx_cache', None) or {}
+            hit = cache.get((provider, model_id))
+            if hit:
+                return hit
+            # One-shot background refresh per provider; this call returns the
+            # static fallback below and the very next call gets the real number.
+            attempted = getattr(self, '_cloud_ctx_attempted', None)
+            if attempted is None:
+                attempted = self._cloud_ctx_attempted = set()
+            if provider not in attempted:
+                attempted.add(provider)
+                try:
+                    asyncio.get_running_loop().create_task(self._refresh_cloud_context_cache(provider))
+                except RuntimeError:
+                    pass  # no running loop (e.g. unit test) — fallbacks handle it
 
         if provider == 'ollama':
             # Use the model's own reported max context (discovered via
@@ -4339,6 +5212,10 @@ class GalacticGateway(GatewayToolsMixin):
             return 128000
         elif 'gpt-4o' in model or 'o1-' in model or 'o3-' in model:
             return 128000
+        elif 'kimi-k3' in model:
+            return 1048576   # confirmed via Moonshot /models: 1M context
+        elif 'kimi' in model:
+            return 262144    # Kimi K2.x line: 256k
 
         # Provider-aware defaults: cloud APIs have much larger windows than local models
         provider_defaults = {
@@ -4350,6 +5227,7 @@ class GalacticGateway(GatewayToolsMixin):
             'xai': 128000,          # Grok: 128k tokens
             'groq': 32768,          # Groq: varies by model
             'nvidia': 32768,        # NVIDIA NIM: varies
+            'moonshot': 262144,     # Kimi K2.x default; kimi-k3 handled above (1M)
             'ollama': 32768,        # Local: use per-model override instead
         }
         return provider_defaults.get(provider, default or 32768)
@@ -4413,7 +5291,7 @@ class GalacticGateway(GatewayToolsMixin):
                 payload.update(extra)
 
         try:
-            async with httpx.AsyncClient(timeout=120.0, verify=False) as client:
+            async with httpx.AsyncClient(timeout=120.0) as client:
                 response = await client.post(url, headers=headers, json=payload)
                 data = response.json()
                 if 'choices' not in data:
@@ -4468,7 +5346,7 @@ class GalacticGateway(GatewayToolsMixin):
             ]
         full_response = []
         try:
-            async with httpx.AsyncClient(timeout=120.0, verify=False) as client:
+            async with httpx.AsyncClient(timeout=120.0) as client:
                 async with client.stream("POST", url, headers=headers, json=payload) as response:
                     token_buf = []
                     _suppress_stream = False
@@ -4543,8 +5421,6 @@ class GalacticGateway(GatewayToolsMixin):
         Streaming format: plain JSON lines (not SSE 'data: ...' prefix).
         Response format: message.content (not choices[0].delta.content).
         """
-        import copy
-        
         if active_tools is None:
             active_tools = self._get_active_tools()
 
@@ -4624,117 +5500,62 @@ class GalacticGateway(GatewayToolsMixin):
                     priority=3
                 )
 
-        # ── Format messages ──
-        formatted_messages = []
-        for m in messages:
-            fm = copy.deepcopy(m)
-            
-            # Ollama native API expects 'content' to be a string. 
-            # If it's a list (multimodal), flatten it.
-            orig_content = fm.get("content")
-            if isinstance(orig_content, list):
-                text_parts = []
-                images = []
-                for part in orig_content:
-                    if part.get("type") == "text":
-                        text_parts.append(part.get("text", ""))
-                    elif part.get("type") == "image_url":
-                        img_url = part.get("image_url", {}).get("url", "")
-                        # Extract raw base64 from data URI
-                        if img_url.startswith("data:"):
-                            try:
-                                _, b64 = img_url.split(",", 1)
-                                images.append(b64)
-                            except ValueError: pass
-                        else:
-                            images.append(img_url) # fallback
-                fm["content"] = "\n".join(text_parts)
-                if images:
-                    # Heuristic: only send images if model name suggests vision support
-                    # to avoid "missing data required for image input" 500 errors on text-only models.
-                    m_lower = str(self.llm.model).lower()
-                    vision_keywords = ('vision', 'llava', 'moondream', 'qwen-vl', 'minicpm', 'bakllava', 'cogvlm', 'internvl')
-                    if any(kw in m_lower for kw in vision_keywords):
-                        fm["images"] = images
-                    else:
-                        # For text models, the image is already described/pathed in user_input text injection
-                        pass
-            
-            # Fix tool_calls for Ollama Native
-            # Ollama expects structured arguments, not stringified JSON.
-            tcs = fm.get("tool_calls")
-            if tcs:
-                native_tcs = []
-                for tc in tcs:
-                    fn = tc.get("function", {})
-                    args = fn.get("arguments", "{}")
-                    if isinstance(args, str):
-                        try:
-                            args = json.loads(args)
-                        except:
-                            args = {}
-                    native_tcs.append({
-                        "function": {
-                            "name": fn.get("name", ""),
-                            "arguments": args
-                        }
-                    })
-                fm["tool_calls"] = native_tcs
-                # Some native Ollama models fail if content is present with tool_calls
-                if not fm.get("content"):
-                    fm["content"] = ""
-
-            # Ensure 'content' is ALWAYS a string (Go server requirement)
-            if fm.get("content") is None:
-                fm["content"] = ""
-
-            formatted_messages.append(fm)
-
         use_streaming = self.core.config.get('models', {}).get('streaming', True)
-        max_tokens = self._get_max_tokens()
 
-        payload = {
-            "model": self.llm.model,
-            "messages": formatted_messages,
-            "stream": use_streaming,
-            "options": ollama_opts,
-        }
-
-        # Inject native tools
-        if self.supports_native_tools and active_tools:
-            payload["tools"] = [
-                {
-                    "type": "function",
-                    "function": {
-                        "name": re.sub(r'[^a-zA-Z0-9_]', '_', name),
-                        "description": spec.get("description", ""),
-                        "parameters": spec.get("parameters", {})
-                    }
-                }
-                for name, spec in active_tools.items()
-            ]
+        # ── Model residency ──
+        # Ollama unloads a model after 5 minutes of idle by default, so a 27B
+        # sitting between two chat messages gets evicted and the next turn pays
+        # a full cold load (tens of seconds). keep_alive was never sent at all.
+        keep_alive = (
+            (self.core.config.get('providers', {}) or {}).get('ollama', {}) or {}
+        ).get('keep_alive', '30m')
 
         max_attempts = 2
         for attempt in range(max_attempts):
-            # ── V15: Rebuild formatted messages on every attempt ──
+            # ── V15: Build formatted messages on every attempt ──
             # This ensures that if a [SYSTEM ADVISORY] was injected during a previous attempt's failure,
             # it actually makes it into the payload for the retry.
+            # (There used to be an identical deepcopy-based pass ABOVE this loop
+            #  whose formatted_messages and payload were both thrown away on the
+            #  first iteration — pure wasted work on every single call.)
             formatted_messages = []
             for m in messages:
                 fm = m.copy()
                 content = m.get('content')
-                # Correctly handle multimodal or complex content
+                # Ollama native API expects 'content' to be a string.
+                # If it's a list (multimodal), flatten it and lift out the images.
                 if isinstance(content, list):
-                    text_parts = [p.get('text', '') for p in content if p.get('type') == 'text']
+                    text_parts = []
+                    images = []
+                    for part in content:
+                        if not isinstance(part, dict):
+                            continue
+                        if part.get("type") == "text":
+                            text_parts.append(part.get("text", ""))
+                        elif part.get("type") == "image_url":
+                            img_url = part.get("image_url", {}).get("url", "")
+                            # Extract raw base64 from data URI
+                            if img_url.startswith("data:"):
+                                try:
+                                    _, b64 = img_url.split(",", 1)
+                                    images.append(b64)
+                                except ValueError:
+                                    pass
+                            else:
+                                images.append(img_url)  # fallback
                     fm["content"] = "\n".join(text_parts)
-                    
                     if images:
+                        # Heuristic: only send images if the model name suggests vision
+                        # support, to avoid "missing data required for image input"
+                        # 500s on text-only models. (For text models the image is
+                        # already described/pathed in the user_input text injection.)
                         m_lower = str(self.llm.model).lower()
                         vision_keywords = ('vision', 'llava', 'moondream', 'qwen-vl', 'minicpm', 'bakllava', 'cogvlm', 'internvl')
                         if any(kw in m_lower for kw in vision_keywords):
                             fm["images"] = images
-                
+
                 # Fix tool_calls for Ollama Native
+                # Ollama expects structured arguments, not stringified JSON.
                 tcs = fm.get("tool_calls")
                 if tcs:
                     native_tcs = []
@@ -4748,8 +5569,10 @@ class GalacticGateway(GatewayToolsMixin):
                             "function": {"name": fn.get("name", ""), "arguments": args}
                         })
                     fm["tool_calls"] = native_tcs
+                    # Some native Ollama models fail if content is present with tool_calls
                     if not fm.get("content"): fm["content"] = ""
 
+                # Ensure 'content' is ALWAYS a string (Go server requirement)
                 if fm.get("content") is None: fm["content"] = ""
                 formatted_messages.append(fm)
 
@@ -4759,6 +5582,8 @@ class GalacticGateway(GatewayToolsMixin):
                 "stream": use_streaming,
                 "options": ollama_opts,
             }
+            if keep_alive:
+                payload["keep_alive"] = keep_alive
             if self.supports_native_tools and active_tools and "tools" not in (getattr(self, '_demoted_models', set())):
                  # Only inject tools if we haven't already failed with them
                  # (Wait, let's use a simpler check: if we are on attempt 1+, we probably demoted)
@@ -4779,7 +5604,7 @@ class GalacticGateway(GatewayToolsMixin):
                 # ── Non-streaming path ──
                 try:
                     _timeout = httpx.Timeout(connect=30.0, read=600.0, write=30.0, pool=30.0)
-                    async with httpx.AsyncClient(timeout=_timeout, verify=False) as client:
+                    async with httpx.AsyncClient(timeout=_timeout) as client:
                         resp = await client.post(url, json=payload)
                         if resp.status_code != 200:
                             if resp.status_code == 400 and ("does not support tools" in resp.text.lower() or "parser" in resp.text.lower()) and "tools" in payload:
@@ -4799,6 +5624,8 @@ class GalacticGateway(GatewayToolsMixin):
                                 "prompt_tokens": int(data.get('prompt_eval_count') or 0),
                                 "completion_tokens": int(data.get('eval_count') or 0),
                             }
+                            if not self._session_trace_sid.get():
+                                self._last_usage_final = dict(self._last_usage)
                         msg = data.get('message', {})
                         content = (msg.get('content') or '').strip()
                         if not content and msg.get('tool_calls') is not None:
@@ -4819,7 +5646,7 @@ class GalacticGateway(GatewayToolsMixin):
             full_response = []
             try:
                 _timeout = httpx.Timeout(connect=30.0, read=600.0, write=30.0, pool=30.0)
-                async with httpx.AsyncClient(timeout=_timeout, verify=False) as client:
+                async with httpx.AsyncClient(timeout=_timeout) as client:
                     async with client.stream("POST", url, json=payload) as response:
                         if response.status_code != 200:
                             body = await response.aread()
@@ -4901,6 +5728,8 @@ class GalacticGateway(GatewayToolsMixin):
                                         "prompt_tokens": int(chunk.get('prompt_eval_count') or 0),
                                         "completion_tokens": int(chunk.get('eval_count') or 0),
                                     }
+                                    if not self._session_trace_sid.get():
+                                        self._last_usage_final = dict(self._last_usage)
                                 break
 
                         # Close a dangling <think> block if the stream ended mid-reasoning
@@ -4958,6 +5787,10 @@ class GalacticGateway(GatewayToolsMixin):
           • Injects max_tokens if configured
         """
         provider = self.llm.provider
+        # Preserve the last COMPLETED call's real usage before resetting — the
+        # context meter reads it (via _last_usage_final) even mid-call.
+        if getattr(self, '_last_usage', None) and not self._session_trace_sid.get():
+            self._last_usage_final = self._last_usage
         self._last_usage = None
         self.last_reasoning_details = None
 
@@ -4983,8 +5816,8 @@ class GalacticGateway(GatewayToolsMixin):
         url = f"{self._get_provider_base_url(provider)}/chat/completions"
 
         headers = {"Content-Type": "application/json"}
-        # Ollama doesn't use auth; all other providers use Bearer token
-        if provider != "ollama":
+        # Local backends (Ollama, LM Studio) need no auth; cloud providers use Bearer.
+        if provider not in ("ollama", "lmstudio"):
             api_key = self._get_provider_api_key(provider)
             if api_key:
                 headers["Authorization"] = f"Bearer {api_key}"
@@ -4997,13 +5830,22 @@ class GalacticGateway(GatewayToolsMixin):
                 headers["X-Title"] = "Galactic AI"
 
         use_streaming = (
-            provider in ("ollama", "openai", "groq", "mistral", "cerebras", "openrouter", "nvidia", "google")
+            provider in ("ollama", "lmstudio", "openai", "groq", "mistral", "cerebras", "openrouter", "nvidia", "google", "moonshot")
             and self.core.config.get('models', {}).get('streaming', True)
             and not (provider == "nvidia" and self.llm.model in _NVIDIA_NO_STREAM)
             and not (provider == "openrouter" and self.llm.model in _OPENROUTER_NO_STREAM)
         )
 
         max_tokens = self._get_max_tokens()
+
+        # Dial diagnostic — mirrors the "Calling Ollama Native" line so cloud
+        # calls (moonshot/kimi-k3 Architect, etc.) are equally visible in the
+        # log. If a hybrid run shows no cloud dial while the planner is active,
+        # the Architect isn't reaching its cloud model.
+        if provider not in ("ollama", "lmstudio"):
+            _sid = self._session_trace_sid.get()
+            _who = f" [{_sid}]" if _sid else ""
+            await self.core.log(f"🌐 Calling {provider}: {model_id}{_who}", priority=2)
 
         # ── Message formatting for reasoning-aware providers ─────────
         # DeepSeek, Gemini, and newer OpenAI models expect reasoning/thinking 
@@ -5017,7 +5859,13 @@ class GalacticGateway(GatewayToolsMixin):
         # we convert historical tool calls/results into plain text to avoid 400 errors, 
         # but still allow NEW native tool calls in the current turn.
         use_flattening = is_google or provider == "ollama"
-        
+
+        # Providers whose assistant turns carry thinking in `reasoning_content`
+        # rather than `content`. Deliberately narrow and name-matched — anything
+        # not on this list keeps its content intact (see the branch below).
+        is_reasoning_model = (not is_google) and bool(
+            self._REASONING_MODEL_RE.search(m_lower))
+
         import copy
         for i, m in enumerate(messages):
             fm = copy.deepcopy(m)
@@ -5039,8 +5887,14 @@ class GalacticGateway(GatewayToolsMixin):
                         call_summaries.append(f"Thought: Calling tool {fn.get('name')} with {fn.get('arguments')}")
                     fm["content"] = (f"{content}\n\n" if content else "") + "\n".join(call_summaries)
                     fm.pop("tool_calls", None)
-                elif content and tcs and not is_google:
-                    # Reasoning model logic (o1/o3/DeepSeek)
+                elif content and tcs and is_reasoning_model:
+                    # Reasoning model logic (o1/o3/DeepSeek-reasoner): these
+                    # expect the model's thinking in reasoning_content, not
+                    # content. The gate used to be "not is_google", which caught
+                    # EVERY OpenAI-compatible provider — including lmstudio and
+                    # moonshot now that they route here — and blanked the
+                    # assistant's own reasoning between ReAct turns, so the
+                    # agent lost its train of thought after every tool call.
                     fm["reasoning_content"] = content
                     fm["content"] = ""
             
@@ -5116,6 +5970,13 @@ class GalacticGateway(GatewayToolsMixin):
             # But we leave it to the provider's specific API behavior usually.
             formatted_messages = final_messages
 
+        # Strict-protocol guard: Moonshot (and OpenAI-strict peers) 400 the whole
+        # request if any assistant tool_calls lacks an immediate tool reply per id
+        # ("an assistant message with 'tool_calls' must be followed by tool
+        # messages responding to each 'tool_call_id'") — one dropped result in a
+        # 3-tool turn killed a 2.5-minute Architect run. Repair instead of dying.
+        formatted_messages = self._sanitize_tool_pairing(formatted_messages)
+
         if use_streaming:
             # ── OpenRouter Nitro Override ──
             if provider == "openrouter" and self.core.config.get('models', {}).get('nitro_only'):
@@ -5128,6 +5989,19 @@ class GalacticGateway(GatewayToolsMixin):
                 "stream": True,
                 "stream_options": {"include_usage": True},
             }
+            # LM Studio: auto-unload the model after idling (frees VRAM so a
+            # 27B sitting in LM Studio can't OOM the GPU when Ollama loads its
+            # own model next). LM Studio honors a per-request 'ttl' (seconds)
+            # on JIT-loaded models; builds that predate it ignore the field.
+            # providers.lmstudio.ttl overrides; 0 disables.
+            if provider == "lmstudio":
+                _ttl = self.core.config.get('providers', {}).get('lmstudio', {}).get('ttl', 600)
+                try:
+                    _ttl = int(_ttl)
+                except (TypeError, ValueError):
+                    _ttl = 600
+                if _ttl > 0:
+                    payload["ttl"] = _ttl
             # Ollama benefits from explicit temperature in options
             if provider == "ollama":
                 ollama_opts = {"temperature": 0.3}
@@ -5177,7 +6051,7 @@ class GalacticGateway(GatewayToolsMixin):
                 # Granular timeout: fast connect (30s) but long read (600s) for
                 # large models (Qwen 397B, GLM5 744B) with slow first-token latency
                 _timeout = httpx.Timeout(connect=30.0, read=600.0, write=30.0, pool=30.0)
-                async with httpx.AsyncClient(timeout=_timeout, verify=False) as client:
+                async with httpx.AsyncClient(timeout=_timeout) as client:
                     async with client.stream("POST", url, headers=headers, json=payload) as response:
                         # Check HTTP status before parsing SSE stream
                         if response.status_code != 200:
@@ -5212,6 +6086,19 @@ class GalacticGateway(GatewayToolsMixin):
                                     if 'error' in chunk:
                                         err_msg = chunk['error'].get('message', str(chunk['error']))
                                         return f"[ERROR] {provider}: {err_msg}"
+                                    # OpenAI-style final usage frame arrives with EMPTY
+                                    # choices (stream_options.include_usage) — it used to
+                                    # die on this `continue`, so REAL token counts were
+                                    # never captured for streamed calls and the context
+                                    # meter / cost tracking fell back to rough estimates.
+                                    usage = chunk.get('usage')
+                                    if usage:
+                                        self._last_usage = {
+                                            "prompt_tokens": usage.get('prompt_tokens', 0),
+                                            "completion_tokens": usage.get('completion_tokens', 0),
+                                        }
+                                        if not self._session_trace_sid.get():
+                                            self._last_usage_final = dict(self._last_usage)
                                     continue
                                 choice = choices[0]
                                 if not choice:
@@ -5280,6 +6167,8 @@ class GalacticGateway(GatewayToolsMixin):
                                         "prompt_tokens": usage.get('prompt_tokens', 0),
                                         "completion_tokens": usage.get('completion_tokens', 0),
                                     }
+                                    if not self._session_trace_sid.get():
+                                        self._last_usage_final = dict(self._last_usage)
                                 # Capture OpenRouter generation ID for actual cost lookup
                                 if 'id' in chunk and provider == 'openrouter':
                                     self._last_generation_id = chunk['id']
@@ -5368,6 +6257,15 @@ class GalacticGateway(GatewayToolsMixin):
             "messages": formatted_messages,
             "stream": False,
         }
+        # LM Studio idle auto-unload (see streaming path for rationale)
+        if provider == "lmstudio":
+            _ttl = self.core.config.get('providers', {}).get('lmstudio', {}).get('ttl', 600)
+            try:
+                _ttl = int(_ttl)
+            except (TypeError, ValueError):
+                _ttl = 600
+            if _ttl > 0:
+                payload["ttl"] = _ttl
         if provider == "ollama":
             ollama_opts = {"temperature": 0.3}
             ctx_window = self._get_context_window_for_model()
@@ -5413,7 +6311,7 @@ class GalacticGateway(GatewayToolsMixin):
         for _attempt in range(_max_retries + 1):
             try:
                 _timeout = httpx.Timeout(connect=30.0, read=600.0, write=30.0, pool=30.0)
-                async with httpx.AsyncClient(timeout=_timeout, verify=False) as client:
+                async with httpx.AsyncClient(timeout=_timeout) as client:
                     response = await client.post(url, headers=headers, json=payload)
                     # Check HTTP status before parsing JSON
                     if response.status_code != 200:
@@ -5455,6 +6353,8 @@ class GalacticGateway(GatewayToolsMixin):
                             "prompt_tokens": usage.get('prompt_tokens', 0),
                             "completion_tokens": usage.get('completion_tokens', 0),
                         }
+                        if not self._session_trace_sid.get():
+                            self._last_usage_final = dict(self._last_usage)
                     # Capture OpenRouter generation ID for actual cost lookup
                     if provider == 'openrouter' and 'id' in data:
                         self._last_generation_id = data['id']

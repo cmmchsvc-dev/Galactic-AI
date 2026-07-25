@@ -89,6 +89,15 @@ def generate_self_signed_cert(cert_dir: str = 'certs') -> tuple:
     falls back to subprocess call to openssl.
     """
     os.makedirs(cert_dir, exist_ok=True)
+    # Self-ignoring directory: the private key must never reach the public repo,
+    # and the root .gitignore only covers '*.key', not 'key.pem'.
+    ignore_path = os.path.join(cert_dir, '.gitignore')
+    if not os.path.exists(ignore_path):
+        try:
+            with open(ignore_path, 'w', encoding='utf-8') as f:
+                f.write('*\n')
+        except Exception:
+            pass
     cert_path = os.path.join(cert_dir, 'cert.pem')
     key_path = os.path.join(cert_dir, 'key.pem')
 
@@ -120,12 +129,25 @@ def generate_self_signed_cert(cert_dir: str = 'certs') -> tuple:
             x509.IPAddress(ipaddress.IPv4Address("0.0.0.0")),
         ]
 
-        # Try to detect local IP for SAN
+        # Detect every local IP for the SAN list — the deck binds TLS to all
+        # non-loopback interfaces (Wi-Fi, Ethernet, VPN), and a cert that only
+        # covers one of them throws a name-mismatch warning on the others.
         try:
             import socket
-            local_ip = socket.gethostbyname(socket.gethostname())
-            if local_ip and local_ip != "127.0.0.1":
-                san_list.append(x509.IPAddress(ipaddress.IPv4Address(local_ip)))
+            seen = set()
+            for addr in socket.gethostbyname_ex(socket.gethostname())[2]:
+                if addr and not addr.startswith("127.") and addr not in seen:
+                    seen.add(addr)
+                    san_list.append(x509.IPAddress(ipaddress.IPv4Address(addr)))
+            try:
+                s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+                s.connect(('8.8.8.8', 80))
+                route_ip = s.getsockname()[0]
+                s.close()
+                if route_ip and not route_ip.startswith("127.") and route_ip not in seen:
+                    san_list.append(x509.IPAddress(ipaddress.IPv4Address(route_ip)))
+            except Exception:
+                pass
         except Exception:
             pass
 
@@ -238,7 +260,10 @@ class RateLimiter:
 
 # ── Auth Middleware ───────────────────────────────────────────────────────────
 
-EXEMPT_ROUTES = [
+# Routes reachable without a token, matched EXACTLY.
+# '/' is here because handle_index serves the deck shell that *contains* the
+# login overlay — a remote client has to be able to load it to log in at all.
+EXEMPT_ROUTES = frozenset({
     '/',
     '/login',
     '/api/check_setup',
@@ -248,8 +273,22 @@ EXEMPT_ROUTES = [
     '/api/auth/verify',
     '/api/manifest.json',
     '/favicon.ico',
-    '/static/'
-]
+})
+
+# Genuine path PREFIXES that may be served without a token. Keep this tuple
+# tiny: it is matched with startswith(), which is exactly why '/' must never
+# appear in it — every path starts with '/', so having it here silently
+# exempted the entire API and made the JWT check below unreachable.
+EXEMPT_PREFIXES = ('/static/',)
+
+
+def is_exempt_route(path: str) -> bool:
+    """True if `path` may be served to a remote client without a valid JWT."""
+    return path in EXEMPT_ROUTES or path.startswith(EXEMPT_PREFIXES)
+
+
+# Paths that accept the master passphrase — brute-force limited separately.
+LOGIN_PATHS = frozenset({'/login', '/api/login'})
 
 # Local IPs that bypass auth (the PC itself should never be locked out)
 LOCAL_IPS = {'127.0.0.1', '::1', 'localhost'}
@@ -281,7 +320,7 @@ def create_auth_middleware(password_hash: str, jwt_secret: str, rate_limiter: Ra
             return await handler(request)
 
         # Rate limiting (remote clients only)
-        if path == '/login' and method == 'POST':
+        if path in LOGIN_PATHS and method == 'POST':
             if not rate_limiter.check_login(ip):
                 retry = rate_limiter.retry_after(ip, is_login=True)
                 return web.json_response(
@@ -299,8 +338,10 @@ def create_auth_middleware(password_hash: str, jwt_secret: str, rate_limiter: Ra
                 )
 
         # Global Remote Access Policy: Default Deny
-        # Only local IPs or explicitly exempt routes are allowed without JWT
-        if not is_local and not any(request.path.startswith(route) for route in EXEMPT_ROUTES):
+        # Only local IPs (returned above) or explicitly exempt routes are
+        # allowed without a JWT. Exact-match + a short prefix allowlist — a
+        # startswith() scan over a list containing '/' matched everything.
+        if not is_exempt_route(path):
             auth_header = request.headers.get('Authorization')
             if not auth_header or not auth_header.startswith('Bearer '):
                 return web.json_response({'error': 'Authentication required for remote access'}, status=401)

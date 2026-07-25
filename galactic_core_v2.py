@@ -71,13 +71,27 @@ class GalacticCore:
         # overlay; config.yaml stays a tracked, sanitized template.
         self.local_config_path = config_loader.local_path_for(self.config_path)
         self.config = self.load_config()
-        self.plugins = []
         self.skills = []
         self.clients = []
         self.relay = GalacticRelay(self)
         self.running = True
         self.loop = None
         self.start_time = time.time()
+
+    @property
+    def plugins(self):
+        """Legacy alias for self.skills — read-only on purpose.
+
+        These used to be two separate lists kept in sync by a mirroring loop in
+        load_skills(), which meant they could (and did) drift. There is exactly
+        one collection of loaded skills; `plugins` is just the older name for it,
+        kept so the ~38 existing `core.plugins` call sites keep working.
+        """
+        return self.skills
+
+    def get_skill(self, name):
+        """Look up a loaded skill by its skill_name."""
+        return next((s for s in self.skills if getattr(s, 'skill_name', '') == name), None)
 
     def load_config(self):
         import config_loader
@@ -160,10 +174,18 @@ class GalacticCore:
             # 1. Read the latest merged state from disk (template + overlay)
             disk_config = config_loader.load_config(self.config_path)
 
-            # 2. Update disk state with in-memory state
-            # We treat in-memory as the source of truth for logic,
-            # but disk might have metadata (like version) we shouldn't revert.
-            disk_config.update(self.config)
+            # 2. Update disk state with in-memory state.
+            # We treat in-memory as the source of truth for logic, but disk might
+            # have metadata (like a version bump from another process) we
+            # shouldn't revert. A shallow .update() replaced whole top-level
+            # SECTIONS, so a stale in-memory 'models' dict silently wiped another
+            # process's write — exactly what this method's docstring promises not
+            # to do. deep_merge keeps per-key resolution instead.
+            # Direction matters: base=disk, overlay=in-memory, so in-memory wins
+            # for the keys it defines and disk survives for the ones it doesn't.
+            # _OVERLAY_AUTHORITATIVE keys (model_overrides, aliases) are still
+            # replaced wholesale by the in-memory value, so DELETIONS STICK.
+            disk_config = config_loader.deep_merge(disk_config, self.config)
 
             # Ensure critical fields like version are synchronized
             if 'system' in disk_config:
@@ -219,6 +241,20 @@ class GalacticCore:
                 await self.ollama_manager.discover_models()
             except Exception as e:
                 await self.log(f"Ollama health check failed: {e}", priority=1)
+
+            # LM Studio Manager — the other local backend, interchangeable with Ollama.
+            # Opt-in: only activates when the user has a providers.lmstudio section,
+            # so users who don't run LM Studio never poll for it.
+            self.lmstudio_manager = None
+            _lms_cfg = self.config.get('providers', {}).get('lmstudio')
+            if _lms_cfg and _lms_cfg.get('enabled', True):
+                try:
+                    from lmstudio_manager import LMStudioManager
+                    self.lmstudio_manager = LMStudioManager(self)
+                    await self.lmstudio_manager.health_check()
+                    await self.lmstudio_manager.discover_models()
+                except Exception as e:
+                    await self.log(f"LM Studio health check failed: {e}", priority=1)
 
             self.telegram = TelegramBridge(self)
 
@@ -293,6 +329,29 @@ class GalacticCore:
             traceback.print_exc()
             return None
 
+    async def _run_skill_on_load(self, skill):
+        """Invoke a skill's on_load() hook.
+
+        on_load() is part of the documented skill contract (skills/base.py) and
+        the runtime-creation path in gateway_tools.py has always awaited it — but
+        the normal boot path never did, so any skill doing async init worked when
+        created live and silently died on every reboot. Handles both sync and
+        async implementations, and LOGS failures rather than swallowing them.
+        """
+        hook = getattr(skill, 'on_load', None)
+        if not callable(hook):
+            return
+        name = getattr(skill, 'skill_name', skill.__class__.__name__)
+        try:
+            import inspect
+            result = hook()
+            if inspect.isawaitable(result):
+                await result
+        except Exception as e:
+            await self.log(f"⚠️ Skill '{name}' on_load() failed: {e}", priority=1)
+            import traceback
+            await self.log(traceback.format_exc(), priority=1)
+
     def _read_registry(self):
         """Read skills/registry.json. Returns dict with 'installed' list."""
         import json as _json
@@ -341,6 +400,7 @@ class GalacticCore:
         for module_path, class_name in CORE_SKILLS:
             skill = self._load_skill(module_path, class_name, is_core=True)
             if skill:
+                await self._run_skill_on_load(skill)
                 loaded_skill_names.append(skill.skill_name)
 
         # Community skills from registry.json
@@ -349,6 +409,7 @@ class GalacticCore:
             module = f"skills.community.{entry['module']}"
             skill = self._load_skill(module, entry['class'], is_core=False)
             if skill:
+                await self._run_skill_on_load(skill)
                 loaded_skill_names.append(skill.skill_name)
 
         # Register all skill-provided tools into gateway
@@ -356,17 +417,12 @@ class GalacticCore:
             self.gateway.register_skill_tools(self.skills)
             await self.log(f"Skills loaded: {', '.join(loaded_skill_names)}", priority=2)
 
-        # Backwards compat: also populate self.plugins so web_deck.py can find skills by class name
-        for skill in self.skills:
-            if skill not in self.plugins:
-                self.plugins.append(skill)
+        # (self.plugins is a read-only property aliasing self.skills — no
+        # mirroring loop needed, and the two can no longer drift.)
 
         # Re-check for browser skill now that skills are loaded
         if not getattr(self, 'browser', None):
-            browser_skill = next(
-                (s for s in self.skills if getattr(s, 'skill_name', '') == 'browser_pro'),
-                None
-            )
+            browser_skill = self.get_skill('browser_pro')
             if browser_skill:
                 self.browser = browser_skill
 
@@ -636,6 +692,15 @@ class GalacticCore:
                 f"{len(models)} local models" if models else "no models found — is Ollama running?")
         except Exception as e:
             add('warn', 'Ollama', e)
+
+        try:
+            lm = getattr(self, 'lmstudio_manager', None)
+            if lm:
+                lmodels = list(getattr(lm, 'discovered_models', []) or [])
+                add('ok' if lmodels else 'warn', 'LM Studio',
+                    f"{len(lmodels)} local models" if lmodels else "enabled but no models — is LM Studio's server running?")
+        except Exception as e:
+            add('warn', 'LM Studio', e)
 
         try:
             gw = getattr(self, 'gateway', None)
@@ -937,6 +1002,8 @@ class GalacticCore:
         asyncio.create_task(self.web.run())
         asyncio.create_task(self.scheduler.run())
         asyncio.create_task(self.ollama_manager.auto_discover_loop())
+        if getattr(self, 'lmstudio_manager', None):
+            asyncio.create_task(self.lmstudio_manager.auto_discover_loop())
         asyncio.create_task(self._recovery_check_loop())
         asyncio.create_task(self._update_check_loop())
         asyncio.create_task(self._terminal_input_loop())

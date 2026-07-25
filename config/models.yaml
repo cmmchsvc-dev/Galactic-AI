@@ -366,8 +366,17 @@ providers:
     name: Xiaomi MiMo V2 Flash 📱
     enabled: true
   moonshot:
-  - id: kimi-k2.5
-    name: Kimi K2.5 🌙
+  - id: kimi-k3
+    name: Kimi K3 🌙👑
+    enabled: true
+  - id: kimi-k2.7-code
+    name: Kimi K2.7 Code 💻
+    enabled: true
+  - id: kimi-k2.7-code-highspeed
+    name: Kimi K2.7 Code Highspeed ⚡
+    enabled: true
+  - id: kimi-k2.6
+    name: Kimi K2.6 🌙
     enabled: true
   qianfan:
   - id: deepseek-v3.2

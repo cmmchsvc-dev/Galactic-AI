@@ -44,6 +44,16 @@ class OllamaManager:
         self._last_health_check: float = 0.0
         self._cached_health: bool = False
         self._last_model_set: set[str] = set()  # Track changes — only log when models change
+        self._ctx_probed: set[str] = set()      # Models whose /api/show already answered
+        # asyncio only holds WEAK references to tasks — an un-retained
+        # create_task() can be garbage-collected mid-flight. Keep them here.
+        self._bg_tasks: set = set()
+
+    def _track(self, task):
+        """Retain a fire-and-forget task so the GC can't drop it mid-flight."""
+        self._bg_tasks.add(task)
+        task.add_done_callback(self._bg_tasks.discard)
+        return task
 
     # ─────────────────────────────────────────────────────────────────
     # Public API
@@ -131,8 +141,13 @@ class OllamaManager:
                     except Exception:
                         pass  # memory imprint is best-effort
 
-            # Fetch context windows in parallel (fire-and-forget, best-effort)
-            asyncio.create_task(self._fetch_context_windows(models))
+            # Context window + capabilities are IMMUTABLE per model tag, and
+            # _fetch_context_windows costs one sequential POST /api/show per
+            # installed model. Outside this guard that was ~16 HTTP round-trips
+            # a minute, forever. Probe only models we haven't heard back about.
+            unprobed = [m for m in models if m not in self._ctx_probed]
+            if unprobed:
+                self._track(asyncio.create_task(self._fetch_context_windows(unprobed)))
 
             # Always broadcast to web UI so the model grid stays fresh
             await self.core.relay.emit(2, "ollama_models", models)
@@ -194,6 +209,11 @@ class OllamaManager:
         """
         Best-effort: for each model call POST /api/show to extract context_length
         from the modelinfo blob.  Results stored in self.model_context_windows.
+
+        Only called for models not yet in self._ctx_probed — a model is marked
+        probed once its /api/show ANSWERS, so a genuinely failed request retries
+        on the next discovery cycle while a model whose response simply has no
+        context_length is never re-asked.
         """
         for model_name in models:
             try:
@@ -217,5 +237,6 @@ class OllamaManager:
                     )
                     if ctx:
                         self.model_context_windows[model_name] = int(ctx)
+                    self._ctx_probed.add(model_name)  # answered — don't re-ask
             except Exception:
-                pass  # best-effort
+                pass  # best-effort; stays unprobed so the next cycle retries

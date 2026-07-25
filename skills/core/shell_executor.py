@@ -38,12 +38,35 @@ class ShellSkill(GalacticSkill):
         command = args.get('command')
         if not command:
             return "[ERROR] No command provided."
-        
+
         cwd = args.get('cwd') or os.getcwd()
         timeout = int(args.get('timeout', 120))
         detach = bool(args.get('detach', False))
-        
+
+        # ── The Crucible ─────────────────────────────────────────────────────
+        # Only the LLM tool-call path is gated. Direct execute() callers (the
+        # deck's console, telegram /shell) are the human asking in person.
+        approved, reason = await self._approve_shell(command, cwd)
+        if not approved:
+            return reason
+
         return await self.execute(command, cwd=cwd, timeout=timeout, detach=detach)
+
+    async def _approve_shell(self, command, cwd):
+        """Route exec_shell through the gateway's approval gate when it's on.
+
+        Returns (approved, reason|None) — (True, None) when require_approval is
+        off, or when the gateway build predates the command gate.
+        """
+        gw = getattr(self.core, 'gateway', None)
+        approve = getattr(gw, '_approve_command', None)
+        if not approve:
+            return True, None
+        try:
+            return await approve('exec_shell', command, target=cwd)
+        except Exception as e:
+            await self.core.log(f"⚠️ exec_shell approval gate errored ({e}) — refusing.", priority=1)
+            return False, f"[BLOCKED] Approval gate error, command not run: {e}"
 
     # ── Enhanced execute() ───────────────────────────────────────────────────
     async def execute(self, command, cwd=None, timeout=120, detach=False):

@@ -2,11 +2,234 @@ import asyncio
 import asyncio.subprocess
 import json
 import hashlib
+import re
 import time
 import os
 import secrets
 from aiohttp import web
 import jinja2
+
+# ── Cross-origin / DNS-rebinding guard ───────────────────────────────────────
+# Listening on 127.0.0.1 does NOT protect this API from the browser. Any page
+# the user visits can fire a CORS-"simple" request at http://127.0.0.1:<port>:
+#   fetch(url, {method:'POST', mode:'no-cors',
+#               headers:{'Content-Type':'text/plain'}, body:'{"tool":"exec_shell",...}'})
+# There is no preflight, the response is opaque — but the handler still RUNS,
+# and request.json() ignores Content-Type, so /api/tool_invoke would have
+# executed arbitrary shell commands. The guard below rejects state-changing and
+# WebSocket requests that a browser tells us are cross-site, and pins the Host
+# header to loopback so a rebinding domain can't pose as the deck.
+
+_LOCAL_HOSTNAMES = frozenset({'localhost', '127.0.0.1', '::1', '0.0.0.0'})
+_LOOPBACK_BINDS = frozenset({'localhost', '127.0.0.1', '::1'})
+# Browser extensions are a separate trust boundary and the bundled Galactic
+# Chrome bridge legitimately POSTs /api/chat and opens /ws/chrome_bridge.
+_EXTENSION_ORIGIN_SCHEMES = ('chrome-extension://', 'moz-extension://', 'safari-web-extension://')
+_STATE_CHANGING_METHODS = frozenset({'POST', 'PUT', 'PATCH', 'DELETE'})
+
+
+def _split_hostport(netloc):
+    """('localhost', '17789') from 'localhost:17789'. IPv6-literal safe."""
+    netloc = (netloc or '').strip().lower()
+    if netloc.startswith('['):                      # [::1]:17789
+        host, _, rest = netloc.partition(']')
+        return host[1:], (rest[1:] if rest.startswith(':') else '')
+    if netloc.count(':') == 1:
+        host, _, port = netloc.partition(':')
+        return host, port
+    return netloc, ''                               # bare host, or bare IPv6
+
+
+def _is_ip_literal(host):
+    import ipaddress
+    try:
+        ipaddress.ip_address(host)
+        return True
+    except ValueError:
+        return False
+
+
+def _origin_of(url):
+    """'http://host:port' from a full URL (used for the Referer fallback)."""
+    scheme, sep, rest = (url or '').partition('://')
+    if not sep:
+        return ''
+    return f"{scheme}://{rest.split('/', 1)[0]}"
+
+
+def create_origin_guard(port, remote_access=False, allowed_origins=None,
+                        allowed_hosts=None, bind_host=None, log=None):
+    """aiohttp middleware enforcing same-origin + Host pinning. Always installed.
+
+    Rules for state-changing (POST/PUT/PATCH/DELETE) and WebSocket-upgrade
+    requests:
+      * Origin present  -> must be this deck's own origin (or a browser
+        extension / a configured allowed_origins entry), else 403.
+      * Origin absent   -> allowed only if the request isn't browser-shaped.
+        Modern browsers always emit Sec-Fetch-Site, so 'cross-site'/'same-site'
+        there is proof of an attack; curl, galactic_cli.py and native apps send
+        neither header and pass through untouched.
+    Every request additionally has its Host header pinned to loopback (plus LAN
+    literals in remote mode) so `evil.com -> 127.0.0.1` rebinding is refused.
+    """
+    port = str(port)
+    allowed_origins = {o.rstrip('/').lower() for o in (allowed_origins or []) if o and o != '*'}
+    allowed_hosts = {h.lower() for h in (allowed_hosts or []) if h}
+    bind_host = str(bind_host or '127.0.0.1').lower()
+    allowed_hosts.add(bind_host)
+    # Whether this deck is reachable from off-box at all. If it is, LAN IP
+    # literals are legitimate Host values; if it isn't, only loopback is, and
+    # anything else means a domain name was pointed at us (DNS rebinding).
+    exposed = bool(remote_access) or bind_host not in _LOOPBACK_BINDS
+    _last_log = [0.0]
+
+    def _host_ok(host_header):
+        if not host_header:
+            return True                             # HTTP/1.0 / non-browser clients
+        host, hport = _split_hostport(host_header)
+        if hport and hport != port:
+            return False
+        if host in _LOCAL_HOSTNAMES or host in allowed_hosts:
+            return True
+        # An exposed deck is reached by raw LAN IP or an mDNS name; neither can
+        # be pointed at us by an attacker's DNS record the way a domain can.
+        return bool(exposed and (_is_ip_literal(host) or host.endswith('.local')))
+
+    def _origin_ok(origin, host_header):
+        o = origin.rstrip('/').lower()
+        if o.startswith(_EXTENSION_ORIGIN_SCHEMES) or o in allowed_origins:
+            return True
+        scheme, sep, netloc = o.partition('://')
+        if not sep or not netloc:
+            return False                            # "null" and other opaque origins
+        o_host, o_port = _split_hostport(netloc)
+        o_port = o_port or ('443' if scheme == 'https' else '80')
+        if o_port != port:
+            return False                            # different port = different origin
+        h_host, _ = _split_hostport(host_header or '')
+        if h_host and o_host == h_host:
+            return True                             # true same-origin
+        # localhost / 127.0.0.1 / [::1] are the same server, spelled differently
+        return o_host in _LOCAL_HOSTNAMES and (not h_host or h_host in _LOCAL_HOSTNAMES)
+
+    async def _reject(request, reason, origin, host_header):
+        if log:
+            now = time.time()
+            if now - _last_log[0] > 10:             # never let a flood amplify into log spam
+                _last_log[0] = now
+                try:
+                    await log(f"🛡️ Blocked {reason}: {request.method} {request.path} "
+                              f"(Origin={origin or '-'}, Host={host_header or '-'}, "
+                              f"from {request.remote or '?'})", priority=1)
+                except Exception:
+                    pass
+        return web.json_response(
+            {'error': 'Cross-origin request rejected',
+             'detail': 'This endpoint only accepts requests from the Control Deck itself.'},
+            status=403)
+
+    @web.middleware
+    async def origin_guard(request, handler):
+        host_header = request.headers.get('Host', '')
+        if not _host_ok(host_header):
+            return await _reject(request, 'bad Host header', request.headers.get('Origin', ''), host_header)
+
+        origin = request.headers.get('Origin', '')
+        fetch_site = request.headers.get('Sec-Fetch-Site', '').lower()
+        is_ws = 'websocket' in request.headers.get('Upgrade', '').lower()
+
+        if request.method in _STATE_CHANGING_METHODS or is_ws:
+            if origin:
+                if not _origin_ok(origin, host_header):
+                    return await _reject(request, 'cross-origin write', origin, host_header)
+            else:
+                # Fall back to Referer when a browser omitted Origin.
+                referer = request.headers.get('Referer', '')
+                if referer and not _origin_ok(_origin_of(referer), host_header):
+                    return await _reject(request, 'cross-origin referer', referer, host_header)
+                if fetch_site and fetch_site not in ('same-origin', 'none'):
+                    return await _reject(request, 'cross-site fetch', origin, host_header)
+        elif fetch_site == 'cross-site' and request.path.startswith('/api/'):
+            # Defence in depth: nothing legitimately hotlinks the JSON API,
+            # except an origin the user explicitly whitelisted (which also
+            # needs its CORS preflight to reach the CORS middleware).
+            if not (origin and _origin_ok(origin, host_header)):
+                return await _reject(request, 'cross-site read', origin, host_header)
+
+        return await handler(request)
+
+    return origin_guard
+
+
+# ── Config secret handling ───────────────────────────────────────────────────
+# /api/config_full used to return config.yaml verbatim — every provider apiKey,
+# the Telegram bot token, the Gmail app password, jwt_secret and password_hash.
+
+SECRET_SENTINEL = "__SET__"
+
+_SECRET_KEY_RE = re.compile(
+    r'(?:^|_)(?:api_?key|token|secret|password|passwd|passphrase|'
+    r'credential|creds|hash|private_key|access_key|auth)(?:$|_)', re.I)
+
+# Only these top-level sections may be written through /api/config_update.
+# 'web' is deliberately absent: it holds remote_access, password_hash,
+# jwt_secret, host and port. So is 'providers' and every messaging bridge.
+CONFIG_WRITABLE_SECTIONS = frozenset({
+    'models', 'model_overrides', 'aliases', 'gateway', 'system', 'costs',
+    'antigravity', 'browser', 'video', 'tool_timeouts', 'paths', 'memory',
+    'voice', 'voice_agent', 'personality', 'swarm', 'subagents', 'ui',
+    'logging', 'chrome_bridge',
+})
+
+
+def _is_secret_key(key):
+    """True if a config key name looks like it holds a credential."""
+    # Normalise camelCase (apiKey -> api_key) so one pattern covers both styles.
+    normalised = re.sub(r'(?<=[a-z0-9])(?=[A-Z])', '_', str(key))
+    return bool(_SECRET_KEY_RE.search(normalised))
+
+
+def _redact_secrets(node):
+    """Deep-copy `node`, replacing credential values with SECRET_SENTINEL.
+
+    Empty values and 'YOUR_…' template placeholders are preserved so the UI can
+    still distinguish "configured" from "never set". Booleans are left alone —
+    they are flags, not secrets.
+    """
+    if isinstance(node, dict):
+        out = {}
+        for key, value in node.items():
+            if _is_secret_key(key) and not isinstance(value, bool):
+                if isinstance(value, (dict, list)):
+                    out[key] = SECRET_SENTINEL
+                elif value in (None, '', 0):
+                    out[key] = value
+                elif isinstance(value, str) and value.startswith('YOUR_'):
+                    out[key] = value
+                else:
+                    out[key] = SECRET_SENTINEL
+            else:
+                out[key] = _redact_secrets(value)
+        return out
+    if isinstance(node, list):
+        return [_redact_secrets(v) for v in node]
+    return node
+
+
+def _config_key_writable(key_path):
+    """(allowed, reason) for a dotted key path posted to /api/config_update."""
+    parts = [p for p in str(key_path).split('.') if p]
+    if not parts:
+        return False, 'empty key'
+    if len(parts) > 8:
+        return False, 'malformed key'
+    if parts[0] not in CONFIG_WRITABLE_SECTIONS:
+        return False, f"section '{parts[0]}' is not writable from the deck"
+    for part in parts:
+        if _is_secret_key(part):
+            return False, 'credential fields cannot be set here'
+    return True, ''
+
 
 class GalacticWebDeck:
     def __init__(self, core):
@@ -31,8 +254,19 @@ class GalacticWebDeck:
                 cfg['web']['jwt_secret'] = self.jwt_secret
                 self._save_config(cfg)
 
-        # Build app with middleware
-        middlewares = []
+        # Build app with middleware.
+        # The origin guard is installed FIRST and ALWAYS — it is the only thing
+        # standing between a random web page the user visits and /api/tool_invoke.
+        # (The auth middleware below is gated on remote_access, so for a normal
+        # localhost install no middleware ran at all before this.)
+        middlewares = [create_origin_guard(
+            self.port,
+            remote_access=self.remote_access,
+            allowed_origins=self.config.get('allowed_origins', []),
+            allowed_hosts=self.config.get('allowed_hosts', []),
+            bind_host=self.host,
+            log=getattr(core, 'log', None),
+        )]
         if self.remote_access and self.password_hash:
             from remote_access import create_auth_middleware, RateLimiter, create_cors_middleware
             rate_limit = self.config.get('rate_limit', 60)
@@ -55,6 +289,7 @@ class GalacticWebDeck:
         # Ollama live endpoints
         self.app.router.add_get('/api/ollama_models', self.handle_ollama_models)
         self.app.router.add_get('/api/ollama_status', self.handle_ollama_status)
+        self.app.router.add_get('/api/lmstudio_status', self.handle_lmstudio_status)
         # Control APIs
         self.app.router.add_post('/api/chat', self.handle_chat)
         self.app.router.add_post('/api/chat/boost', self.handle_chat_boost)
@@ -90,6 +325,9 @@ class GalacticWebDeck:
         self.app.router.add_post('/api/sessions/save', self.handle_session_save)
         self.app.router.add_post('/api/sessions/switch', self.handle_session_switch)
         self.app.router.add_post('/api/sessions/delete', self.handle_session_delete)
+        self.app.router.add_get('/api/workspaces', self.handle_workspaces)
+        self.app.router.add_post('/api/workspaces/switch', self.handle_workspace_switch)
+        self.app.router.add_post('/api/workspaces/delete', self.handle_workspace_delete)
         self.app.router.add_get('/api/logs', self.handle_logs)
         self.app.router.add_get('/api/image/{filename}', self.handle_serve_image)
         self.app.router.add_get('/api/video/{filename}', self.handle_serve_video)
@@ -404,12 +642,9 @@ class GalacticWebDeck:
             return web.json_response([], status=200)
 
     async def handle_index(self, request):
-        theme = request.cookies.get('theme', 'modern')
-        file_map = {
-            'legacy': 'deck_legacy.html',
-            'modern': 'deck_modern.html'
-        }
-        filename = file_map.get(theme, 'deck_modern.html')
+        # Legacy (Classic) deck retired — Modern is the only interface. A stale
+        # 'theme=legacy' cookie from an old session still gets Modern.
+        filename = 'deck_modern.html'
 
         filepath = os.path.join(os.path.dirname(os.path.abspath(__file__)), filename)
         if not os.path.exists(filepath):
@@ -506,6 +741,17 @@ class GalacticWebDeck:
             status = self.core.ollama_manager.get_status()
         else:
             status = {"healthy": False, "base_url": "unknown", "models": [], "model_count": 0}
+        return web.json_response(status)
+
+    async def handle_lmstudio_status(self, request):
+        """Return LM Studio health status (mirrors /api/ollama_status)."""
+        lm = getattr(self.core, 'lmstudio_manager', None)
+        if lm:
+            status = lm.get_status()
+            status['enabled'] = True
+        else:
+            status = {"healthy": False, "enabled": False, "base_url": "not configured",
+                      "models": [], "model_count": 0}
         return web.json_response(status)
 
     async def handle_serve_audio(self, request):
@@ -757,6 +1003,12 @@ class GalacticWebDeck:
 
             if cmd == "/clear":
                 self.core.gateway.history.clear()
+                # Reset the real-usage snapshot so the CTX meter drops to ~0
+                self.core.gateway._last_usage = None
+                self.core.gateway._last_usage_final = None
+                # Retire any persisted plan — /clear is a full fresh start
+                self.core.gateway.active_plan = None
+                self.core.gateway._last_plan = None
                 # Remove the chat_history.jsonl file so it doesn't reload on refresh
                 h_file = getattr(self.core.gateway, 'history_file', None)
                 if h_file and os.path.exists(h_file):
@@ -1213,6 +1465,13 @@ class GalacticWebDeck:
         if hasattr(self.core, 'ollama_manager'):
             ollama_status = self.core.ollama_manager.get_status()
 
+        lm = getattr(self.core, 'lmstudio_manager', None)
+        if lm:
+            lmstudio_status = lm.get_status()
+            lmstudio_status['enabled'] = True
+        else:
+            lmstudio_status = {'enabled': False, 'healthy': False, 'models': [], 'model_count': 0}
+
         model_status = {}
         mm = getattr(self.core, 'model_manager', None)
         if mm:
@@ -1237,7 +1496,7 @@ class GalacticWebDeck:
         # Provider key status (configured yes/no — NOT the keys themselves)
         providers_configured = {}
         for name, cfg in self.core.config.get('providers', {}).items():
-            if name == 'ollama':
+            if name in ('ollama', 'lmstudio'):
                 providers_configured[name] = True  # Always "configured" (local)
             elif isinstance(cfg, dict):
                 key = cfg.get('apiKey') or cfg.get('api_key') or ''
@@ -1310,8 +1569,9 @@ class GalacticWebDeck:
             # Plugins
             'plugins': plugin_statuses,
 
-            # Ollama
+            # Local backends
             'ollama': ollama_status,
+            'lmstudio': lmstudio_status,
 
             # Bridges
             'telegram': {
@@ -1450,9 +1710,9 @@ class GalacticWebDeck:
                     await self.core.model_manager._save_config()
                 except Exception:
                     pass  # Prevent file lock recursion loops
-            # Check if API key is actually configured
+            # Check if API key is actually configured (local backends never need one)
             current_key = getattr(self.core.gateway.llm, 'api_key', '')
-            if provider not in ('ollama',) and (not current_key or current_key == 'NONE'):
+            if provider not in ('ollama', 'lmstudio') and (not current_key or current_key == 'NONE'):
                 return web.json_response({'ok': False, 'needs_key': True, 'provider': provider, 'model': model})
             await self.core.log(f"Shifted Model via Web Deck: {model}", priority=2)
             return web.json_response({'ok': True, 'provider': provider, 'model': model})
@@ -1750,7 +2010,11 @@ class GalacticWebDeck:
     async def handle_config_full(self, request):
         import config_loader
         data = config_loader.load_config(getattr(self.core, 'config_path', None))
-        return web.json_response(data or {})
+        # Never ship credentials to a browser. The deck's settings screen only
+        # reads config.models.* from this endpoint — it never displays or
+        # round-trips a key — so every secret-shaped value becomes a sentinel
+        # that tells the UI "this is configured" and nothing more.
+        return web.json_response(_redact_secrets(data or {}))
 
     async def handle_config_update(self, request):
         try:
@@ -1759,10 +2023,19 @@ class GalacticWebDeck:
             value = payload.get("value")
             if not key_path:
                 return web.json_response({"error": "No key provided"}, status=400)
-            
+
+            allowed, why = _config_key_writable(key_path)
+            if not allowed:
+                await self.core.log(f"🛡️ Rejected config_update for '{key_path}' ({why})", priority=1)
+                return web.json_response({"error": f"Key not writable via this endpoint: {why}"}, status=403)
+
+            # A redacted value must never be written back as the literal sentinel.
+            if isinstance(value, str) and value == SECRET_SENTINEL:
+                return web.json_response({"error": "Refusing to write redacted placeholder"}, status=400)
+
             import config_loader
             cfg = config_loader.load_config(getattr(self.core, 'config_path', None)) or {}
-                
+
             parts = key_path.split(".")
             d = cfg
             for p in parts[:-1]:
@@ -1974,6 +2247,22 @@ class GalacticWebDeck:
         # Password
         pw = data.get('password', '')
         if pw:
+            # /api/setup is in EXEMPT_ROUTES (first-run has no token yet) and
+            # used to overwrite web.password_hash unconditionally — so once the
+            # remote auth middleware actually enforced anything, a LAN client
+            # could still reset the master passphrase. Re-setting an existing
+            # password is now local-only; genuine first run is unaffected.
+            existing = (self.password_hash or '').strip()
+            configured = existing and existing not in (
+                'YOUR_PASSWORD_HASH', 'SHA256_HASH_OF_YOUR_PASSWORD')
+            peername = request.transport.get_extra_info('peername') if request.transport else None
+            client_ip = peername[0] if peername else (request.remote or '')
+            if configured and client_ip not in ('127.0.0.1', '::1', 'localhost'):
+                await self.core.log(
+                    f"🛡️ Refused remote /api/setup password reset from {client_ip}", priority=1)
+                return web.json_response(
+                    {'error': 'Setup has already run — change the passphrase from this PC.'},
+                    status=403)
             h = self._hash_password(pw)
             if 'web' not in cfg:
                 cfg['web'] = {}
@@ -2035,6 +2324,20 @@ class GalacticWebDeck:
             if 'ollama' not in cfg['providers']:
                 cfg['providers']['ollama'] = {}
             cfg['providers']['ollama']['baseUrl'] = ollama_url
+
+        # LM Studio URL — a providers.lmstudio section is what opts the manager in
+        lmstudio_url = data.get('lmstudio_url', '')
+        if lmstudio_url:
+            if 'lmstudio' not in cfg['providers']:
+                cfg['providers']['lmstudio'] = {}
+            cfg['providers']['lmstudio']['baseUrl'] = lmstudio_url
+            if not getattr(self.core, 'lmstudio_manager', None):
+                try:
+                    from lmstudio_manager import LMStudioManager
+                    self.core.lmstudio_manager = LMStudioManager(self.core)
+                    asyncio.create_task(self.core.lmstudio_manager.auto_discover_loop())
+                except Exception as e:
+                    await self.core.log(f"LM Studio activation failed: {e}", priority=2)
 
         # ElevenLabs TTS
         el_key = data.get('elevenlabs_key', '')
@@ -2599,38 +2902,54 @@ class GalacticWebDeck:
         
         # Start a periodic update task for this specific socket
         async def updater():
+            # Last frame we actually put on the wire, per stream. Aura imprints
+            # change rarely, so this skips almost every aura send; telemetry
+            # carries a live uptime counter so it legitimately changes each tick.
+            last_sent = {}
+
+            async def send_if_changed(kind, payload):
+                frame = json.dumps({"type": kind, "data": payload})
+                if frame != last_sent.get(kind):
+                    await ws.send_str(frame)
+                    last_sent[kind] = frame
+
             while not ws.closed:
                 try:
                     uptime = int(time.time() - self.core.start_time)
-                    plugins_status = {
-                        "sniper": next((p.enabled for p in self.core.plugins if "Sniper" in p.name), False),
-                        "watchdog": next((p.enabled for p in self.core.plugins if "Watchdog" in p.name), False)
-                    }
                     _ctx_used, _ctx_max = self._context_usage()
-                    telemetry = {
-                        "type": "telemetry",
-                        "data": {
-                            "model": self.core.gateway.llm.model,
-                            "provider": self.core.gateway.llm.provider,
-                            "tin": self.core.gateway.total_tokens_in,
-                            "tout": self.core.gateway.total_tokens_out,
-                            "uptime": uptime,
-                            "ctx_used": _ctx_used,
-                            "ctx_max": _ctx_max,
-                            "plugins": plugins_status
+                    await send_if_changed("telemetry", {
+                        "model": self.core.gateway.llm.model,
+                        "provider": self.core.gateway.llm.provider,
+                        "tin": self.core.gateway.total_tokens_in,
+                        "tout": self.core.gateway.total_tokens_out,
+                        "uptime": uptime,
+                        "ctx_used": _ctx_used,
+                        "ctx_max": _ctx_max,
+                        "plugins": {
+                            "sniper": self._skill_enabled("sniper"),
+                            "watchdog": self._skill_enabled("watchdog"),
                         }
-                    }
-                    await ws.send_str(json.dumps(telemetry))
-                    
+                    })
+
                     # Update Aura Imprints
-                    aura_data = {
-                        "type": "aura_update",
-                        "data": self.core.memory.index.get('memories', [])[-15:]
-                    }
-                    await ws.send_str(json.dumps(aura_data))
-                    
-                    await asyncio.sleep(2)
-                except: break
+                    await send_if_changed("aura_update",
+                                          self.core.memory.index.get('memories', [])[-15:])
+
+                    await asyncio.sleep(5)
+                except asyncio.CancelledError:
+                    raise
+                except Exception as e:
+                    # Was a bare `except: break`. An AttributeError on the very
+                    # first tick (skills expose skill_name, not name) silently
+                    # killed telemetry for the whole connection and nobody could
+                    # see why — hence the deck's polling fallback.
+                    try:
+                        await self.core.log(
+                            f"[Deck] Telemetry updater stopped: {type(e).__name__}: {e}",
+                            priority=2)
+                    except Exception:
+                        pass
+                    break
 
         update_task = asyncio.create_task(updater())
         
@@ -2675,7 +2994,8 @@ class GalacticWebDeck:
                     elif payload.get('type') == 'toggle_plugin':
                         name = payload['name']
                         state = payload['state']
-                        plugin = next((p for p in self.core.plugins if name in p.name.lower()), None)
+                        plugin = next((p for p in self.core.plugins
+                       if name in getattr(p, 'skill_name', type(p).__name__).lower()), None)
                         if plugin:
                             plugin.enabled = state
                             action = "Activated" if state else "Deactivated"
@@ -2839,6 +3159,47 @@ class GalacticWebDeck:
 
     # ── Named chat sessions ─────────────────────────────────────────────────────
 
+    # ── Project Workspaces (Antigravity-style) ─────────────────────────
+    async def handle_workspaces(self, request):
+        """GET /api/workspaces — {active, workspaces:[{name,path,last_used,exists}]}"""
+        gw = self.core.gateway
+        return web.json_response({
+            'active': gw.get_active_workspace(),
+            'workspaces': gw.get_workspaces(),
+        })
+
+    async def handle_workspace_switch(self, request):
+        """POST /api/workspaces/switch — {path} or {name} — activate (adding if new)."""
+        try:
+            data = await request.json()
+        except Exception:
+            return web.json_response({'error': 'Invalid JSON'}, status=400)
+        gw = self.core.gateway
+        path = (data.get('path') or '').strip()
+        name = (data.get('name') or '').strip()
+        if not path and name:
+            for w in gw.get_workspaces():
+                if w['name'].lower() == name.lower():
+                    path = w['path']
+                    break
+        if not path:
+            return web.json_response({'ok': False, 'error': 'path (or known name) required'}, status=400)
+        try:
+            ws_name = gw.set_active_workspace(path, name or None)
+        except ValueError as e:
+            return web.json_response({'ok': False, 'error': str(e)}, status=400)
+        await self.core.log(f"📁 Active workspace → {ws_name}  ({gw.get_active_workspace()})", priority=2)
+        return web.json_response({'ok': True, 'active': gw.get_active_workspace(), 'name': ws_name})
+
+    async def handle_workspace_delete(self, request):
+        """POST /api/workspaces/delete — {path} — forget a workspace (files untouched)."""
+        try:
+            data = await request.json()
+        except Exception:
+            return web.json_response({'error': 'Invalid JSON'}, status=400)
+        self.core.gateway.remove_workspace(data.get('path') or '')
+        return web.json_response({'ok': True, 'active': self.core.gateway.get_active_workspace()})
+
     def _sessions_dir(self):
         logs = self.core.config.get('paths', {}).get('logs', './logs')
         d = os.path.join(logs, 'sessions')
@@ -2866,11 +3227,22 @@ class GalacticWebDeck:
                         count = sum(1 for line in f if line.strip())
                 except Exception:
                     count = 0
-                out.append({
+                entry = {
                     'name': fn[:-6],
                     'messages': count,
                     'updated': int(os.path.getmtime(path)),
-                })
+                }
+                # Sidecar metadata: which project workspace this convo belongs to
+                meta_path = path[:-6] + '.meta.json'
+                try:
+                    if os.path.exists(meta_path):
+                        with open(meta_path, 'r', encoding='utf-8') as mf:
+                            meta = _json.load(mf) or {}
+                        entry['workspace'] = meta.get('workspace', '')
+                        entry['ws_name'] = meta.get('ws_name', '')
+                except Exception:
+                    pass
+                out.append(entry)
             out.sort(key=lambda s: s['updated'], reverse=True)
         except Exception as e:
             return web.json_response({'sessions': [], 'error': str(e)})
@@ -2899,6 +3271,17 @@ class GalacticWebDeck:
                         f.write(_json.dumps(msg, ensure_ascii=False) + '\n')
             with open(dest, 'r', encoding='utf-8') as f:
                 count = sum(1 for line in f if line.strip())
+            # Tag the convo with its project workspace (Antigravity-style)
+            try:
+                gw = self.core.gateway
+                ws = gw.get_active_workspace()
+                meta = {'workspace': ws,
+                        'ws_name': (os.path.basename(ws.rstrip('\\/')) if ws else ''),
+                        'saved': int(time.time())}
+                with open(dest[:-6] + '.meta.json', 'w', encoding='utf-8') as mf:
+                    _json.dump(meta, mf)
+            except Exception:
+                pass
             await self.core.log(f"💾 Chat session saved: '{name}' ({count} messages)", priority=2)
             return web.json_response({'ok': True, 'name': name, 'messages': count})
         except Exception as e:
@@ -2953,6 +3336,12 @@ class GalacticWebDeck:
             return web.json_response({'error': 'Session not found'}, status=404)
         try:
             os.remove(src)
+            try:
+                meta = src[:-6] + '.meta.json'
+                if os.path.exists(meta):
+                    os.remove(meta)
+            except Exception:
+                pass
             await self.core.log(f"🗑️ Deleted chat session '{name}'.", priority=2)
             return web.json_response({'ok': True})
         except Exception as e:
@@ -3293,6 +3682,20 @@ class GalacticWebDeck:
     def _get_voice_agent_skill(self):
         return next((s for s in self.core.skills if getattr(s, 'skill_name', '') == 'voice_agent'), None)
 
+    def _skill_enabled(self, needle):
+        """Is a loaded skill whose name contains `needle` currently enabled?
+
+        Skills declare `skill_name` — they have no `.name`, so the old
+        `"Sniper" in p.name` lookup raised AttributeError on the first plugin.
+        """
+        needle = needle.lower()
+        for p in self.core.plugins:
+            name = (getattr(p, 'skill_name', '') or getattr(p, 'name', '')
+                    or p.__class__.__name__)
+            if needle in str(name).lower():
+                return bool(getattr(p, 'enabled', True))
+        return False
+
     def _memory_row_count(self):
         """Total stored memories. Works with the semantic engine (SQLite) and
         the Lite keyword engine (no db_conn)."""
@@ -3310,7 +3713,19 @@ class GalacticWebDeck:
     def _context_usage(self):
         """(used_tokens, max_tokens) for the active model. Prefers real token
         counts from the last LLM call; falls back to a chars/4 estimate of the
-        in-memory history so the meter is never stuck at 0."""
+        in-memory history so the meter is never stuck at 0.
+
+        Memoised for 2s: the fallback walks the entire conversation, and this is
+        called by every open WebSocket's telemetry tick plus the polling
+        endpoint. One computation now serves all of them."""
+        cached = getattr(self, '_ctx_usage_cache', None)
+        if cached and (time.time() - cached[0]) < 2.0:
+            return cached[1]
+        result = self._context_usage_uncached()
+        self._ctx_usage_cache = (time.time(), result)
+        return result
+
+    def _context_usage_uncached(self):
         gw = self.core.gateway
         ctx_max = 0
         try:
@@ -3325,7 +3740,13 @@ class GalacticWebDeck:
         except Exception:
             char_count = 0
         est_tokens = char_count // 4
-        last = getattr(gw, '_last_usage', None) or {}
+        # Prefer the REAL prompt size of the last completed call (captured from
+        # the provider's usage report — includes system prompt + tools, which
+        # the chars/4 history estimate completely misses). Read ONLY the
+        # main-chat snapshot (_last_usage_final): _last_usage is shared state
+        # that an isolated Architect/planner overwrites mid-run, which made the
+        # CTX meter show Kimi's 25k planning context as the main model's.
+        last = getattr(gw, '_last_usage_final', None) or {}
         usage = max(int(last.get('prompt_tokens') or 0), est_tokens)
         return usage, int(ctx_max or 0)
 
@@ -3535,28 +3956,89 @@ class GalacticWebDeck:
 
         protocol = 'http'
         if self.remote_access:
-            # Remote mode: plain HTTP on 0.0.0.0 for LAN access.
-            # TLS with self-signed certs causes browser warnings,
-            # so we skip it for LAN use. Auth is handled by JWT + password.
+            # Remote mode used to serve plain HTTP on 0.0.0.0 — the login
+            # passphrase and the bearer token crossed the LAN in cleartext.
+            # Now: TLS on the LAN interface, plain HTTP kept on loopback only
+            # (never leaves the machine) so galactic_cli.py and the Chrome
+            # extension, which hardcode http://127.0.0.1, keep working.
 
-            site = web.TCPSite(runner, '0.0.0.0', self.port, ssl_context=None)
-            if not await self._start_site(site):
-                return
-
-            # Detect LAN IP for the log message
+            # Detect this machine's addresses. We can't just bind 0.0.0.0 with
+            # TLS and 127.0.0.1 without it — same port, and Windows won't allow
+            # the overlap — so enumerate every non-loopback interface instead
+            # (Wi-Fi, Ethernet, VPN) rather than trusting one lucky guess.
+            import socket
+            local_ip = '0.0.0.0'
+            lan_ips = []
             try:
-                import socket
                 s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
                 s.connect(('8.8.8.8', 80))
                 local_ip = s.getsockname()[0]
                 s.close()
+                lan_ips.append(local_ip)
             except Exception:
-                local_ip = '0.0.0.0'
+                pass
+            try:
+                for addr in socket.gethostbyname_ex(socket.gethostname())[2]:
+                    if not addr.startswith('127.') and addr not in lan_ips:
+                        lan_ips.append(addr)
+            except Exception:
+                pass
+            if local_ip == '0.0.0.0' and lan_ips:
+                local_ip = lan_ips[0]
 
-            await self.core.log(
-                f"REMOTE ACCESS ENABLED - Control Deck at http://{local_ip}:{self.port}  (LAN + localhost)",
-                priority=1
-            )
+            ssl_ctx = None
+            try:
+                from remote_access import generate_self_signed_cert, create_ssl_context
+                cert_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'certs')
+                cert_path, key_path, self.cert_fingerprint = generate_self_signed_cert(cert_dir)
+                ssl_ctx = create_ssl_context(cert_path, key_path)
+            except Exception as e:
+                await self.core.log(
+                    f"⚠️ Could not set up TLS for remote access ({e}). "
+                    f"Install the 'cryptography' package or provide certs/cert.pem + certs/key.pem.",
+                    priority=1)
+
+            if ssl_ctx and lan_ips:
+                protocol = 'https'
+                for addr in lan_ips:
+                    lan_site = web.TCPSite(runner, addr, self.port, ssl_context=ssl_ctx)
+                    if not await self._start_site(lan_site):
+                        return
+                # Loopback stays plain HTTP: same port, different interface.
+                loopback_site = web.TCPSite(runner, '127.0.0.1', self.port)
+                if not await self._start_site(loopback_site):
+                    return
+                fp = self.cert_fingerprint or ''
+                pretty_fp = ':'.join(fp[i:i + 2] for i in range(0, len(fp), 2)).upper()
+                urls = ', '.join(f'https://{a}:{self.port}' for a in lan_ips)
+                await self.core.log(
+                    f"REMOTE ACCESS ENABLED - Control Deck at {urls}  "
+                    f"(LAN over TLS; http://127.0.0.1:{self.port} on this PC)",
+                    priority=1)
+                await self.core.log(
+                    f"🔐 Self-signed cert SHA-256: {pretty_fp} — verify this on first connect, "
+                    f"then accept the browser warning.",
+                    priority=1)
+            elif self.config.get('allow_insecure_http', False):
+                # Explicit opt-in only: credentials will cross the LAN in the clear.
+                site = web.TCPSite(runner, '0.0.0.0', self.port)
+                if not await self._start_site(site):
+                    return
+                await self.core.log(
+                    f"🚨 REMOTE ACCESS ENABLED WITHOUT TLS at http://{local_ip}:{self.port} — "
+                    f"your passphrase and token cross the LAN in cleartext "
+                    f"(web.allow_insecure_http is true).",
+                    priority=1)
+            else:
+                # Fail safe rather than fail open: keep the deck usable locally.
+                site = web.TCPSite(runner, '127.0.0.1', self.port)
+                if not await self._start_site(site):
+                    return
+                await self.core.log(
+                    f"🛑 Remote access requested but TLS is unavailable — bound to "
+                    f"127.0.0.1:{self.port} only. Install 'cryptography', or set "
+                    f"web.allow_insecure_http: true to accept cleartext LAN access.",
+                    priority=1)
         else:
             site = web.TCPSite(runner, self.host, self.port)
             if not await self._start_site(site):

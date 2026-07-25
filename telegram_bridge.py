@@ -928,55 +928,32 @@ class TelegramBridge:
             pass
         return None
 
-    def _get_context_limit_tokens(self, provider: str, model: str):
-        """Best-effort model context window (tokens). Returns None if unknown.
+    def _get_context_limit_tokens(self):
+        """Context window (tokens) of the ACTIVE model, or None if unknown.
 
-        We prefer any project-provided mapping. If not available, we avoid guessing wildly.
+        The gateway already owns the real resolution chain (per-model override →
+        models.context_window → live provider-reported size → model/provider-aware
+        default), so ask it rather than re-deriving it here. Resolves against
+        gateway.llm — the same source /status reads active_provider/active_model
+        from — so no arguments are needed.
         """
         try:
-            mm = getattr(self.core, 'model_manager', None)
-            if mm:
-                for meth in ('get_context_limit', 'get_model_context_limit', 'context_limit_for'):
-                    if hasattr(mm, meth) and callable(getattr(mm, meth)):
-                        try:
-                            v = getattr(mm, meth)(provider, model)
-                            if isinstance(v, (int, float)) and v > 0:
-                                return int(v)
-                        except Exception:
-                            pass
-                # Mapping attributes
-                for attr in ('context_limits', 'context_windows', 'model_context_limits'):
-                    m = getattr(mm, attr, None)
-                    if isinstance(m, dict):
-                        v = m.get(f"{provider}/{model}") or m.get(model)
-                        if isinstance(v, (int, float)) and v > 0:
-                            return int(v)
-        except Exception:
-            pass
-
-        # Config fallback if present
-        try:
-            llm_cfg = self.core.config.get('llm', {})
-            for k in ('context_window_tokens', 'context_limit_tokens', 'max_context_tokens'):
-                v = llm_cfg.get(k)
+            gw = getattr(self.core, 'gateway', None)
+            if gw and hasattr(gw, '_get_context_window_for_model'):
+                v = gw._get_context_window_for_model()
                 if isinstance(v, (int, float)) and v > 0:
                     return int(v)
         except Exception:
             pass
 
-        return None
+        # Fallback: the plain configured value, if one is set.
+        try:
+            v = self.core.config.get('models', {}).get('context_window', 0)
+            if isinstance(v, (int, float)) and v > 0:
+                return int(v)
+        except Exception:
+            pass
 
-    def _pluck_gateway_last_error(self):
-        gw = getattr(self.core, 'gateway', None)
-        if not gw:
-            return None
-        for attr in ('last_error', 'last_exception', 'error', 'last_fail_reason'):
-            try:
-                v = getattr(gw, attr, None)
-                if v:
-                    return str(v)
-            except Exception:
-                pass
         return None
 
     def _pluck_gateway_last_call_ts(self):
@@ -1171,7 +1148,7 @@ class TelegramBridge:
                 tools_schema_chars = self._get_tools_schema_chars()
 
                 # Context window + % used
-                context_limit_tokens = self._get_context_limit_tokens(active_provider, active_model)
+                context_limit_tokens = self._get_context_limit_tokens()
                 basis_chars = injected_chars if isinstance(injected_chars, int) and injected_chars > 0 else (raw_chars or 0)
                 est_tokens_used = int(basis_chars / 4) if basis_chars else 0
                 
@@ -1188,14 +1165,12 @@ class TelegramBridge:
                 if context_limit_tokens and context_limit_tokens > 0:
                     pct_used = (est_tokens_used / context_limit_tokens) * 100
 
-                # Last model call + last error
+                # Last model call. (The gateway exposes no last-error attribute —
+                # self._last_model_error is recorded by this bridge's own
+                # speak()/document/photo/audio handlers.)
                 gw_last_call = self._pluck_gateway_last_call_ts()
                 if gw_last_call:
                     self._last_model_call_ts = gw_last_call
-
-                gw_last_error = self._pluck_gateway_last_error()
-                if gw_last_error:
-                    self._last_model_error = gw_last_error
 
                 last_call_age = self._fmt_age(self._last_model_call_ts)
                 last_ok_age = self._fmt_age(self._last_model_ok_ts)
@@ -1301,22 +1276,34 @@ class TelegramBridge:
                 await self.send_message(chat_id, f"🛰️ Status check failed: `{e}`")
 
         elif cmd == '/screenshot':
-            browser = next((p for p in self.core.plugins if p.name == "BrowserExecutor"), None)
-            if browser:
+            # The old lookup keyed on p.name ("BrowserExecutor"), an attribute
+            # GalacticSkill doesn't define — it raised AttributeError on every
+            # invocation. Skills are keyed by skill_name, and browser_pro's
+            # capture method is screenshot(), not take_screenshot().
+            browser = self.core.get_skill('browser_pro')
+            if browser and hasattr(browser, 'screenshot'):
                 images_dir = self.core.config.get('paths', {}).get('images', './images')
                 path = os.path.join(images_dir, 'browser', 'screenshot.png')
-                await browser.take_screenshot(path)
-                await self.send_photo(chat_id, path, caption="📸 **Optics Snapshot captured.**")
+                os.makedirs(os.path.dirname(path), exist_ok=True)
+                result = await browser.screenshot(path=path)
+                if isinstance(result, dict) and result.get('status') != 'success':
+                    await self.send_message(chat_id, f"📺 Screenshot failed: `{result.get('message', 'unknown error')}`")
+                else:
+                    await self.send_photo(chat_id, path, caption="📸 **Optics Snapshot captured.**")
             else:
                 await self.send_message(chat_id, "📺 Browser Optics not loaded.")
 
         elif cmd == '/cli':
             if len(parts) > 1:
                 command = " ".join(parts[1:])
-                shell = next((p for p in self.core.plugins if p.name == "ShellExecutor"), None)
+                # Same p.name AttributeError as /screenshot above — the shell
+                # skill is registered under skill_name 'shell_executor'.
+                shell = self.core.get_skill('shell_executor')
                 if shell:
                     output = await shell.execute(command)
-                    await self.send_message(chat_id, f"🦾 **Shell Output:**\n\n```\n{output[:3000]}\n```")
+                    await self.send_message(chat_id, f"🦾 **Shell Output:**\n\n```\n{str(output)[:3000]}\n```")
+                else:
+                    await self.send_message(chat_id, "🦾 Shell skill not loaded.")
             else:
                 await self.send_message(chat_id, "Usage: `/cli [powershell command]`")
 
@@ -1498,25 +1485,30 @@ class TelegramBridge:
         return max(global_timeout, tg_timeout)
 
     async def _save_provider_key(self, provider: str, api_key: str):
+        """Persist a provider API key to the gitignored overlay.
+
+        NEVER write config_path directly: that's the git-TRACKED template, and a
+        key sent to the bot would land in a committed file. Live values belong in
+        config.local.yaml — same pattern as ModelManager._save_config().
+        """
         try:
-            import yaml
+            import config_loader
 
             config_path = getattr(self.core, 'config_path', 'config.yaml')
-            with open(config_path, 'r', encoding='utf-8') as f:
-                cfg = yaml.safe_load(f) or {}
-            if 'providers' not in cfg:
-                cfg['providers'] = {}
-            if provider not in cfg['providers']:
-                cfg['providers'][provider] = {}
-            cfg['providers'][provider]['apiKey'] = api_key
-            with open(config_path, 'w', encoding='utf-8') as f:
-                yaml.dump(cfg, f, default_flow_style=False, allow_unicode=True)
-            if 'providers' not in self.core.config:
-                self.core.config['providers'] = {}
-            if provider not in self.core.config['providers']:
-                self.core.config['providers'][provider] = {}
-            self.core.config['providers'][provider]['apiKey'] = api_key
-            await self._log(f"Telegram Bridge: Saved API key for {provider}", priority=1)
+
+            # Read the merged state (template + overlay), update, write to the
+            # overlay only.
+            cfg = config_loader.load_config(config_path)
+            cfg.setdefault('providers', {}).setdefault(provider, {})['apiKey'] = api_key
+            if not config_loader.save_config(cfg, config_path):
+                raise IOError("config_loader.save_config() reported failure")
+
+            # Sync in-memory config so a later save from another code path
+            # doesn't write back a stale (key-less) providers section.
+            self.core.config.setdefault('providers', {}).setdefault(provider, {})['apiKey'] = api_key
+
+            overlay = os.path.basename(config_loader.local_path_for(config_path))
+            await self._log(f"Telegram Bridge: Saved API key for {provider} → {overlay}", priority=1)
         except Exception as e:
             await self._log(f"Telegram Bridge: Failed to save API key for {provider}: {e}", priority=1)
 

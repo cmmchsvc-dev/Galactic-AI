@@ -74,6 +74,15 @@ class ForgeSentinel(GalacticSkill):
                 "llama-server process has terminated", "num_ctx", "context window",
                 "Forge Sentinel", "Sentinel analysis",  # Don't analyze our own errors
                 "ollama HTTP 500", "ollama HTTP 404",
+                # Local-backend context-window overflows — not fixable by the Sentinel,
+                # and reacting to them just spawns more work that overflows again.
+                "exceeds the available context", "Context size has been exceeded",
+                "predict request returned 400", "predict stream returned an error",
+                "thought_signature",  # Gemini function-calling quirk, transient
+                # Strict tool-pairing 400s (Moonshot et al.) — handled by the
+                # gateway's _sanitize_tool_pairing + fallback chain; reacting
+                # here just spawns noise mid-planner.
+                "tool_call_id", "must be followed by tool messages",
             )
             if any(x in new_content for x in transient_patterns):
                 return
@@ -109,14 +118,27 @@ class ForgeSentinel(GalacticSkill):
 
             analysis = await self.core.gateway.speak_isolated(
                 prompt,
-                context="You are the Galactic Forge Sentinel. Analyze errors and propose solutions clearly and concisely."
+                context="You are the Galactic Forge Sentinel. Analyze errors and propose solutions clearly and concisely.",
+                skip_planning=True,      # analysis only — never spawn a planner/hybrid from an error report
+                session_id="sentinel"    # isolate from the main chat session
             )
 
-            # Deliver the analysis as a visible chat message
-            await self.core.gateway.speak(
-                f"🛡️ **Forge Sentinel Alert**\n\n{analysis.strip()}\n\n"
+            # Deliver the analysis as a plain chat notification — do NOT route it
+            # back through gateway.speak(). speak() re-runs the FULL agentic
+            # pipeline on our own alert text, which re-detects "coding" intent and
+            # launches another hybrid planner/builder; that work throws its own
+            # errors, which the Sentinel then sees and reacts to again — a
+            # self-amplifying cascade that fights whatever the user was doing.
+            # Emit to the deck + persist to history; no agent turn.
+            msg = (
+                f"🛡️ **Forge Sentinel Alert**\n\n{str(analysis or '').strip()}\n\n"
                 f"_To apply a fix, tell me which option to use and I will make the change for your review._"
             )
+            await self.core.relay.emit(2, "bot_msg", {"content": msg, "ts": time.time()})
+            try:
+                await self.core.gateway._log_chat("assistant", msg)
+            except Exception:
+                pass
             await self.core.log("🛡️ Sentinel: Notified user. Awaiting instruction.", priority=2)
 
         except Exception as e:

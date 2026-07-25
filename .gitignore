@@ -50,6 +50,26 @@ processed_emails.log
 debug_core.log
 *.db
 *.sqlite
+*.sqlite3
+
+# ─── NEVER COMMIT — Vector stores ────────────────────────────────────────────
+# These ingest VAULT.md / USER.md, so the raw personal text ends up in the
+# SQLite FTS index in plaintext. `*.sqlite` does NOT match `.sqlite3` — that gap
+# is how chroma_data/ got committed and pushed to a public repo for ~4 months.
+chroma_data/
+chroma_data.bak/
+
+# ─── TLS material generated for remote access ────────────────────────────────
+certs/
+*.pem
+
+# ─── Build & runtime artifacts ───────────────────────────────────────────────
+build/
+dist/
+tts_models/
+messages/
+node_modules/
+.venv/
 
 # ─── NEVER COMMIT — Personal projects & unrelated files ──────────────────────
 PocketAgent/
@@ -114,6 +134,9 @@ social-media-promo.md
 !requirements.txt
 !requirements/*.txt
 test*.py
+# ...but the regression suite MUST be tracked. This blanket pattern is why every
+# previous ad-hoc regression battery ("30-case", "39-case") silently vanished.
+!test_regressions.py
 test*.html
 test*.pdf
 serve_website.py

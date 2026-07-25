@@ -496,7 +496,16 @@ class ModelManager:
                     "id": f"ollama/{m}",
                     "name": f"🦙 {m} (local)"
                 })
-        
+
+        # 4. Collect from discovered LM Studio models (the other local backend)
+        lms_mgr = getattr(self.core, 'lmstudio_manager', None)
+        if lms_mgr and getattr(lms_mgr, 'discovered_models', None):
+            for m in lms_mgr.discovered_models:
+                all_models.append({
+                    "id": f"lmstudio/{m}",
+                    "name": f"🖥️ {m} (LM Studio)"
+                })
+
         return all_models
 
     def resolve_model_id(self, query: str) -> str:

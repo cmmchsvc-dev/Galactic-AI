@@ -3,7 +3,7 @@
 **Last Updated:** 2026-07-19
 **Owner:** Chesley McDaniel (techno-hippie / Ches)
 **Repo Path:** C:\Users\Chesley\Galactic AI
-**Current Version:** v2.1.7 (Mid-Thought Barge-In)
+**Current Version:** v2.1.8 (LM Studio + Moonshot/Kimi K3)
 
 ---
 

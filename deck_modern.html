@@ -38,7 +38,6 @@ body{background:radial-gradient(1200px 800px at 85% -10%,rgba(139,92,246,0.16),t
 #model-badge{display:inline-flex;align-items:center;justify-content:center;padding:5px 14px;min-width:110px;max-width:280px;flex-shrink:0;border:1px solid var(--pink);border-radius:20px;font-size:0.8rem;color:var(--pink);text-shadow:0 0 8px rgba(255,0,200,0.4);cursor:pointer;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .topbar-btn{padding:7px 14px;border:1px solid var(--border);border-radius:8px;background:var(--bg3);color:var(--text);cursor:pointer;font-size:0.8rem;transition:all .2s;flex-shrink:0}
 .topbar-btn:hover{border-color:var(--cyan);color:var(--cyan);text-shadow:0 0 8px var(--cyan)}
-#token-counter{font-size:0.8rem;color:var(--dim);font-family:var(--mono);flex-shrink:0;white-space:nowrap;margin-right:4px}
 /* ── Command palette (Ctrl+K) ─────────────────────────────────────────── */
 #cmdk-overlay{display:none;position:fixed;inset:0;z-index:9999;background:rgba(0,0,0,0.55);backdrop-filter:blur(3px);align-items:flex-start;justify-content:center;padding-top:12vh}
 #cmdk-overlay.open{display:flex}
@@ -269,8 +268,37 @@ body{background:radial-gradient(1200px 800px at 85% -10%,rgba(139,92,246,0.16),t
 .sort-btn.active{background:var(--cyan);color:#000;border-color:var(--cyan);box-shadow:0 0 10px rgba(0,243,255,0.3)}
 #ollama-section .model-btn{border-color:rgba(255,136,0,0.32)}
 #ollama-section .model-btn.active{border-color:var(--orange);color:var(--orange)}
-#ollama-health-row{display:flex;align-items:center;gap:9px;margin-bottom:14px;padding:9px 14px;background:var(--bg3);border-radius:9px;border:1px solid var(--border);font-size:0.87rem}
-#ollama-health{font-weight:700}
+#lmstudio-section .model-btn{border-color:rgba(129,140,248,0.32)}
+#lmstudio-section .model-btn.active{border-color:var(--violet);color:var(--violet)}
+#ollama-health-row,#lmstudio-health-row{display:flex;align-items:center;gap:9px;margin-bottom:14px;padding:9px 14px;background:var(--bg3);border-radius:9px;border:1px solid var(--border);font-size:0.87rem}
+#ollama-health,#lmstudio-health{font-weight:700}
+#local-pill-menu{position:fixed;display:none;z-index:300;min-width:270px;max-width:360px;background:var(--bg2);border:1px solid var(--border);border-radius:12px;padding:10px;box-shadow:0 14px 44px rgba(0,0,0,0.55)}
+#local-pill-menu.open{display:block}
+#local-pill-menu .lpm-backend{padding:9px 11px;border-radius:9px;margin-bottom:7px;background:var(--bg3);border:1px solid var(--border)}
+#local-pill-menu .lpm-head{display:flex;align-items:center;gap:8px;font-weight:700;font-size:0.84rem}
+#local-pill-menu .lpm-state{margin-left:auto;font-size:0.72rem;font-weight:400;color:var(--dim)}
+#local-pill-menu .lpm-models{display:flex;flex-wrap:wrap;gap:5px;margin-top:8px}
+#local-pill-menu .lpm-model{padding:4px 10px;border:1px solid var(--border);border-radius:14px;background:var(--bg);color:var(--text);cursor:pointer;font-size:0.72rem;max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;transition:border-color .15s}
+#local-pill-menu .lpm-model:hover{border-color:var(--border-hi)}
+#local-pill-menu .lpm-model.active{border-color:var(--green);color:var(--green)}
+#local-pill-menu .lpm-foot{display:block;width:100%;text-align:center;padding:7px;border-radius:8px;background:var(--bg3);border:1px solid var(--border);color:var(--cyan);cursor:pointer;font-size:0.78rem}
+#local-pill-menu .lpm-foot:hover{border-color:var(--cyan)}
+.deck-menu{position:fixed;display:none;z-index:300;min-width:300px;max-width:440px;max-height:62vh;overflow-y:auto;background:var(--bg2);border:1px solid var(--border);border-radius:12px;padding:10px;box-shadow:0 14px 44px rgba(0,0,0,0.55)}
+.deck-menu.open{display:block}
+.deck-menu .dm-search{width:100%;padding:8px 12px;background:var(--bg3);border:1px solid var(--border);border-radius:8px;color:var(--text);font-size:0.85em;margin-bottom:8px;outline:none;box-sizing:border-box}
+.deck-menu .dm-search:focus{border-color:var(--cyan)}
+.deck-menu .dm-row{display:flex;align-items:center;gap:9px;padding:8px 10px;border-radius:8px;cursor:pointer;border:1px solid transparent}
+.deck-menu .dm-row:hover{background:var(--bg3);border-color:var(--border-hi)}
+.deck-menu .dm-row.active{border-color:var(--cyan)}
+.deck-menu .dm-main{min-width:0;flex:1}
+.deck-menu .dm-title{font-weight:600;font-size:0.85em;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.deck-menu .dm-sub{font-size:0.72em;color:var(--dim);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.deck-menu .dm-tag{font-size:0.7em;color:var(--violet);background:rgba(129,140,248,0.12);padding:2px 8px;border-radius:10px;white-space:nowrap;flex-shrink:0}
+.deck-menu .dm-x{flex-shrink:0;background:none;border:none;color:var(--dim);cursor:pointer;font-size:0.9em;padding:2px 6px;border-radius:5px}
+.deck-menu .dm-x:hover{color:var(--red);background:var(--bg)}
+.deck-menu .dm-empty{color:var(--dim);font-size:0.8em;padding:12px;text-align:center}
+.deck-menu .dm-foot{display:block;width:100%;text-align:center;padding:7px;margin-top:6px;border-radius:8px;background:var(--bg3);border:1px solid var(--border);color:var(--cyan);cursor:pointer;font-size:0.78rem}
+.deck-menu .dm-foot:hover{border-color:var(--cyan)}
 .model-config-box{background:var(--bg3);border:1px solid var(--border);border-radius:11px;padding:16px;margin-bottom:16px}
 .model-config-box h4{font-size:0.84rem;color:var(--dim);margin-bottom:12px;letter-spacing:1px}
 .model-config-row{display:flex;gap:9px;margin-bottom:9px}
@@ -490,7 +518,6 @@ body.glow-max .status-dot{box-shadow:0 0 14px var(--green),0 0 28px rgba(0,255,1
 #topbar-left>div{white-space:nowrap}
 #topbar-left{overflow:hidden}
 #model-badge{flex-shrink:1;min-width:70px}
-#token-counter{overflow:hidden;text-overflow:ellipsis}
 #mobile-nav-toggle{display:none;flex-shrink:0;width:34px;height:34px;align-items:center;justify-content:center;background:var(--bg3);border:1px solid var(--border);border-radius:9px;color:var(--text);font-size:1.05em;cursor:pointer;transition:border-color .2s var(--ease),color .2s}
 #mobile-nav-toggle:hover{border-color:var(--cyan);color:var(--cyan)}
 
@@ -516,7 +543,7 @@ body.glow-max .status-dot{box-shadow:0 0 14px var(--green),0 0 28px rgba(0,255,1
 .btn.secondary:hover{box-shadow:var(--shadow-1);transform:translateY(-1px)}
 
 /* — Cards: glass, lift, glow — */
-.tool-card,.plugin-card,.stat-card,.subagent-card,.model-config-box,#ollama-health-row{background:var(--glass);border:1px solid rgba(124,148,255,0.14);backdrop-filter:blur(8px);-webkit-backdrop-filter:blur(8px)}
+.tool-card,.plugin-card,.stat-card,.subagent-card,.model-config-box,#ollama-health-row,#lmstudio-health-row{background:var(--glass);border:1px solid rgba(124,148,255,0.14);backdrop-filter:blur(8px);-webkit-backdrop-filter:blur(8px)}
 .tool-card{animation:riseIn .38s var(--ease) both;transition:border-color .22s var(--ease),box-shadow .25s var(--ease),transform .2s var(--ease),background .22s var(--ease)}
 .tool-card:hover{border-color:rgba(0,229,255,0.45);box-shadow:var(--shadow-2),var(--glow-cyan);transform:translateY(-2px)}
 .plugin-card{animation:riseIn .38s var(--ease) both;transition:border-color .22s var(--ease),box-shadow .25s var(--ease),transform .2s var(--ease)}
@@ -562,7 +589,6 @@ button:focus-visible,input:focus-visible,textarea:focus-visible,select:focus-vis
   #chat-log{padding:14px}
   #topbar{padding:8px 14px}
   #topbar .logo{letter-spacing:3px;font-size:.95rem}
-  #token-counter{display:none}
   #ctx-meter{display:none}
   .browser-action-grid{grid-template-columns:repeat(2,1fr)}
   .stat-grid{grid-template-columns:repeat(auto-fill,minmax(150px,1fr))}
@@ -664,6 +690,7 @@ body[data-viz-theme="lightspeed"] #sidebar, body[data-viz-theme="lightspeed"] #c
           <option value="minimax">🎵 MiniMax — M2 multimodal + TTS</option>
           <option value="nvidia">🟢 NVIDIA AI — DeepSeek, Qwen 480B, Kimi</option>
           <option value="ollama">🦙 Ollama Local — 100% private, no API key needed</option>
+          <option value="lmstudio">🖥️ LM Studio Local — 100% private, no API key needed</option>
         </select>
       </div>
       <div style="margin-bottom:18px">
@@ -683,6 +710,14 @@ body[data-viz-theme="lightspeed"] #sidebar, body[data-viz-theme="lightspeed"] #c
         <input id="sw-ollama-url" type="text" placeholder="http://127.0.0.1:11434/v1" value="http://127.0.0.1:11434/v1" style="width:100%;padding:10px 14px;background:var(--bg3);border:1px solid var(--border);border-radius:8px;color:var(--text);font-size:0.9em">
         <div style="margin-top:8px;padding:10px 14px;background:rgba(0,255,136,0.05);border:1px solid rgba(0,255,136,0.2);border-radius:6px;font-size:0.78em;color:var(--dim)">
           💡 Ollama must be running locally. Install from <a href="https://ollama.com" target="_blank" style="color:var(--cyan)">ollama.com</a> then run <code style="background:var(--bg3);padding:2px 6px;border-radius:3px">ollama pull qwen3:8b</code>
+        </div>
+      </div>
+      <!-- LM Studio URL field -->
+      <div id="sw-lmstudio-wrap" style="display:none;margin-bottom:18px">
+        <label style="font-size:0.8em;color:var(--dim);display:block;margin-bottom:6px">LM Studio Server URL:</label>
+        <input id="sw-lmstudio-url" type="text" placeholder="http://127.0.0.1:1234/v1" value="http://127.0.0.1:1234/v1" style="width:100%;padding:10px 14px;background:var(--bg3);border:1px solid var(--border);border-radius:8px;color:var(--text);font-size:0.9em">
+        <div style="margin-top:8px;padding:10px 14px;background:rgba(129,140,248,0.06);border:1px solid rgba(129,140,248,0.25);border-radius:6px;font-size:0.78em;color:var(--dim)">
+          💡 LM Studio must have its local server running. Open <a href="https://lmstudio.ai" target="_blank" style="color:var(--cyan)">LM Studio</a> → Developer tab → Start Server, or run <code style="background:var(--bg3);padding:2px 6px;border-radius:3px">lms server start</code>
         </div>
       </div>
       <!-- NVIDIA single-key field -->
@@ -951,16 +986,15 @@ body[data-viz-theme="lightspeed"] #sidebar, body[data-viz-theme="lightspeed"] #c
     <div class="logo">⬡ GALACTIC AI</div>
     <div style="font-size:0.7em;color:var(--cyan);letter-spacing:2px;opacity:0.7;font-weight:600">CONTROL DECK</div>
     <div id="version-badge" style="font-size:0.65em;color:var(--dim);letter-spacing:1px;padding:2px 7px;border:1px solid var(--border);border-radius:10px;cursor:default" title="Galactic AI version">v2.1.0</div>
-    <div id='ollama-pill' onclick='switchTab("models")'>
+    <div id='ollama-pill' onclick='toggleLocalPillMenu(event)' title='Local backends — click to switch between Ollama and LM Studio'>
       <div class="status-dot" id="ollama-dot"></div>
-      <span id="ollama-label">Ollama</span>
+      <span id="ollama-label">Local</span>
     </div>
     <div id='model-badge' onclick='switchTab("models")'>Loading...</div>
   </div>
 
   <div id="topbar-right">
     <div id="ctx-meter" title="Context usage — click to open the Icebox and drop heavy items" onclick="openContextIcebox()">CTX --%</div>
-    <div id="token-counter">↑0 ↓0 tokens</div>
     <button class="topbar-btn" onclick="openPalette()" title="Command palette — jump anywhere, switch models, run commands (Ctrl+K)">⌘K</button>
     <button class="topbar-btn" onclick="clearChat()">🗑 Clear</button>
     <button class="topbar-btn" onclick="switchTab('logs')">📋 Logs</button>
@@ -969,6 +1003,9 @@ body[data-viz-theme="lightspeed"] #sidebar, body[data-viz-theme="lightspeed"] #c
     <button class="topbar-btn" onclick="location.reload()">↺</button>
   </div>
 </div>
+
+<!-- Local backend quick-switch menu (anchored under the topbar pill) -->
+<div id="local-pill-menu"></div>
 
 <!-- SUB-HEADER for Thinking Orb -->
 <div id="sub-header">
@@ -995,17 +1032,8 @@ body[data-viz-theme="lightspeed"] #sidebar, body[data-viz-theme="lightspeed"] #c
     </div>
 
     
-    <!-- Theme Switcher -->
-    <div style="margin-bottom:22px;display:flex;align-items:center;justify-content:space-between;padding:14px 16px;background:var(--bg3);border-radius:10px;border:1px solid var(--border)">
-      <div>
-        <label style="display:block;font-size:0.85rem;color:var(--dim);margin-bottom:4px;letter-spacing:1px;text-transform:uppercase">Theme</label>
-        <span style="font-size:0.75rem;color:var(--dim2)">Switch interface design</span>
-      </div>
-      <select id="theme-select" onchange="applyTheme(this.value)" style="background:var(--bg2);color:var(--cyan);border:1px solid var(--border);border-radius:6px;padding:6px 12px;font-family:var(--mono);cursor:pointer;outline:none">
-        <option value="modern">Modern (Premium)</option>
-        <option value="legacy">Legacy (Classic)</option>
-      </select>
-    </div>
+    <!-- Interface theme switcher retired — Modern (Premium) is the only deck.
+         The Visual Theme skins below are the fun part and they all stay. -->
     <!-- Visual Theme (client-side skin, injected) -->
     <div style="margin-bottom:22px;display:flex;align-items:center;justify-content:space-between;padding:14px 16px;background:var(--bg3);border-radius:10px;border:1px solid var(--border)">
       <div>
@@ -1109,9 +1137,13 @@ body[data-viz-theme="lightspeed"] #sidebar, body[data-viz-theme="lightspeed"] #c
       <div id="chat-wrap">
         <div style="display:flex;flex-direction:column;flex:1;overflow:hidden">
           <div id="session-bar" style="display:flex;gap:6px;align-items:center;padding:7px 16px;border-bottom:1px solid var(--border);background:var(--bg2);flex-shrink:0;font-size:0.8em">
-            <span style="color:var(--dim)">🗂️ Session:</span>
-            <select id="session-select" onchange="switchSession(this.value)" title="Switch to a saved session"
-                    style="flex:1;max-width:260px;padding:5px 8px;background:var(--bg3);border:1px solid var(--border);border-radius:6px;color:var(--text);font-size:0.95em;cursor:pointer">
+            <button id="ws-chip" class="topbar-btn" onclick="toggleWsMenu(event)"
+                    title="Active project workspace — the codebase the agent is aimed at. Click to switch."
+                    style="padding:5px 10px;max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">📁 no workspace</button>
+            <button id="session-chip" class="topbar-btn" onclick="toggleSessionMenu(event)"
+                    title="Conversations — search and switch saved chats"
+                    style="padding:5px 10px;flex:1;max-width:300px;text-align:left;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">🗂️ — current (unsaved) —</button>
+            <select id="session-select" onchange="switchSession(this.value)" style="display:none">
               <option value="">— current (unsaved) —</option>
             </select>
             <button class="topbar-btn" onclick="saveSessionPrompt()" title="Save the current chat as a named session" style="padding:5px 10px">💾 Save</button>
@@ -1119,6 +1151,8 @@ body[data-viz-theme="lightspeed"] #sidebar, body[data-viz-theme="lightspeed"] #c
             <button class="topbar-btn" onclick="deleteSessionPrompt()" title="Delete the selected saved session" style="padding:5px 10px">🗑️</button>
             <button class="topbar-btn" onclick="exportChatMarkdown()" title="Download this conversation as a Markdown file" style="padding:5px 10px">⬇ Export</button>
           </div>
+          <div id="ws-menu" class="deck-menu"></div>
+          <div id="session-menu" class="deck-menu"></div>
           <div id="chat-log">
             <div class="msg bot"><div class="bubble">⬡ Galactic AI online. How can I help?</div></div>
             <div id="stream-bubble"></div>
@@ -1181,6 +1215,12 @@ body[data-viz-theme="lightspeed"] #sidebar, body[data-viz-theme="lightspeed"] #c
           <span id="ollama-health">Checking Ollama...</span>
           <span style="margin-left:auto;font-size:0.75em;color:var(--dim)" id="ollama-model-count"></span>
           <button onclick="refreshOllama()" style="padding:3px 10px;background:var(--bg);border:1px solid var(--border);border-radius:5px;color:var(--text);cursor:pointer;font-size:0.75em">Refresh</button>
+        </div>
+        <div id="lmstudio-health-row" style="display:none">
+          <div class="status-dot" id="lmstudio-health-dot"></div>
+          <span id="lmstudio-health">Checking LM Studio...</span>
+          <span style="margin-left:auto;font-size:0.75em;color:var(--dim)" id="lmstudio-model-count"></span>
+          <button onclick="refreshLMStudio()" style="padding:3px 10px;background:var(--bg);border:1px solid var(--border);border-radius:5px;color:var(--text);cursor:pointer;font-size:0.75em">Refresh</button>
         </div>
         <div class="model-config-box">
           <h4>GLOBAL TOKEN CONFIG</h4>
@@ -1283,25 +1323,6 @@ body[data-viz-theme="lightspeed"] #sidebar, body[data-viz-theme="lightspeed"] #c
           <div class="stat-card"><div class="val" id="st-tools">--</div><div class="lbl">Tools</div></div>
         </div>
 
-        <!-- Section 1.5: Software Update -->
-        <div style="font-size:0.72rem;letter-spacing:2px;color:var(--dim);margin:18px 0 8px;text-transform:uppercase">🚀 Software Update</div>
-        <div class="stat-grid">
-          <div class="stat-card" style="grid-column: span 2; display:flex; flex-direction:row; align-items:center; justify-content:space-between; padding: 12px 18px;">
-            <div style="text-align:left">
-              <div id="update-status-text" style="font-size:0.85rem; color:var(--text); margin-bottom:2px">Checking for updates...</div>
-              <div id="update-version-hint" style="font-size:0.7rem; color:var(--dim)">Current version: v2.1.0</div>
-            </div>
-            <div style="display:flex; gap:8px">
-              <button class="btn secondary" onclick="checkUpdate()" style="padding:6px 12px; font-size:0.75rem;">Check Now</button>
-              <button id="update-btn-status" class="btn primary" onclick="triggerUpdate(false)" style="padding:6px 12px; font-size:0.75rem; display:none; background:var(--green); color:#000;">Update Now</button>
-            </div>
-          </div>
-          <div class="stat-card" style="grid-column: span 1; padding: 12px 14px; cursor:pointer;" onclick="triggerUpdate(true)" title="Forced Re-install / Dependency Repair">
-            <div class="val" style="font-size:1.1rem">🛠️</div>
-            <div class="lbl">Smart Repair</div>
-          </div>
-        </div>
-
         <!-- Cost Dashboard -->
         <div style="display:flex;align-items:center;justify-content:space-between;margin:18px 0 8px">
           <div style="font-size:0.72rem;letter-spacing:2px;color:var(--dim);text-transform:uppercase">💰 Cost Dashboard</div>
@@ -1362,11 +1383,13 @@ body[data-viz-theme="lightspeed"] #sidebar, body[data-viz-theme="lightspeed"] #c
         <div style="font-size:0.72rem;letter-spacing:2px;color:var(--dim);margin:18px 0 8px;text-transform:uppercase">Plugins</div>
         <div id="status-plugins-list"></div>
 
-        <!-- Section 6: Ollama -->
-        <div style="font-size:0.72rem;letter-spacing:2px;color:var(--dim);margin:18px 0 8px;text-transform:uppercase">Ollama</div>
+        <!-- Section 6: Local backends -->
+        <div style="font-size:0.72rem;letter-spacing:2px;color:var(--dim);margin:18px 0 8px;text-transform:uppercase">Local Backends</div>
         <div class="stat-grid">
-          <div class="stat-card"><div class="val" id="st-ollama-status">--</div><div class="lbl">Status</div></div>
-          <div class="stat-card"><div class="val" id="st-ollama-models">--</div><div class="lbl">Models</div></div>
+          <div class="stat-card"><div class="val" id="st-ollama-status">--</div><div class="lbl">🦙 Ollama</div></div>
+          <div class="stat-card"><div class="val" id="st-ollama-models">--</div><div class="lbl">Ollama Models</div></div>
+          <div class="stat-card"><div class="val" id="st-lmstudio-status">--</div><div class="lbl">🖥️ LM Studio</div></div>
+          <div class="stat-card"><div class="val" id="st-lmstudio-models">--</div><div class="lbl">LM Studio Models</div></div>
         </div>
       </div>
     </div>
@@ -2226,7 +2249,8 @@ const SW_MODEL_HINTS = {
   zai:         {placeholder:'glm-4-plus', link:'Get key: <a href="https://open.bigmodel.cn/usercenter/apikeys" target="_blank" style="color:var(--cyan)">open.bigmodel.cn</a>'},
   minimax:     {placeholder:'MiniMax-Text-01', link:'Get key: <a href="https://platform.minimaxi.com" target="_blank" style="color:var(--cyan)">platform.minimaxi.com</a>'},
   nvidia:      {placeholder:'deepseek-ai/deepseek-v3.2', link:'500+ models available: <a href="https://build.nvidia.com/models" target="_blank" style="color:var(--cyan)">build.nvidia.com/models</a>'},
-  ollama:      {placeholder:'qwen3:8b', link:''}
+  ollama:      {placeholder:'qwen3:8b', link:''},
+  lmstudio:    {placeholder:'openai/gpt-oss-20b', link:''}
 };
 
 // Quick-pick button helper for NVIDIA model chips
@@ -2246,9 +2270,10 @@ function swUpdateModelHint() {
   const linkEl = document.getElementById('sw-key-link');
   if (linkEl) linkEl.innerHTML = hint.link;
   // Show/hide API key fields
-  document.getElementById('sw-apikey-wrap').style.display = (prov === 'ollama' || prov === 'nvidia') ? 'none' : '';
+  document.getElementById('sw-apikey-wrap').style.display = (prov === 'ollama' || prov === 'lmstudio' || prov === 'nvidia') ? 'none' : '';
   document.getElementById('sw-nvidia-wrap').style.display = prov === 'nvidia' ? '' : 'none';
   document.getElementById('sw-ollama-wrap').style.display = prov === 'ollama' ? '' : 'none';
+  document.getElementById('sw-lmstudio-wrap').style.display = prov === 'lmstudio' ? '' : 'none';
   // Update API key placeholder
   const keyPlaceholders = {
     google:'AIzaSy...', anthropic:'sk-ant-...', openai:'sk-...', xai:'xai-...',
@@ -2338,6 +2363,8 @@ async function swSave() {
     nvidia_key: gv('sw-nvidia-key'),
     nvidia_model: gv('sw-nvidia-model'),
     ollama_url: gv('sw-ollama-url') || 'http://127.0.0.1:11434/v1',
+    // Only sent when LM Studio was chosen — providers.lmstudio is opt-in
+    lmstudio_url: (gv('sw-provider') === 'lmstudio') ? (gv('sw-lmstudio-url') || 'http://127.0.0.1:1234/v1') : '',
     // Telegram
     telegram_token: gv('sw-tg-token'),
     telegram_chat_id: gv('sw-tg-chat'),
@@ -2547,12 +2574,16 @@ async function init() {
   connectWS();
   await loadTools();
   await loadPlugins();
-  loadOllamaStatus();
   await loadAliases();
   await loadModels(); // Fetches models from config/models.yaml
+  // Local backends load AFTER the config model list so their discovered
+  // sections are appended to the fresh ALL_MODELS, never wiped by it.
+  loadOllamaStatus();
+  loadLMStudioStatus();
   await refreshStatus(); // MUST await — model-badge depends on this completing
   loadFileList();
   loadSessions();
+  loadWorkspaces();
   // Settings tab initialization
   loadSettingsValues();
   // Sub-agent model selector
@@ -2849,8 +2880,9 @@ function connectWS() {
       appendBotMsg(p.data.content, p.data.ts);
     } else if (p.type === 'log') {
       addLog(p.data);
+      // Live-sync the workspace chip when the core auto-detects a project path
+      if (String(p.data).includes('Active workspace') && typeof loadWorkspaces === 'function') loadWorkspaces();
     } else if (p.type === 'telemetry') {
-      document.getElementById('token-counter').textContent = '↑' + p.data.tin + ' ↓' + p.data.tout + ' tokens';
       if (p.data.ctx_max !== undefined) updateCtxMeter(p.data.ctx_used, p.data.ctx_max);
       document.getElementById('st-uptime').textContent = p.data.uptime;
       document.getElementById('st-tin').textContent = p.data.tin;
@@ -2864,6 +2896,10 @@ function connectWS() {
       renderOllamaModels(p.data);
     } else if (p.type === 'ollama_status') {
       updateOllamaHealth(p.data);
+    } else if (p.type === 'lmstudio_models') {
+      renderLMStudioModels(p.data);
+    } else if (p.type === 'lmstudio_status') {
+      updateLMStudioHealth(p.data);
     } else if (p.type === 'thought') {
       if (!httpChatPending && p.data && p.data.trim() !== '') appendBotMsg(p.data);  // skip if HTTP /api/chat will handle it, or if empty
     } else if (p.type === 'chat_from_telegram') {
@@ -3437,6 +3473,8 @@ async function loadSessions() {
     });
     sel.innerHTML = opts.join('');
     sel.value = activeSessionName || '';
+    SESSIONS_CACHE = d.sessions || [];
+    updateSessionChip();
   } catch(e) { console.error('loadSessions:', e); }
 }
 
@@ -3477,6 +3515,7 @@ async function switchSession(name) {
       activeSessionName = d.name;
       localStorage.setItem('gal_session', d.name);
       renderChatMessages(d.messages);
+      updateSessionChip();
       showToast(`🔀 Switched to "${d.name}"`, 'success', 3000);
     } else {
       showToast('Switch failed: ' + (d.error || 'unknown'), 'error', 4000);
@@ -3517,6 +3556,208 @@ async function deleteSessionPrompt() {
     }
   } catch(e) { showToast('Delete failed: ' + e.message, 'error', 4000); }
 }
+
+// ── Workspaces + searchable conversation picker (Antigravity-style) ─────────
+let SESSIONS_CACHE = [];
+let WS_STATE = { active: '', workspaces: [] };
+
+function _timeAgo(ts) {
+  if (!ts) return '';
+  const s = Math.max(1, Math.floor(Date.now() / 1000 - ts));
+  if (s < 3600) return Math.floor(s / 60) + 'm ago';
+  if (s < 86400) return Math.floor(s / 3600) + 'h ago';
+  if (s < 604800) return Math.floor(s / 86400) + 'd ago';
+  return Math.floor(s / 604800) + 'wk ago';
+}
+
+function _placeMenu(menu, anchorId) {
+  const a = document.getElementById(anchorId);
+  if (!a) return;
+  const r = a.getBoundingClientRect();
+  menu.style.top = (r.bottom + 8) + 'px';
+  menu.style.left = Math.max(8, Math.min(r.left, window.innerWidth - 460)) + 'px';
+}
+
+function updateSessionChip() {
+  const chip = document.getElementById('session-chip');
+  if (chip) chip.textContent = '🗂️ ' + (activeSessionName || '— current (unsaved) —');
+}
+
+function updateWsChip() {
+  const chip = document.getElementById('ws-chip');
+  if (!chip) return;
+  const act = WS_STATE.workspaces.find(w => w.path === WS_STATE.active);
+  chip.textContent = '📁 ' + (act ? act.name : 'no workspace');
+  chip.style.color = act ? 'var(--cyan)' : 'var(--dim)';
+}
+
+async function loadWorkspaces() {
+  try {
+    const r = await authFetch('/api/workspaces');
+    const d = await r.json();
+    WS_STATE.active = d.active || '';
+    WS_STATE.workspaces = d.workspaces || [];
+    updateWsChip();
+  } catch (e) {}
+}
+
+function toggleWsMenu(ev) {
+  if (ev) ev.stopPropagation();
+  const menu = document.getElementById('ws-menu');
+  if (menu.classList.contains('open')) { menu.classList.remove('open'); return; }
+  document.querySelectorAll('.deck-menu.open').forEach(m => m.classList.remove('open'));
+  renderWsMenu();
+  _placeMenu(menu, 'ws-chip');
+  menu.classList.add('open');
+  loadWorkspaces().then(renderWsMenu);
+}
+
+function renderWsMenu() {
+  const menu = document.getElementById('ws-menu');
+  if (!menu) return;
+  menu.innerHTML = '';
+  if (!WS_STATE.workspaces.length) {
+    const e = document.createElement('div');
+    e.className = 'dm-empty';
+    e.textContent = 'No workspaces yet — mention a project path in chat, or add one below.';
+    menu.appendChild(e);
+  }
+  WS_STATE.workspaces.forEach(w => {
+    const row = document.createElement('div');
+    row.className = 'dm-row' + (w.path === WS_STATE.active ? ' active' : '');
+    const main = document.createElement('div');
+    main.className = 'dm-main';
+    const t = document.createElement('div');
+    t.className = 'dm-title';
+    t.textContent = (w.path === WS_STATE.active ? '✓ ' : '') + w.name + (w.exists ? '' : '  (missing)');
+    if (!w.exists) t.style.color = 'var(--red)';
+    const sub = document.createElement('div');
+    sub.className = 'dm-sub';
+    sub.textContent = w.path;
+    main.append(t, sub);
+    const x = document.createElement('button');
+    x.className = 'dm-x';
+    x.textContent = '✕';
+    x.title = 'Forget this workspace (files untouched)';
+    x.addEventListener('click', async (e) => {
+      e.stopPropagation();
+      await authFetch('/api/workspaces/delete', {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({path: w.path})});
+      await loadWorkspaces();
+      renderWsMenu();
+    });
+    row.append(main, x);
+    row.addEventListener('click', async () => {
+      const r = await authFetch('/api/workspaces/switch', {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({path: w.path})});
+      const d = await r.json();
+      if (d.ok) {
+        await loadWorkspaces();
+        updateWsChip();
+        document.getElementById('ws-menu').classList.remove('open');
+        showToast('📁 Workspace: ' + (d.name || w.name), 'success', 2500);
+      } else {
+        showToast(d.error || 'Switch failed', 'error', 3500);
+      }
+    });
+    menu.appendChild(row);
+  });
+  const foot = document.createElement('button');
+  foot.className = 'dm-foot';
+  foot.textContent = '＋ Add workspace by path…';
+  foot.addEventListener('click', async () => {
+    const p = prompt('Project folder path:', 'C:\\workspace\\');
+    if (!p) return;
+    const r = await authFetch('/api/workspaces/switch', {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({path: p})});
+    const d = await r.json();
+    if (d.ok) {
+      await loadWorkspaces();
+      renderWsMenu();
+      showToast('📁 Workspace: ' + d.name, 'success', 2500);
+    } else {
+      showToast(d.error || 'Not a directory', 'error', 3500);
+    }
+  });
+  menu.appendChild(foot);
+}
+
+function toggleSessionMenu(ev) {
+  if (ev) ev.stopPropagation();
+  const menu = document.getElementById('session-menu');
+  if (menu.classList.contains('open')) { menu.classList.remove('open'); return; }
+  document.querySelectorAll('.deck-menu.open').forEach(m => m.classList.remove('open'));
+  renderSessionMenu('');
+  _placeMenu(menu, 'session-chip');
+  menu.classList.add('open');
+  loadSessions().then(() => {
+    renderSessionMenu(document.getElementById('sess-search')?.value || '');
+    const inp = document.getElementById('sess-search');
+    if (inp) inp.focus();
+  });
+  setTimeout(() => document.getElementById('sess-search')?.focus(), 50);
+}
+
+function renderSessionMenu(filter) {
+  const menu = document.getElementById('session-menu');
+  if (!menu) return;
+  const q = (filter || '').toLowerCase();
+  menu.innerHTML = '';
+  const inp = document.createElement('input');
+  inp.id = 'sess-search';
+  inp.className = 'dm-search';
+  inp.placeholder = 'Search all convos…';
+  inp.value = filter || '';
+  inp.addEventListener('input', () => renderSessionMenu(inp.value));
+  inp.addEventListener('click', e => e.stopPropagation());
+  menu.appendChild(inp);
+
+  const newRow = document.createElement('div');
+  newRow.className = 'dm-row';
+  newRow.innerHTML = '<div class="dm-main"><div class="dm-title">＋ New conversation</div><div class="dm-sub">fresh chat (offers to save the current one)</div></div>';
+  newRow.addEventListener('click', () => { menu.classList.remove('open'); newSession(); });
+  menu.appendChild(newRow);
+
+  const rows = SESSIONS_CACHE.filter(s =>
+    !q || s.name.toLowerCase().includes(q) || (s.ws_name || '').toLowerCase().includes(q));
+  if (!rows.length) {
+    const e = document.createElement('div');
+    e.className = 'dm-empty';
+    e.textContent = q ? 'No conversations match.' : 'No saved conversations yet — 💾 Save this one to start your history.';
+    menu.appendChild(e);
+  }
+  rows.forEach(s => {
+    const row = document.createElement('div');
+    row.className = 'dm-row' + (s.name === activeSessionName ? ' active' : '');
+    const main = document.createElement('div');
+    main.className = 'dm-main';
+    const t = document.createElement('div');
+    t.className = 'dm-title';
+    t.textContent = s.name;
+    const sub = document.createElement('div');
+    sub.className = 'dm-sub';
+    sub.textContent = `${s.messages} msgs · ${_timeAgo(s.updated)}`;
+    main.append(t, sub);
+    row.appendChild(main);
+    if (s.ws_name) {
+      const tag = document.createElement('span');
+      tag.className = 'dm-tag';
+      tag.textContent = '📁 ' + s.ws_name;
+      row.appendChild(tag);
+    }
+    row.addEventListener('click', () => {
+      menu.classList.remove('open');
+      const sel = document.getElementById('session-select');
+      if (sel) sel.value = s.name;
+      switchSession(s.name);
+    });
+    menu.appendChild(row);
+  });
+}
+
+document.addEventListener('click', (e) => {
+  document.querySelectorAll('.deck-menu.open').forEach(m => { if (!m.contains(e.target)) m.classList.remove('open'); });
+});
+document.addEventListener('keydown', (e) => {
+  if (e.key === 'Escape') document.querySelectorAll('.deck-menu.open').forEach(m => m.classList.remove('open'));
+});
 
 function appendUserMsg(text, ts) {
   const log = document.getElementById('chat-log');
@@ -4094,6 +4335,7 @@ const PROV_ICONS = {
   'zai': '🧠 ZAI / GLM',
   'minimax': '🎯 MiniMax',
   'ollama': '🦙 Ollama (Local)',
+  'lmstudio': '🖥️ LM Studio (Local)',
   'google-imagen': '🖼️ Google Imagen',
   'flux': '🎨 FLUX (Image Gen)',
   'xiaomi': '📱 Xiaomi',
@@ -4123,7 +4365,18 @@ async function loadModels() {
         ALL_MODELS[displayProv] = models.map(m => ({...m, provider: m.provider || actualProv}));
       }
     }
-    
+
+    // Local backends discover async — re-inject their cached models so this
+    // rebuild never wipes the Ollama / LM Studio sections (not in models.yaml).
+    if (LOCAL_MODEL_CACHE.ollama.length) {
+      const k = Object.keys(ALL_MODELS).find(k => k.toLowerCase().includes('ollama')) || PROV_ICONS['ollama'];
+      ALL_MODELS[k] = LOCAL_MODEL_CACHE.ollama.map(m => ({name: m + ' 🦙', id: m, provider: 'ollama'}));
+    }
+    if (LOCAL_MODEL_CACHE.lmstudio.length) {
+      const k = Object.keys(ALL_MODELS).find(k => k.toLowerCase().includes('lm studio')) || PROV_ICONS['lmstudio'];
+      ALL_MODELS[k] = LOCAL_MODEL_CACHE.lmstudio.map(m => ({name: m + ' 🖥️', id: m, provider: 'lmstudio'}));
+    }
+
     renderModelGrid();
     if (typeof populateSettingsProviders === 'function') populateSettingsProviders();
     if (typeof populatePmoDropdown === 'function') populatePmoDropdown();
@@ -4134,6 +4387,11 @@ async function loadModels() {
 }
 let currentProvider = '', currentModelId = '';
 
+// Discovered local models survive ALL_MODELS rebuilds via this cache (see loadModels)
+const LOCAL_MODEL_CACHE = { ollama: [], lmstudio: [] };
+// Latest status payload per local backend — drives the topbar pill + switcher menu
+const _localBackends = { ollama: null, lmstudio: null };
+
 async function loadOllamaStatus() {
   try {
     const r = await authFetch('/api/ollama_status');
@@ -4143,26 +4401,27 @@ async function loadOllamaStatus() {
 }
 
 function updateOllamaHealth(d) {
-  const dot = document.getElementById('ollama-dot');
+  _localBackends.ollama = d;
+  updateLocalPill();
   const dot2 = document.getElementById('ollama-health-dot');
   const lbl = document.getElementById('ollama-health');
   const cnt = document.getElementById('ollama-model-count');
-  const topLbl = document.getElementById('ollama-label');
   if (d.healthy) {
-    [dot, dot2].forEach(el => el && (el.className = 'status-dot'));
-    if (lbl) lbl.textContent = '🠂 Ollama Online — ' + d.base_url;
+    if (dot2) dot2.className = 'status-dot';
+    if (lbl) { lbl.textContent = '🠂 Ollama Online — ' + d.base_url; lbl.style.color = ''; }
     if (cnt) cnt.textContent = d.model_count + ' models';
-    if (topLbl) topLbl.textContent = 'Ollama: ' + d.model_count + ' models';
   } else {
-    [dot, dot2].forEach(el => el && (el.className = 'status-dot offline'));
+    if (dot2) dot2.className = 'status-dot offline';
     if (lbl) { lbl.textContent = '🔴 Ollama Offline'; lbl.style.color = 'var(--red)'; }
+    if (cnt) cnt.textContent = '';
   }
   if (d.models && d.models.length) renderOllamaModels(d.models);
 }
 
 function renderOllamaModels(models) {
+  LOCAL_MODEL_CACHE.ollama = models || [];
   const ollamaKey = Object.keys(ALL_MODELS).find(k => k.toLowerCase().includes('ollama')) || '🦙 Ollama (Local)';
-  ALL_MODELS[ollamaKey] = models.map(m => ({name: m + ' 🦙', id: m, provider: 'ollama'}));
+  ALL_MODELS[ollamaKey] = LOCAL_MODEL_CACHE.ollama.map(m => ({name: m + ' 🦙', id: m, provider: 'ollama'}));
   renderModelGrid();
   if (typeof populateSettingsProviders === 'function') populateSettingsProviders();
   if (typeof populatePmoDropdown === 'function') populatePmoDropdown();
@@ -4176,6 +4435,174 @@ async function refreshOllama() {
   const d = await r.json();
   if (d.models) renderOllamaModels(d.models);
 }
+
+// ── LM Studio: the other local backend, seamlessly interchangeable with Ollama ──
+function renderLMStudioModels(models) {
+  models = models || [];
+  LOCAL_MODEL_CACHE.lmstudio = models;
+  if (_localBackends.lmstudio) {
+    _localBackends.lmstudio.models = models;
+    _localBackends.lmstudio.model_count = models.length;
+    updateLocalPill();
+  }
+  const lmKey = Object.keys(ALL_MODELS).find(k => k.toLowerCase().includes('lm studio')) || '🖥️ LM Studio (Local)';
+  // Raw LM Studio id + provider 'lmstudio' — exactly how Ollama does it.
+  ALL_MODELS[lmKey] = models.map(m => ({name: m + ' 🖥️', id: m, provider: 'lmstudio'}));
+  renderModelGrid();
+  if (typeof populateSettingsProviders === 'function') populateSettingsProviders();
+  if (typeof populatePmoDropdown === 'function') populatePmoDropdown();
+  if (typeof loadSettingsValues === 'function') loadSettingsValues();
+}
+
+function updateLMStudioHealth(d) {
+  if (!d) return;
+  // WS emits omit these fields — normalize so pill/menu logic is uniform
+  if (d.enabled === undefined) d.enabled = true;
+  if (d.model_count === undefined) d.model_count = (d.models || []).length;
+  _localBackends.lmstudio = d;
+  updateLocalPill();
+  const row = document.getElementById('lmstudio-health-row');
+  if (row) row.style.display = d.enabled ? 'flex' : 'none';
+  const dot2 = document.getElementById('lmstudio-health-dot');
+  const lbl = document.getElementById('lmstudio-health');
+  const cnt = document.getElementById('lmstudio-model-count');
+  if (d.healthy) {
+    if (dot2) dot2.className = 'status-dot';
+    if (lbl) { lbl.textContent = '🠂 LM Studio Online — ' + d.base_url; lbl.style.color = ''; }
+    if (cnt) {
+      // Surface the LOADED context window — LM Studio hard-caps requests at
+      // this size, so seeing "ctx 8k" instantly explains trimming/overflows.
+      let ctxNote = '';
+      const cw = d.context_windows || {};
+      const first = (d.models || []).find(m => cw[m]);
+      if (first) ctxNote = ' · ctx ' + Math.round(cw[first] / 1024) + 'k';
+      cnt.textContent = d.model_count + ' models' + ctxNote;
+    }
+  } else {
+    if (dot2) dot2.className = 'status-dot offline';
+    if (lbl) { lbl.textContent = '🔴 LM Studio Offline'; lbl.style.color = 'var(--red)'; }
+    if (cnt) cnt.textContent = '';
+  }
+  if (d.enabled) renderLMStudioModels(d.models);
+}
+
+async function loadLMStudioStatus() {
+  try {
+    const r = await authFetch('/api/lmstudio_status');
+    const d = await r.json();
+    updateLMStudioHealth(d);
+  } catch(e) {}
+}
+
+async function refreshLMStudio() {
+  await loadLMStudioStatus();
+}
+
+// ── Topbar pill: combined local-backend status + quick-switch menu ──────────
+function updateLocalPill() {
+  const dot = document.getElementById('ollama-dot');
+  const lbl = document.getElementById('ollama-label');
+  const o = _localBackends.ollama, l = _localBackends.lmstudio;
+  const parts = [];
+  if (o && o.healthy) parts.push('Ollama: ' + (o.model_count ?? (o.models || []).length));
+  if (l && l.healthy && l.enabled) parts.push('LM Studio: ' + (l.model_count ?? (l.models || []).length));
+  if (dot) dot.className = 'status-dot' + (parts.length ? '' : ' offline');
+  if (lbl) lbl.textContent = parts.length ? parts.join(' · ') : 'Local: offline';
+  // Live-refresh the menu if it's open
+  const menu = document.getElementById('local-pill-menu');
+  if (menu && menu.classList.contains('open')) renderLocalPillMenu();
+}
+
+function toggleLocalPillMenu(ev) {
+  if (ev) ev.stopPropagation();
+  const menu = document.getElementById('local-pill-menu');
+  if (!menu) return;
+  if (menu.classList.contains('open')) { menu.classList.remove('open'); return; }
+  renderLocalPillMenu();
+  const pill = document.getElementById('ollama-pill');
+  const r = pill.getBoundingClientRect();
+  menu.style.top = (r.bottom + 8) + 'px';
+  menu.style.left = Math.max(8, r.left) + 'px';
+  menu.classList.add('open');
+  // Refresh both backends so the menu reflects live state
+  loadOllamaStatus();
+  loadLMStudioStatus();
+}
+
+function renderLocalPillMenu() {
+  const menu = document.getElementById('local-pill-menu');
+  if (!menu) return;
+  menu.innerHTML = '';
+  const backends = [
+    { key: 'ollama',   label: '🦙 Ollama',    accent: 'var(--orange)', d: _localBackends.ollama },
+    { key: 'lmstudio', label: '🖥️ LM Studio', accent: 'var(--violet)', d: _localBackends.lmstudio },
+  ];
+  backends.forEach(b => {
+    const d = b.d || {};
+    const enabled = d.enabled !== false;
+    const healthy = !!d.healthy;
+    const models = d.models || [];
+
+    const card = document.createElement('div');
+    card.className = 'lpm-backend';
+
+    const head = document.createElement('div');
+    head.className = 'lpm-head';
+    head.style.color = b.accent;
+    const dot = document.createElement('div');
+    dot.className = 'status-dot' + (healthy ? '' : ' offline');
+    const name = document.createElement('span');
+    name.textContent = b.label;
+    const state = document.createElement('span');
+    state.className = 'lpm-state';
+    state.textContent = !enabled ? 'not configured'
+                      : healthy ? models.length + ' model' + (models.length === 1 ? '' : 's')
+                      : 'offline';
+    head.append(dot, name, state);
+    card.appendChild(head);
+
+    if (healthy && models.length) {
+      const wrap = document.createElement('div');
+      wrap.className = 'lpm-models';
+      models.forEach(m => {
+        const btn = document.createElement('button');
+        btn.className = 'lpm-model' + (currentProvider === b.key && currentModelId === m ? ' active' : '');
+        btn.textContent = m;
+        btn.title = 'Switch to ' + b.key + '/' + m;
+        btn.addEventListener('click', async (e) => {
+          e.stopPropagation();
+          await switchModel(b.key, m, null);
+          renderLocalPillMenu();
+        });
+        wrap.appendChild(btn);
+      });
+      card.appendChild(wrap);
+    } else if (!enabled && b.key === 'lmstudio') {
+      const hint = document.createElement('div');
+      hint.style = 'margin-top:7px;font-size:0.72rem;color:var(--dim)';
+      hint.textContent = 'Enable via ⚙ Setup → provider "LM Studio", or add providers.lmstudio to config.local.yaml';
+      card.appendChild(hint);
+    }
+    menu.appendChild(card);
+  });
+
+  const foot = document.createElement('button');
+  foot.className = 'lpm-foot';
+  foot.textContent = 'Manage all models →';
+  foot.addEventListener('click', () => { toggleLocalPillMenu(); switchTab('models'); });
+  menu.appendChild(foot);
+}
+
+document.addEventListener('click', (e) => {
+  const menu = document.getElementById('local-pill-menu');
+  if (menu && menu.classList.contains('open') && !menu.contains(e.target)) menu.classList.remove('open');
+});
+document.addEventListener('keydown', (e) => {
+  if (e.key === 'Escape') {
+    const menu = document.getElementById('local-pill-menu');
+    if (menu) menu.classList.remove('open');
+  }
+});
 
 let currentSortMode = 'default';
 
@@ -4302,6 +4729,7 @@ function renderModelGrid() {
     const sec = document.createElement('div');
     sec.className = 'provider-section';
     if (provName.includes('Ollama')) sec.id = 'ollama-section';
+    else if (provName.includes('LM Studio')) sec.id = 'lmstudio-section';
     sec.innerHTML = `<div class="provider-label">${provName}</div><div class="model-grid"></div>`;
     const grid = sec.querySelector('.model-grid');
     if (!models.length) {
@@ -4345,8 +4773,10 @@ async function switchModel(provider, modelId, btn) {
     document.querySelectorAll('.model-btn').forEach(b => b.classList.remove('active'));
     if (btn) btn.classList.add('active');
     document.getElementById('model-badge').textContent = modelId.split('/').pop().substring(0,24);
-    document.getElementById('cfg-provider').value = provider;
-    document.getElementById('cfg-model').value = modelId;
+    const cfgProv = document.getElementById('cfg-provider');
+    if (cfgProv) cfgProv.value = provider;
+    const cfgMod = document.getElementById('cfg-model');
+    if (cfgMod) cfgMod.value = modelId;
     addLog(`[Web] Switched model: ${provider}/${modelId}`);
   } else if (d.needs_key) {
     pendingKeySwitch = {provider, modelId, btn};
@@ -4630,6 +5060,7 @@ async function refreshStatus() {
         {name:'Gmail', ok:d.gmail?.configured, detail:d.gmail?.email && d.gmail.email !== '--' ? d.gmail.email : ''},
         {name:'WhatsApp', ok:d.whatsapp?.configured, detail:''},
         {name:'Ollama', ok:d.ollama?.online !== false, detail:(d.ollama?.model_count||0)+' models'},
+        ...(d.lmstudio?.enabled ? [{name:'LM Studio', ok:!!d.lmstudio.healthy, detail:(d.lmstudio.model_count||0)+' models'}] : []),
       ];
       connEl.innerHTML = bridges.map(b => {
         const icon = b.ok ? '<span style="color:var(--green)">✓</span>' : '<span style="color:var(--red)">✗</span>';
@@ -4665,10 +5096,14 @@ async function refreshStatus() {
       }
     }
 
-    // Section 6: Ollama
+    // Section 6: Local backends
     el('st-ollama-status').textContent = (d.ollama?.online !== false) ? 'ONLINE' : 'OFFLINE';
     el('st-ollama-status').style.color = (d.ollama?.online !== false) ? 'var(--green)' : 'var(--red)';
     el('st-ollama-models').textContent = d.ollama?.model_count ?? '--';
+    const lms = d.lmstudio || {};
+    el('st-lmstudio-status').textContent = !lms.enabled ? 'N/A' : (lms.healthy ? 'ONLINE' : 'OFFLINE');
+    el('st-lmstudio-status').style.color = !lms.enabled ? 'var(--dim)' : (lms.healthy ? 'var(--green)' : 'var(--red)');
+    el('st-lmstudio-models').textContent = lms.enabled ? (lms.model_count ?? '--') : '--';
 
     // Refresh cost dashboard
     refreshCostDashboard();
@@ -4779,7 +5214,7 @@ function populateSettingsProviders() {
   // ALWAYS include all known providers — ollama loads async so it may not be in ALL_MODELS yet
   const fallbackOrder = [
     'google','anthropic','openai','xai','groq','mistral','cerebras',
-    'openrouter','huggingface','kimi','zai','minimax','nvidia','ollama','deepseek',
+    'openrouter','huggingface','kimi','zai','minimax','nvidia','ollama','lmstudio','deepseek',
     'together','vllm','moonshot','qianfan','doubao','byteplus',
     'cloudflare-ai-gateway','amazon-bedrock','xiaomi','kilocode','github-copilot'
   ];
@@ -4796,10 +5231,11 @@ function populateSettingsProviders() {
       if (!list.includes(prov)) list.push(prov);
     }
 
+    const NICE_NAMES = { lmstudio: 'LM Studio', nvidia: 'NVIDIA', xai: 'xAI', zai: 'ZAI', openrouter: 'OpenRouter', openai: 'OpenAI', huggingface: 'HuggingFace', deepseek: 'DeepSeek' };
     list.forEach(prov => {
       const opt = document.createElement('option');
       opt.value = prov;
-      opt.textContent = prov.charAt(0).toUpperCase() + prov.slice(1);
+      opt.textContent = NICE_NAMES[prov] || (prov.charAt(0).toUpperCase() + prov.slice(1));
       sel.appendChild(opt);
     });
 
@@ -4859,6 +5295,21 @@ function updateSettingsModelList(role) {
     const ollamaKey = Object.keys(ALL_MODELS).find(k => k.includes('Ollama'));
     if (ollamaKey) {
       ALL_MODELS[ollamaKey].forEach(m => {
+        if (!provModels.find(x => x.id === m.id)) {
+          const opt = document.createElement('option');
+          opt.value = m.id;
+          opt.textContent = m.name;
+          modSel.appendChild(opt);
+        }
+      });
+    }
+  }
+
+  // If LM Studio, add discovered models
+  if (prov === 'lmstudio') {
+    const lmKey = Object.keys(ALL_MODELS).find(k => k.includes('LM Studio'));
+    if (lmKey) {
+      ALL_MODELS[lmKey].forEach(m => {
         if (!provModels.find(x => x.id === m.id)) {
           const opt = document.createElement('option');
           opt.value = m.id;
@@ -5502,12 +5953,8 @@ function switchTab(name) {
   }
   if (name === 'status') {
     refreshStatus();
-    // Force token counter sync from Status API data immediately
-    const r = authFetch('/api/status').then(r => r.json()).then(d => {
-      document.getElementById('token-counter').textContent = '↑' + (d.tokens_in||0) + ' ↓' + (d.tokens_out||0) + ' tokens';
-    }).catch(console.error);
   }
-  if (name === 'models') { loadOllamaStatus(); pmoLoad(); }
+  if (name === 'models') { loadOllamaStatus(); loadLMStudioStatus(); pmoLoad(); }
   if (name === 'memory') loadMemoryBrowser();
   if (name === 'plugins') loadPlugins();
   if (name === 'terminal') { initTerminal(); connectTerminalWS(); }
@@ -6159,32 +6606,10 @@ async function triggerUpdate(force) {
   }
 }
 
-async function checkUpdate() {
-  const statusText = document.getElementById('update-status-text');
-  const updateBtn = document.getElementById('update-btn-status');
-  if (statusText) statusText.textContent = "Checking for updates...";
-  
-  try {
-    const res = await authFetch('/api/status'); // Re-using status to get update info if backend has it, or just a dummy check
-    // In reality, the WS broadcast 'update_available' usually handles this, 
-    // but for manual check we can ping a specific endpoint if we had one.
-    // For now, we'll just toast.
-    showToast('🔍 Checking GitHub releases...', 'info', 2000);
-    setTimeout(() => {
-        if (statusText) statusText.textContent = "Up to date (v2.1.0)";
-    }, 1500);
-  } catch(e) {}
-}
-
-function showUpdateBanner(u) {
-  const statusText = document.getElementById('update-status-text');
-  const updateBtn = document.getElementById('update-btn-status');
-  const hint = document.getElementById('update-version-hint');
-  
-  if (statusText) statusText.textContent = `New Version Available: v${u.latest}`;
-  if (hint) hint.textContent = `Current: v${u.current || '2.0.0'}`;
-  if (updateBtn) updateBtn.style.display = 'block';
-}
+// (The Status-tab "Software Update" section was retired — it hardcoded v2.1.0
+// and its Check button was a stub. Updates live in Settings; the WS
+// 'update_available' event still shows the dismissible topbar banner via the
+// showUpdateBanner defined earlier.)
 
 // ─── HOLO-MAP SWARM VISUALIZER ──────────────────────────────────────────────
 class HoloMap {
@@ -6535,18 +6960,6 @@ const DS_GLOW_KEY = 'gal_glow';
 const GLOW_LABELS = ['Off', 'Medium', 'Max'];
 
 
-function applyTheme(theme) {
-  document.cookie = "theme=" + theme + "; path=/; max-age=31536000"; // 1 year
-  location.reload();
-}
-
-(function() {
-  const match = document.cookie.match(new RegExp('(^| )theme=([^;]+)'));
-  const currentTheme = match ? match[2] : 'modern';
-  const sel = document.getElementById('theme-select');
-  if (sel) sel.value = currentTheme;
-})();
-
 function applyFontSize(px) {
   px = Math.min(26, Math.max(13, parseInt(px)));
   document.documentElement.style.setProperty('--fs', px + 'px');
@@ -6622,9 +7035,9 @@ function refreshCurrentTab() {
   if (!active) return;
   const id = active.id;
   if (id === 'tab-status') refreshStatus();
-  else if (id === 'tab-models') { loadOllamaStatus(); pmoLoad(); }
+  else if (id === 'tab-models') { loadOllamaStatus(); loadLMStudioStatus(); pmoLoad(); }
   else if (id === 'tab-plugins') loadPlugins();
-  else if (id === 'tab-ollama') loadOllamaStatus();
+  else if (id === 'tab-ollama') { loadOllamaStatus(); loadLMStudioStatus(); }
   else if (id === 'tab-logs') loadLogHistory();
   else if (id === 'tab-memory') { loadFileList(); loadMemoryBrowser(); }
 }

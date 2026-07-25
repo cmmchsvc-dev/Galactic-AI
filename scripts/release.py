@@ -4,6 +4,7 @@ import shutil
 import zipfile
 import tarfile
 import re
+import fnmatch
 import yaml
 import argparse
 import glob
@@ -20,7 +21,10 @@ INCLUDE_LIST = [
     "docs",
     "chrome-extension",
     "skills",
-    "config",
+    # NOTE: the "config" DIRECTORY is deliberately NOT listed here. It holds
+    # user-local OAuth tokens and service-account keys; copying it wholesale is
+    # how v2.1.0 shipped live Google credentials to the public. Only the files
+    # in CONFIG_ALLOWLIST below are taken from it — see copy_config_allowlist().
     "requirements",             # feature-group dependency manifests (install.py)
     "CHANGELOG.md",
     "config.yaml",  # We will scrub this later
@@ -74,6 +78,8 @@ INCLUDE_LIST = [
     "hot_memory_buffer.py",
     "remote_access.py",
     "ollama_manager.py",
+    "lmstudio_manager.py",       # LM Studio backend — galactic_core_v2.py / web_deck.py import it
+    "blackboard.py",             # swarm shared state — gateway_tools.py / swarm_orchestrator.py import it
     "nvidia_gateway.py",
     "scheduler.py",
     "spinner.py",
@@ -83,6 +89,161 @@ INCLUDE_LIST = [
     "Galactic CLI.bat",
     "Launch Galactic Desktop.vbs",
 ]
+
+# ── Release safety guards ────────────────────────────────────────────────────
+# This packer copies from the WORKING TREE, not from git, so .gitignore gives it
+# no protection whatsoever. v2.1.0 shipped config/google_service_account.json
+# and config/antigravity_token.json to a public GitHub release because "config"
+# was in INCLUDE_LIST. Everything below exists so that can never repeat.
+
+# The ONLY files taken from the config/ directory. Anything else in there
+# (OAuth tokens, service accounts) is user-local and must never be packaged.
+CONFIG_ALLOWLIST = [
+    "models.yaml",              # model catalogue — read by model_manager/web_deck/telegram_bridge
+]
+
+# Root-level .py modules deliberately NOT shipped (dev-only / unreferenced by
+# any runtime import or launcher script). Anything else missing from
+# INCLUDE_LIST is a packaging bug and hard-fails the build.
+KNOWN_EXCLUDED_MODULES = {
+    "integrity_monitor.py",
+    "plugin_manager.py",
+    "restart.py",
+    "sentinel.py",
+}
+
+# Filenames that must never appear anywhere in a staged release.
+FORBIDDEN_NAME_PATTERNS = [
+    "*token*.json",
+    "*service_account*.json",
+    "*credential*.json",
+    "*.key",
+    "*.pem",
+    "config.local.yaml",
+    "config.local.yaml.*",
+    ".env",
+    "*.env",
+]
+
+# Secret-shaped CONTENT. Deliberately anchored on the high-entropy tail so
+# prose like "set your sk- key" or a `refresh_token:` YAML placeholder doesn't
+# trip the build.
+FORBIDDEN_CONTENT_PATTERNS = [
+    (re.compile(r"BEGIN [A-Z ]*PRIVATE KEY"),           "PEM private key"),
+    (re.compile(r'"refresh_token"\s*:\s*"[^"\s]{16,}'),  "OAuth refresh token"),
+    (re.compile(r"ya29\.[A-Za-z0-9_\-]{20,}"),           "Google OAuth access token"),
+    (re.compile(r"sk-[A-Za-z0-9_\-]{24,}"),              "API secret key"),
+    (re.compile(r"ghp_[A-Za-z0-9]{20,}"),                "GitHub personal access token"),
+]
+
+# A line carrying one of these is an obvious documentation placeholder, not a
+# live secret (e.g. the VAULT-example.md template's ghp_xxxxxxxx… stub).
+_PLACEHOLDER_HINTS = ("xxxxxxxx", "XXXXXXXX", "YOUR_", "your-", "your_",
+                      "<your", "example", "EXAMPLE", "placeholder", "PLACEHOLDER")
+
+# Prose/example trees: still name-scanned, but not content-scanned.
+_CONTENT_SCAN_SKIP_DIRS = {"docs"}
+
+# Files big enough that they're certainly not config/credentials.
+_MAX_CONTENT_SCAN_BYTES = 4 * 1024 * 1024
+
+
+def verify_manifest_complete():
+    """Abort if a root-level module exists on disk but is missing from
+    INCLUDE_LIST. The manifest is hand-maintained, so new modules silently fall
+    out of releases — that's how lmstudio_manager.py and blackboard.py went
+    missing, leaving shipped builds with no LM Studio and an ImportError on
+    every swarm tool. Better a loud build failure than a quiet broken release."""
+    print("Verifying release manifest completeness...")
+    on_disk = {os.path.basename(p) for p in glob.glob(os.path.join(ROOT_DIR, "*.py"))}
+    shipped = {item for item in INCLUDE_LIST if item.endswith('.py')}
+    missing = sorted(on_disk - shipped - KNOWN_EXCLUDED_MODULES)
+    if missing:
+        raise SystemExit(
+            "\n" + "=" * 74 + "\n"
+            "RELEASE ABORTED — INCOMPLETE MANIFEST\n"
+            + "=" * 74 + "\n"
+            "These root-level modules exist in the source tree but are missing\n"
+            "from INCLUDE_LIST in scripts/release.py, so the release would ship\n"
+            "without them and break at import time:\n\n"
+            + "".join(f"  - {name}\n" for name in missing) +
+            "\nAdd each one to INCLUDE_LIST, or to KNOWN_EXCLUDED_MODULES if it is\n"
+            "genuinely dev-only and no shipped code imports it.\n"
+            + "=" * 74
+        )
+    # Reverse check: manifest entries that no longer exist are only a warning —
+    # copy_files() already prints one, and a stale name breaks nothing.
+    stale = sorted(shipped - on_disk)
+    for name in stale:
+        print(f"  Warning: manifest lists {name} but it no longer exists in the source tree")
+    print(f"  Manifest OK: {len(shipped)} root modules shipped, "
+          f"{len(KNOWN_EXCLUDED_MODULES)} deliberately excluded.")
+
+
+def _scan_staged_tree(target_dir):
+    """Return a list of (relpath, reason) for every secret-shaped file in a
+    staged release tree. Pure inspection — no side effects, so it can be
+    unit-tested against a fixture directory."""
+    offenders = []
+    for root, dirs, files in os.walk(target_dir):
+        dirs[:] = [d for d in dirs if d != '__pycache__']
+        rel_root = os.path.relpath(root, target_dir)
+        top = rel_root.split(os.sep)[0] if rel_root != '.' else ''
+        for name in files:
+            rel = os.path.normpath(os.path.join(rel_root, name)) if rel_root != '.' else name
+            path = os.path.join(root, name)
+
+            # 1. Forbidden filenames
+            hit = next((pat for pat in FORBIDDEN_NAME_PATTERNS
+                        if fnmatch.fnmatch(name.lower(), pat)), None)
+            if hit:
+                offenders.append((rel, f"filename matches forbidden pattern '{hit}'"))
+                continue
+
+            # 2. Secret-shaped content
+            if top in _CONTENT_SCAN_SKIP_DIRS:
+                continue
+            try:
+                if os.path.getsize(path) > _MAX_CONTENT_SCAN_BYTES:
+                    continue
+                with open(path, 'rb') as f:
+                    raw = f.read()
+                text = raw.decode('utf-8')
+            except (OSError, UnicodeDecodeError):
+                continue  # binary or unreadable — nothing text-shaped to leak
+            for line_no, line in enumerate(text.splitlines(), 1):
+                if any(h in line for h in _PLACEHOLDER_HINTS):
+                    continue
+                for pattern, label in FORBIDDEN_CONTENT_PATTERNS:
+                    if pattern.search(line):
+                        offenders.append((rel, f"{label} on line {line_no}"))
+                        break
+                else:
+                    continue
+                break
+    return offenders
+
+
+def verify_no_secrets(target_dir=None):
+    """HARD FAIL guard: run against the fully staged release tree BEFORE any
+    archive is created. Raises SystemExit listing every offender."""
+    target_dir = target_dir or BUILD_DIR
+    print("Scanning staged tree for credentials...")
+    offenders = _scan_staged_tree(target_dir)
+    if offenders:
+        raise SystemExit(
+            "\n" + "=" * 74 + "\n"
+            "RELEASE ABORTED — SECRETS DETECTED IN STAGED BUILD\n"
+            + "=" * 74 + "\n"
+            "The following staged files would have been published:\n\n"
+            + "".join(f"  ! {rel}\n      {reason}\n" for rel, reason in offenders) +
+            "\nNOTHING HAS BEEN PACKAGED. Remove these from the release manifest\n"
+            "(scripts/release.py INCLUDE_LIST / CONFIG_ALLOWLIST) before retrying.\n"
+            "If any of these were ever published, ROTATE THE CREDENTIALS NOW.\n"
+            + "=" * 74
+        )
+    print(f"  Clean: no credentials found in {target_dir}")
+
 
 def sync_versions(new_version):
     """Sync the given version across all necessary files in the source tree."""
@@ -186,6 +347,8 @@ def copy_files():
         else:
             shutil.copy2(src, dst)
     
+    copy_config_allowlist()
+
     # Create empty directories required for runtime
     for empty_dir in ['logs', 'images', 'chroma_data', 'workspace']:
         os.makedirs(os.path.join(BUILD_DIR, empty_dir), exist_ok=True)
@@ -200,6 +363,32 @@ def copy_files():
             with open(sh_file, 'wb') as f:
                 f.write(content)
             print(f"  Fixed: {os.path.relpath(sh_file, BUILD_DIR)}")
+
+def copy_config_allowlist():
+    """Copy ONLY the explicitly allowlisted files out of config/.
+
+    Never copytree this directory: it also holds google_service_account.json
+    and antigravity_token.json, which are live user credentials."""
+    src_dir = os.path.join(ROOT_DIR, "config")
+    if not os.path.isdir(src_dir):
+        print("  Warning: config/ directory missing — skipping config allowlist")
+        return
+    dst_dir = os.path.join(BUILD_DIR, "config")
+    os.makedirs(dst_dir, exist_ok=True)
+    print("Copying allowlisted config files...")
+    for name in CONFIG_ALLOWLIST:
+        src = os.path.join(src_dir, name)
+        if not os.path.exists(src):
+            print(f"  Warning: allowlisted config file missing: config/{name}")
+            continue
+        shutil.copy2(src, os.path.join(dst_dir, name))
+        print(f"  Included: config/{name}")
+
+    skipped = sorted(n for n in os.listdir(src_dir)
+                     if n not in CONFIG_ALLOWLIST and n != '__pycache__')
+    if skipped:
+        print(f"  Excluded from config/ (not allowlisted): {', '.join(skipped)}")
+
 
 def scrub_config():
     """Scrub sensitive API keys and tokens from the copied config.yaml."""
@@ -384,16 +573,23 @@ def main():
     
     if args.set_version:
         sync_versions(args.set_version)
-        
+
+    # Manifest guard runs first — no point staging a build that ships broken.
+    verify_manifest_complete()
+
     version = get_version()
     release_target_dir = os.path.join(RELEASE_BASE_DIR, f"v{version}")
     os.makedirs(release_target_dir, exist_ok=True)
-    
+
     clean_build_dir()
     copy_files()
     scrub_config()
     create_workspace_templates()
-    
+
+    # LAST LINE OF DEFENCE — the staged tree is final here and nothing has been
+    # archived yet. Any credential found aborts before a package exists.
+    verify_no_secrets()
+
     build_packages(version, release_target_dir)
     generate_release_notes(version, release_target_dir)
 

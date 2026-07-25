@@ -133,6 +133,12 @@ The control room for models, voice, personality, and system tuning. The **Model 
 ### 🦙 Ollama
 Health status (online/offline, polled continuously), every locally-discovered model, and each one's actual context window size as reported by Ollama itself.
 
+> **Two local backends, one selector.** Galactic AI also supports **LM Studio** as an interchangeable local backend. Start LM Studio's local server (Developer tab → Start Server, default port 1234) and add a `providers.lmstudio` section to your config (`enabled: true`) — or just pick "LM Studio" in the ⚙ Setup wizard, which activates it without a restart. Its models appear in the model picker under a violet 🖥️ group alongside Ollama's orange 🦙 group (embedding-only models are filtered out automatically), the Models tab gets its own LM Studio health row, and LM Studio is selectable in every Settings model dropdown. Switching backends is just picking a different model — no restart. Both are free, local, and need no API key.
+>
+> **Fastest way to switch:** click the **local-backend pill** in the topbar (it reads e.g. `Ollama: 3 · LM Studio: 2`). A menu drops down showing both backends with health dots and every discovered model — click any model to make it the active primary on the spot; the highlighted chip is what's running now.
+>
+> **LM Studio VRAM safety (avoid GPU crashes):** unlike Ollama, LM Studio loads a model with a **fixed** context length and (in GPU-strict mode) won't spill to system RAM — asking for a huge context (e.g. 65k on a 27B) can exceed VRAM and hard-crash the GPU driver. Recipe that works: set Context Length to **24–32k**, enable **K/V Cache Quantization** (halves cache VRAM), and watch LM Studio's VRAM estimate before loading. Galactic helps on its side: it clamps every request to the *loaded* window (the Models tab shows it, e.g. `2 models · ctx 32k`), and sends a `ttl` with each request (default 600s, `providers.lmstudio.ttl`) so an idle LM Studio model **auto-unloads and frees its VRAM** instead of fighting Ollama for the GPU.
+
 ### 📋 Logs
 The raw system log stream in real time — tool calls highlighted in cyan, tool results indented and italic, newest at the bottom, 500 lines of history restored on refresh.
 

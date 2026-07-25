@@ -18,6 +18,9 @@ class GalacticPersonality:
     def __init__(self, config=None, workspace=None):
         self.config = config or {}
         self.workspace = workspace
+        # path -> (stat_key, parsed_content) — see _read_md(). Must exist before
+        # the loaders below run, since they are the first _read_md() callers.
+        self._md_cache = {}
         persona_cfg = self.config.get('personality', {})
         self.mode = persona_cfg.get('mode', 'byte')
 
@@ -127,13 +130,20 @@ class GalacticPersonality:
                 pass
         return {}
 
-    def _read_md(self, filename):
-        """Read a .md file from the workspace directory."""
+    def _read_md(self, filename, force=False):
+        """Read a .md file from the workspace directory — mtime-cached.
+
+        get_system_prompt() re-reads TOOLS.md and VAULT.md on EVERY ReAct turn,
+        from inside async code: that was a blocking open() per file per turn,
+        uncached. Now one os.stat() decides whether the cached text is still
+        good, and the file is only re-read when (mtime_ns, size) changes.
+        Cache is per-instance and single-process, so a plain dict is enough.
+        """
         if not self.workspace:
             return None
-            
+
         base, ext = os.path.splitext(filename)
-        
+
         # Global files that should never be scoped per-personality
         if filename.upper() in ['TOOLS.md', 'VAULT.md', 'USER.md', 'HEARTBEAT.md']:
             path = os.path.join(self.workspace, filename)
@@ -141,19 +151,35 @@ class GalacticPersonality:
             mode_filename = f"{base}_{self.mode}{ext}"
             mode_path = os.path.join(self.workspace, mode_filename)
             path = mode_path if os.path.exists(mode_path) else os.path.join(self.workspace, filename)
-        
-        if os.path.exists(path):
-            try:
-                with open(path, 'r', encoding='utf-8') as f:
-                    content = f.read().strip()
-                # Skip placeholder/template files (just a heading with no real content)
-                lines = [l.strip() for l in content.splitlines() if l.strip() and not l.strip().startswith('#')]
-                if not lines:
-                    return None
-                return content
-            except Exception:
-                return None
-        return None
+
+        cache = getattr(self, '_md_cache', None)
+        if cache is None:
+            cache = self._md_cache = {}
+
+        # One stat covers both existence and the invalidation key.
+        try:
+            st = os.stat(path)
+            stat_key = (st.st_mtime_ns, st.st_size)
+        except OSError:
+            cache.pop(path, None)  # file gone — drop any stale entry
+            return None
+
+        if not force:
+            cached = cache.get(path)
+            if cached is not None and cached[0] == stat_key:
+                return cached[1]
+
+        try:
+            with open(path, 'r', encoding='utf-8') as f:
+                content = f.read().strip()
+        except Exception:
+            return None
+
+        # Skip placeholder/template files (just a heading with no real content)
+        lines = [l.strip() for l in content.splitlines() if l.strip() and not l.strip().startswith('#')]
+        result = content if lines else None
+        cache[path] = (stat_key, result)
+        return result
 
     def _extract_field(self, md_content, field_name):
         """Extract a field like 'Name: Byte' or '**Name:** Byte' from markdown content."""
@@ -213,5 +239,9 @@ class GalacticPersonality:
         return "\n\n".join(parts)
 
     def reload_memory(self):
-        """Re-read MEMORY.md from disk. Call after imprinting new memories."""
-        self.memory_md = self._read_md('MEMORY.md')
+        """Re-read MEMORY.md from disk. Call after imprinting new memories.
+
+        force=True bypasses the mtime cache — an imprint that lands inside the
+        filesystem's timestamp granularity would otherwise look unchanged.
+        """
+        self.memory_md = self._read_md('MEMORY.md', force=True)
