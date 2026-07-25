@@ -63,6 +63,7 @@ marker turns the test RED (strict xfail) so it gets promoted into the normal
 provider list instead of quietly rotting. See `test_KNOWN_BUG_*` below.
 """
 
+import io
 import os
 import re
 import sys
@@ -444,6 +445,54 @@ def test_asking_advising_or_declining_is_not_a_completion_claim():
         "whatever profile is set as default.",
     ) if system_claim_flagged(r, PS_ASK)]
     assert not wrong, "Hedged/questioning replies wrongly flagged: %s" % wrong
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# CTX METER / USAGE CAPTURE
+# 2026-07-25: measured 2 real usage captures out of 4,677 logged calls — the
+# cost log was writing "actual": false for essentially everything, and the deck's
+# CTX meter was showing a chars/4 estimate of chat history (missing the system
+# prompt, ~15k of tool schemas, and injected memories).
+#
+# Cause: every capture site gated on `not self._session_trace_sid.get()`, but
+# _speak_logic assigns the main chat an "m-<uuid>" sid BEFORE any LLM call, so
+# that test is False exactly when it needs to be True. is_main_chat already
+# encodes the right rule.
+# ─────────────────────────────────────────────────────────────────────────────
+
+def test_main_chat_is_recognised_when_it_has_an_m_prefixed_sid():
+    g = G.__new__(G)
+    g._session_isolated = gateway_v3.contextvars.ContextVar("iso", default=False)
+    g._session_trace_sid = gateway_v3.contextvars.ContextVar("sid", default=None)
+    g._session_trace_sid.set("m-0ad0d09c")
+    assert g.is_main_chat, (
+        "The main chat carries an 'm-' sid; is_main_chat must still be True or "
+        "usage capture, chat logging and the CTX meter all silently switch off.")
+    # ...and the naive test that caused the bug must indeed be False, proving
+    # these two are NOT interchangeable.
+    assert not (not g._session_trace_sid.get())
+
+
+def test_isolated_subagent_is_not_main_chat():
+    g = G.__new__(G)
+    g._session_isolated = gateway_v3.contextvars.ContextVar("iso", default=False)
+    g._session_trace_sid = gateway_v3.contextvars.ContextVar("sid", default=None)
+    g._session_isolated.set(True)
+    g._session_trace_sid.set("planner")
+    assert not g.is_main_chat
+
+
+def test_no_usage_capture_site_uses_the_naive_sid_test():
+    """The regression is textual: guards around _last_usage_final must not go
+    back to `not self._session_trace_sid.get()`."""
+    src = io.open(gateway_v3.__file__, encoding="utf-8").read().splitlines(True)
+    bad = []
+    for i, ln in enumerate(src):
+        if "_session_trace_sid.get()" in ln and "_last_usage_final" in "".join(src[i:i + 3]):
+            bad.append(i + 1)
+    assert not bad, (
+        "usage-capture guards regressed to the naive sid test at line(s) %s — "
+        "_last_usage_final will never be written for the main chat" % bad)
 
 
 def test_unrelated_turns_never_trip_the_system_guard():

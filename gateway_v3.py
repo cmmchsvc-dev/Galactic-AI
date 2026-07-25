@@ -2618,8 +2618,14 @@ class GalacticGateway(GatewayToolsMixin):
 
         images: optional list of {name, mime, b64} dicts for vision-capable models.
         """
-        # Determine if this is the main user-facing chat session (not an isolated sub-agent)
-        is_main_chat = not self._session_trace_sid.get()
+        # Determine if this is the main user-facing chat session (not an isolated sub-agent).
+        # Use the property, not `not _trace_sid`: the main chat is assigned an
+        # "m-<uuid>" sid below (and a checkpoint restore can set one before we
+        # even get here), so the bare truthiness test reads False for the main
+        # chat the moment a sid exists. That exact mistake at the usage-capture
+        # sites is why _last_usage_final was never written and the CTX meter
+        # showed a chars/4 estimate instead of real prompt tokens.
+        is_main_chat = self.is_main_chat
         model_mgr = None
 
         # 1. Semantic Memory Retrieval
@@ -4722,7 +4728,7 @@ class GalacticGateway(GatewayToolsMixin):
         url = f"https://generativelanguage.googleapis.com/v1beta/models/{self.llm.model}:generateContent?key={self.llm.api_key}"
         payload = {"contents": [{"parts": [{"text": f"SYSTEM CONTEXT: {context}\n\nUser: {prompt}"}]}]}
         try:
-            if getattr(self, '_last_usage', None) and not self._session_trace_sid.get():
+            if getattr(self, '_last_usage', None) and self.is_main_chat:
                 self._last_usage_final = self._last_usage
             self._last_usage = None
             async with httpx.AsyncClient(timeout=60.0) as client:
@@ -4742,7 +4748,7 @@ class GalacticGateway(GatewayToolsMixin):
                     "prompt_tokens": um.get('promptTokenCount', 0),
                     "completion_tokens": um.get('candidatesTokenCount', 0),
                 }
-                if not self._session_trace_sid.get():
+                if self.is_main_chat:
                     self._last_usage_final = dict(self._last_usage)
                 return candidate['content']['parts'][0]['text']
         except Exception as e:
@@ -4973,7 +4979,7 @@ class GalacticGateway(GatewayToolsMixin):
                     "prompt_tokens": response.usage_metadata.prompt_token_count,
                     "completion_tokens": response.usage_metadata.candidates_token_count,
                 }
-                if not self._session_trace_sid.get():
+                if self.is_main_chat:
                     self._last_usage_final = dict(self._last_usage)
             except: pass
 
@@ -5100,7 +5106,7 @@ class GalacticGateway(GatewayToolsMixin):
             ]
 
         try:
-            if getattr(self, '_last_usage', None) and not self._session_trace_sid.get():
+            if getattr(self, '_last_usage', None) and self.is_main_chat:
                 self._last_usage_final = self._last_usage
             self._last_usage = None
             async with httpx.AsyncClient(timeout=120.0) as client:
@@ -5112,7 +5118,7 @@ class GalacticGateway(GatewayToolsMixin):
                     "prompt_tokens": usage.get('input_tokens', 0),
                     "completion_tokens": usage.get('output_tokens', 0),
                 }
-                if not self._session_trace_sid.get():
+                if self.is_main_chat:
                     self._last_usage_final = dict(self._last_usage)
                 if "content" in data and data["content"]:
                     text_blocks = [b["text"] for b in data["content"] if b.get("type") == "text"]
@@ -5824,7 +5830,7 @@ class GalacticGateway(GatewayToolsMixin):
                                 "prompt_tokens": int(data.get('prompt_eval_count') or 0),
                                 "completion_tokens": int(data.get('eval_count') or 0),
                             }
-                            if not self._session_trace_sid.get():
+                            if self.is_main_chat:
                                 self._last_usage_final = dict(self._last_usage)
                         msg = data.get('message', {})
                         content = (msg.get('content') or '').strip()
@@ -5928,7 +5934,7 @@ class GalacticGateway(GatewayToolsMixin):
                                         "prompt_tokens": int(chunk.get('prompt_eval_count') or 0),
                                         "completion_tokens": int(chunk.get('eval_count') or 0),
                                     }
-                                    if not self._session_trace_sid.get():
+                                    if self.is_main_chat:
                                         self._last_usage_final = dict(self._last_usage)
                                 break
 
@@ -5989,7 +5995,7 @@ class GalacticGateway(GatewayToolsMixin):
         provider = self.llm.provider
         # Preserve the last COMPLETED call's real usage before resetting — the
         # context meter reads it (via _last_usage_final) even mid-call.
-        if getattr(self, '_last_usage', None) and not self._session_trace_sid.get():
+        if getattr(self, '_last_usage', None) and self.is_main_chat:
             self._last_usage_final = self._last_usage
         self._last_usage = None
         self.last_reasoning_details = None
@@ -6297,7 +6303,7 @@ class GalacticGateway(GatewayToolsMixin):
                                             "prompt_tokens": usage.get('prompt_tokens', 0),
                                             "completion_tokens": usage.get('completion_tokens', 0),
                                         }
-                                        if not self._session_trace_sid.get():
+                                        if self.is_main_chat:
                                             self._last_usage_final = dict(self._last_usage)
                                     continue
                                 choice = choices[0]
@@ -6367,7 +6373,7 @@ class GalacticGateway(GatewayToolsMixin):
                                         "prompt_tokens": usage.get('prompt_tokens', 0),
                                         "completion_tokens": usage.get('completion_tokens', 0),
                                     }
-                                    if not self._session_trace_sid.get():
+                                    if self.is_main_chat:
                                         self._last_usage_final = dict(self._last_usage)
                                 # Capture OpenRouter generation ID for actual cost lookup
                                 if 'id' in chunk and provider == 'openrouter':
@@ -6553,7 +6559,7 @@ class GalacticGateway(GatewayToolsMixin):
                             "prompt_tokens": usage.get('prompt_tokens', 0),
                             "completion_tokens": usage.get('completion_tokens', 0),
                         }
-                        if not self._session_trace_sid.get():
+                        if self.is_main_chat:
                             self._last_usage_final = dict(self._last_usage)
                     # Capture OpenRouter generation ID for actual cost lookup
                     if provider == 'openrouter' and 'id' in data:
