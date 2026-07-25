@@ -287,7 +287,12 @@ class DiscordBridge:
         from datetime import datetime
         uptime = int(time.time() - self.start_time)
         plugins = ", ".join([getattr(p, 'skill_name', type(p).__name__) for p in self.core.plugins]) or "none"
-        mems = len(self.core.memory.index.get('memories', []))
+        # GalacticMemory has no `.index` — memories live in SQLite + Chroma.
+        # This raised AttributeError and took the whole /status reply with it.
+        try:
+            mems = sum((await self.core.memory.category_counts()).values())
+        except Exception:
+            mems = 0
         now = datetime.now().strftime("%H:%M:%S")
         provider = self.core.gateway.llm.provider
         model = self.core.gateway.llm.model

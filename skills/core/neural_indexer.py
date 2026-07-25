@@ -47,19 +47,53 @@ class NeuralIndexer(GalacticSkill):
         except Exception as e:
             print(f"Failed to save indexer cache: {e}")
 
+    # Directories that hold RUNTIME OUTPUT rather than source. Watching these
+    # made the indexer trigger itself in a loop: a scan writes
+    # db/neural_indexer_cache.json, whose mtime change is then detected as
+    # "files changed", which starts the next scan — forever, every 30s, always
+    # re-embedding the same handful of files. logs/ is the same story
+    # (system_log.txt, conversations/hot_buffer.json, checkpoint.json are all
+    # rewritten continuously while Galactic runs).
+    _RUNTIME_DIRS = {
+        '.git', '__pycache__', 'venv', '.venv', 'env', 'node_modules',
+        'chroma_data', 'chroma_data.bak', 'releases', 'dist', 'build',
+        'logs', 'db', 'tmp', 'scratch', 'messages', 'images', '_archive',
+        '.pytest_cache', 'tts_models', 'fish-speech',
+    }
+    # ...and single files under the workspace root that churn constantly.
+    _RUNTIME_FILES = {'system_log.txt', 'neural_indexer_cache.json',
+                      'hot_buffer.json', 'current_session.json',
+                      'gemini_error.txt', 'checkpoint.json'}
+
+    _SOURCE_EXTS = ('.py', '.js', '.md', '.txt', '.yaml', '.json')
+
+    def _walk_source_files(self, workspace):
+        """Yield indexable source paths, skipping runtime output.
+
+        ONE definition of what's indexable, used by change-detection, the
+        progress pre-count and the scan itself. They used to disagree: change
+        detection pruned a handful of dirs, while the scan tested
+        `any(p in root for p in [...])` — a substring match that never excluded
+        logs/ or db/ at all, so the scan re-read Galactic's own output even when
+        the mtime pass had ignored it.
+        """
+        for root, dirs, files in os.walk(workspace):
+            dirs[:] = [d for d in dirs
+                       if d.lower() not in self._RUNTIME_DIRS and not d.startswith('.')]
+            for file in files:
+                if file.lower() in self._RUNTIME_FILES:
+                    continue
+                if file.endswith(self._SOURCE_EXTS):
+                    yield os.path.join(root, file)
+
     def _get_workspace_mtimes(self, workspace):
         """Quick pass to collect mtimes of all tracked files."""
         snapshot = {}
-        skip_dirs = {'.git', '__pycache__', 'venv', 'node_modules', 'chroma_data', 'releases'}
-        for root, dirs, files in os.walk(workspace):
-            dirs[:] = [d for d in dirs if d not in skip_dirs and not d.startswith('.')]
-            for file in files:
-                if file.endswith(('.py', '.js', '.md', '.txt', '.yaml', '.json')):
-                    path = os.path.join(root, file)
-                    try:
-                        snapshot[path] = os.path.getmtime(path)
-                    except OSError:
-                        pass
+        for path in self._walk_source_files(workspace):
+            try:
+                snapshot[path] = os.path.getmtime(path)
+            except OSError:
+                pass
         return snapshot
 
     def _has_changes(self, workspace):
@@ -107,14 +141,7 @@ class NeuralIndexer(GalacticSkill):
 
     async def _count_files(self, workspace):
         """Pre-scan to get total file count for progress bar."""
-        total = 0
-        for root, dirs, files in os.walk(workspace):
-            if any(p in root for p in ['.git', '__pycache__', 'venv', 'node_modules', 'chroma_data']):
-                continue
-            for file in files:
-                if file.endswith(('.py', '.js', '.md', '.txt', '.yaml', '.json')):
-                    total += 1
-        return total
+        return sum(1 for _ in self._walk_source_files(workspace))
 
     async def scan_and_index(self):
         workspace = self.core.config.get('system', {}).get('workspace_root', os.getcwd())
@@ -129,63 +156,56 @@ class NeuralIndexer(GalacticSkill):
         new_files = 0
         global_batch = []
         
-        for root, dirs, files in os.walk(workspace):
-            # Ignore hidden and build dirs
-            if any(p in root for p in ['.git', '__pycache__', 'venv', 'node_modules', 'chroma_data']):
-                continue
-                
-            for file in files:
-                if not file.endswith(('.py', '.js', '.md', '.txt', '.yaml', '.json')):
-                    continue
+        for path in self._walk_source_files(workspace):
+            file = os.path.basename(path)
 
-                processed_files += 1
-                self.progress = int((processed_files / total_files) * 100)
-                
-                if new_files > 0 or processed_files % 10 == 0:
-                    status_msg = f"🧠 Neural Indexer: {self.progress}% ({processed_files}/{total_files} files) | Synced: {new_files}"
-                    await self.core.update_status(status_msg)
-                    
-                path = os.path.join(root, file)
-                try:
-                    with open(path, 'r', encoding='utf-8', errors='ignore') as f:
-                        content = f.read()
+            processed_files += 1
+            self.progress = int((processed_files / total_files) * 100)
+
+            if new_files > 0 or processed_files % 10 == 0:
+                status_msg = f"🧠 Neural Indexer: {self.progress}% ({processed_files}/{total_files} files) | Synced: {new_files}"
+                await self.core.update_status(status_msg)
+
+            try:
+                with open(path, 'r', encoding='utf-8', errors='ignore') as f:
+                    content = f.read()
                         
-                    content_hash = hashlib.md5(content.encode()).hexdigest()
-                    if self.indexed_files.get(path) == content_hash:
-                        continue
-                        
-                    # Semantic Imprint (Silent) with Global Batching
-                    if len(content) > 100000:
-                        content = content[:100000]
-                        
-                    chunks = [c.strip() for c in content.split('\n\n') if len(c.strip()) > 50]
-                    if not chunks:
-                        chunk_size = 1500
-                        chunks = [content[i:i+chunk_size] for i in range(0, len(content), chunk_size)]
-                    
-                    for i, chunk in enumerate(chunks):
-                        global_batch.append({
-                            "content": f"FILE: {file} (Part {i+1}/{len(chunks)})\nPATH: {path}\nCONTENT:\n{chunk}",
-                            "category": "codebase_index",
-                            "metadata": {"path": path, "type": "code", "chunk_index": i}
-                        })
-                        
-                    self.indexed_files[path] = content_hash
-                    new_files += 1
-                    
-                    if len(global_batch) >= 100:
-                        if hasattr(self.core.memory, 'save_memories_bulk'):
-                            await self.core.memory.save_memories_bulk(global_batch, silent=True)
-                        else:
-                            for mem in global_batch:
-                                await self.core.memory.save_memory(
-                                    content=mem['content'], category=mem['category'], metadata=mem['metadata'], silent=True
-                                )
-                        global_batch.clear()
-                        await asyncio.sleep(0.01) # Yield to event loop
-                        
-                except Exception:
+                content_hash = hashlib.md5(content.encode()).hexdigest()
+                if self.indexed_files.get(path) == content_hash:
                     continue
+                        
+                # Semantic Imprint (Silent) with Global Batching
+                if len(content) > 100000:
+                    content = content[:100000]
+                        
+                chunks = [c.strip() for c in content.split('\n\n') if len(c.strip()) > 50]
+                if not chunks:
+                    chunk_size = 1500
+                    chunks = [content[i:i+chunk_size] for i in range(0, len(content), chunk_size)]
+                    
+                for i, chunk in enumerate(chunks):
+                    global_batch.append({
+                        "content": f"FILE: {file} (Part {i+1}/{len(chunks)})\nPATH: {path}\nCONTENT:\n{chunk}",
+                        "category": "codebase_index",
+                        "metadata": {"path": path, "type": "code", "chunk_index": i}
+                    })
+                        
+                self.indexed_files[path] = content_hash
+                new_files += 1
+                    
+                if len(global_batch) >= 100:
+                    if hasattr(self.core.memory, 'save_memories_bulk'):
+                        await self.core.memory.save_memories_bulk(global_batch, silent=True)
+                    else:
+                        for mem in global_batch:
+                            await self.core.memory.save_memory(
+                                content=mem['content'], category=mem['category'], metadata=mem['metadata'], silent=True
+                            )
+                    global_batch.clear()
+                    await asyncio.sleep(0.01) # Yield to event loop
+                        
+            except Exception:
+                continue
                     
         if global_batch:
             if hasattr(self.core.memory, 'save_memories_bulk'):

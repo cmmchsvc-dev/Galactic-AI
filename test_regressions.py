@@ -553,6 +553,49 @@ def test_cached_tokens_are_billed_at_the_cached_rate():
         % (mixed_cost, fresh_cost))
 
 
+# ─────────────────────────────────────────────────────────────────────────────
+# NEURAL INDEXER SELF-TRIGGER LOOP
+# 2026-07-25: "Synchronized 3 files" repeated every few minutes forever. The
+# indexer watched db/neural_indexer_cache.json — the file it writes at the END
+# of a scan — so finishing a scan changed an mtime it was watching and started
+# the next one. logs/system_log.txt and logs/conversations/*.json did the same.
+# Change-detection and the scan also disagreed about what to skip: the scan used
+# `any(p in root for p in [...])`, a substring test that never excluded logs/.
+# ─────────────────────────────────────────────────────────────────────────────
+
+def test_indexer_never_watches_its_own_runtime_output():
+    from skills.core.neural_indexer import NeuralIndexer
+    root = os.path.dirname(os.path.abspath(gateway_v3.__file__))
+    files = [f.lower() for f in NeuralIndexer._walk_source_files(NeuralIndexer, root)]
+    assert files, "indexer found no source files at all"
+
+    selftrigger = [f for f in files
+                   if "neural_indexer_cache" in f
+                   or f.endswith("system_log.txt")
+                   or "hot_buffer.json" in f
+                   or "current_session.json" in f]
+    assert not selftrigger, (
+        "indexer is watching files it writes itself — this re-triggers a scan "
+        "forever: %s" % selftrigger[:5])
+
+    runtime = [f for f in files
+               if any(("%s%s%s" % (os.sep, d, os.sep)) in f
+                      for d in ("logs", "db", "tmp", "scratch", "chroma_data",
+                                "releases", "_archive", "messages"))]
+    assert not runtime, "indexer walked runtime dirs: %s" % runtime[:5]
+
+
+def test_indexer_change_detection_and_scan_use_the_same_filter():
+    """They diverged once and the scan re-read files the mtime pass ignored."""
+    from skills.core.neural_indexer import NeuralIndexer
+    import inspect
+    for fn in (NeuralIndexer._get_workspace_mtimes, NeuralIndexer._count_files,
+               NeuralIndexer.scan_and_index):
+        assert "_walk_source_files" in inspect.getsource(fn), (
+            "%s no longer routes through _walk_source_files — the two filters "
+            "can drift apart again" % fn.__name__)
+
+
 def test_unrelated_turns_never_trip_the_system_guard():
     wrong = [r for r, a in (
         ("I've updated the retry logic in that function.", "fix the bug in gateway_v3.py"),

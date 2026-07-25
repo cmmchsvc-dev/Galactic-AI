@@ -2933,9 +2933,17 @@ class GalacticWebDeck:
                         }
                     })
 
-                    # Update Aura Imprints
-                    await send_if_changed("aura_update",
-                                          self.core.memory.index.get('memories', [])[-15:])
+                    # NOTE: an "aura_update" frame used to be sent here from
+                    # `self.core.memory.index`. GalacticMemory has no `.index`
+                    # attribute (memories live in SQLite + Chroma; the API is
+                    # list_memories()), so this raised AttributeError on the
+                    # FIRST tick and killed telemetry for the whole connection —
+                    # which is why the deck fell back to 10s polling. The bare
+                    # `except: break` below hid it until it started logging.
+                    # Nothing consumed the frame either: no handler for
+                    # "aura_update" exists in deck_modern.html or the extension.
+                    # So it is removed rather than repaired — reinstating it
+                    # would add an unused SQLite query per socket per tick.
 
                     await asyncio.sleep(5)
                 except asyncio.CancelledError:
