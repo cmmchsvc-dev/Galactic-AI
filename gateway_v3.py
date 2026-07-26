@@ -4556,22 +4556,7 @@ class GalacticGateway(GatewayToolsMixin):
 
         # 1. Determine the limit
         if not limit_tokens:
-            limit_tokens = self._get_context_window_for_model() or 32768
-
-            # 💸 Billable cap. The context window is what the model CAN take,
-            # not what's worth paying for: kimi-k3 advertises 1,048,576 tokens,
-            # which works out to a 3.57M-char limit — history was effectively
-            # never trimmed and every turn re-sent (and re-billed) the entire
-            # conversation. Paid providers get min(window, max_billable_context).
-            # Local backends are free, so they keep the full window.
-            if not self._is_local_backend():
-                models_cfg = self.core.config.get('models', {}) or {}
-                try:
-                    billable = int(models_cfg.get('max_billable_context', 32768))
-                except (TypeError, ValueError):
-                    billable = 32768
-                if billable > 0:
-                    limit_tokens = min(int(limit_tokens), billable)
+            limit_tokens = self._get_effective_context_limit()
 
         # 2. Rough heuristic: 1 token ≈ 4 chars; leave 15% headroom for the response
         char_limit = int(limit_tokens * 4 * 0.85)
@@ -5418,6 +5403,31 @@ class GalacticGateway(GatewayToolsMixin):
                     f"📐 {provider}: live context windows cached for {found} model(s) via /models", priority=3)
         except Exception:
             pass  # pure enhancement — name-based fallbacks below still apply
+
+    def _get_effective_context_limit(self):
+        """The limit that ACTUALLY governs trimming/compaction, in tokens.
+
+        Distinct from _get_context_window_for_model(), which reports what the
+        model can physically accept. kimi-k3 advertises 1,048,576 tokens — a
+        3.57M-char limit, so history was never trimmed and every turn re-sent
+        (and re-billed) the whole conversation. Paid providers are therefore
+        capped at models.max_billable_context; local backends are free and keep
+        the full window.
+
+        The CTX meter must read THIS, not the advertised window. Reporting 48k
+        against 1,048,576 shows "5% used" at the exact moment compaction fires,
+        which makes the deck look broken and the compaction look spurious.
+        """
+        limit = self._get_context_window_for_model() or 32768
+        if not self._is_local_backend():
+            models_cfg = self.core.config.get('models', {}) or {}
+            try:
+                billable = int(models_cfg.get('max_billable_context', 32768))
+            except (TypeError, ValueError):
+                billable = 32768
+            if billable > 0:
+                limit = min(int(limit), billable)
+        return int(limit)
 
     def _get_context_window_for_model(self, default=None):
         """Return context_window: per-model override first, then global config, then

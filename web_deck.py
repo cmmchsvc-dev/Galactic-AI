@@ -3751,7 +3751,16 @@ class GalacticWebDeck:
         gw = self.core.gateway
         ctx_max = 0
         try:
-            if hasattr(gw, '_get_context_window_for_model'):
+            # The EFFECTIVE limit, not the advertised window. kimi-k3 advertises
+            # 1,048,576 tokens but paid providers are capped at
+            # models.max_billable_context, which is what trimming and background
+            # compaction actually enforce. Showing the advertised number made the
+            # meter read "5% used" at the very moment compaction fired at 111k
+            # chars — so the meter looked broken and the compaction looked
+            # spurious. Both were correct; only the denominator was wrong.
+            if hasattr(gw, '_get_effective_context_limit'):
+                ctx_max = gw._get_effective_context_limit() or 0
+            elif hasattr(gw, '_get_context_window_for_model'):
                 ctx_max = gw._get_context_window_for_model(0) or 0
             if not ctx_max and hasattr(self.core, 'ollama_manager') and gw.llm.provider == 'ollama':
                 ctx_max = self.core.ollama_manager.get_context_window(gw.llm.model) or 0

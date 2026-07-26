@@ -618,6 +618,28 @@ def test_indexer_change_detection_and_scan_use_the_same_filter():
             "can drift apart again" % fn.__name__)
 
 
+def test_ctx_meter_reads_the_effective_limit_not_the_advertised_window():
+    """2026-07-25: background compaction fired at 111,174 chars while the deck
+    showed "CTX 5% - 48K/1049K". Both were correct; the meter was dividing by
+    kimi-k3's advertised 1,048,576-token window instead of the
+    max_billable_context cap that actually governs trimming. 48K against the
+    real 32,768 limit is 146%, not 5%."""
+    gw_ = _cache_gw("hi", provider="moonshot", model="kimi-k3")
+    gw_.core = SimpleNamespace(config={"models": {}})
+    assert gw_._get_effective_context_limit() == 32768
+
+    gw_.core = SimpleNamespace(config={"models": {"max_billable_context": 131072}})
+    assert gw_._get_effective_context_limit() == 131072
+
+    # Local backends bill nothing, so they keep the whole window.
+    loc = _cache_gw("hi", provider="ollama", model="qwen3.6:27b")
+    loc.core = SimpleNamespace(config={"models": {"context_window": 64000}})
+    assert loc._get_effective_context_limit() == 64000
+
+    src = io.open(gateway_v3.__file__, encoding="utf-8").read()
+    assert "_get_effective_context_limit" in src
+
+
 def test_unrelated_turns_never_trip_the_system_guard():
     wrong = [r for r, a in (
         ("I've updated the retry logic in that function.", "fix the bug in gateway_v3.py"),
