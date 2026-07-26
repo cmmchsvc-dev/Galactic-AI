@@ -89,6 +89,32 @@ body{background:radial-gradient(1200px 800px at 85% -10%,rgba(139,92,246,0.16),t
 .approval-approve{background:linear-gradient(135deg,#22c55e,#16a34a);color:#04140a}
 .approval-reject{background:var(--bg3);border:1px solid rgba(248,113,113,0.5) !important;color:#f87171}
 .approval-actions button:hover{opacity:.85}
+/* ── Swarm activity glow ──────────────────────────────────────────────────
+   Subagents run on a tab you're usually not looking at, so the tab itself
+   reports it: a slow, mellow breathe while any session is pending/running.
+   Deliberately unhurried (2.6s) — this is ambient status, not an alert.
+   The count badge carries the actual number. */
+@keyframes swarmBreathe{
+  0%,100%{box-shadow:0 0 0 rgba(34,211,238,0);      color:var(--text)}
+  50%    {box-shadow:0 0 14px rgba(34,211,238,.45); color:var(--cyan)}
+}
+@keyframes swarmIconPulse{
+  0%,100%{transform:scale(1);   filter:drop-shadow(0 0 0 rgba(34,211,238,0))}
+  50%    {transform:scale(1.14);filter:drop-shadow(0 0 6px rgba(34,211,238,.8))}
+}
+.swarm-busy{animation:swarmBreathe 2.6s var(--ease) infinite;border-radius:8px}
+.swarm-busy .icon{animation:swarmIconPulse 2.6s var(--ease) infinite;display:inline-block}
+.swarm-count{
+  display:none;margin-left:6px;padding:1px 7px;border-radius:999px;
+  background:var(--cyan);color:#04121a;font-size:0.68rem;font-weight:800;
+  font-family:var(--mono);vertical-align:middle;
+}
+.swarm-busy .swarm-count{display:inline-block}
+/* Respect the OS setting — a strobe is exactly what this asks about. */
+@media (prefers-reduced-motion: reduce){
+  .swarm-busy,.swarm-busy .icon{animation:none}
+  .swarm-busy{box-shadow:0 0 10px rgba(34,211,238,.4);color:var(--cyan)}
+}
 /* ── Swarm Blackboard panel entries ── */
 .bb-entry{background:var(--bg3);border:1px solid var(--border);border-radius:8px;padding:8px 10px;margin-bottom:8px;animation:riseIn .25s var(--ease) both}
 .bb-entry-head{display:flex;justify-content:space-between;align-items:center;gap:8px;margin-bottom:4px}
@@ -1112,7 +1138,7 @@ body[data-viz-theme="lightspeed"] #sidebar, body[data-viz-theme="lightspeed"] #c
     <div class="sidebar-item" onclick="switchTab('settings')"><span class="icon">⚙️</span> Settings</div>
     <div class="sidebar-item" onclick="switchTab('logs')"><span class="icon">📋</span> Logs</div>
     <div class="sidebar-item" onclick="switchTab('thinking')"><span class="icon">🧠</span> Thinking</div>
-    <div class="sidebar-item" onclick="switchTab('swarm')"><span class="icon">🕸️</span> Swarm</div>
+    <div class="sidebar-item" id="swarm-sidebar-item" onclick="switchTab('swarm')"><span class="icon">🕸️</span> Swarm<span class="swarm-count" id="swarm-count-side"></span></div>
     <div class="sidebar-item" onclick="switchTab('cli-settings')"><span class="icon">⌨️</span> CLI Settings</div>
   </div>
 
@@ -1129,7 +1155,7 @@ body[data-viz-theme="lightspeed"] #sidebar, body[data-viz-theme="lightspeed"] #c
       <button class="tab-btn" onclick="switchTab('cli-settings')">⌨️ CLI Settings</button>
       <button class="tab-btn" onclick="switchTab('logs')">📋 Logs</button>
       <button class="tab-btn" id="thinking-tab-btn" onclick="switchTab('thinking')">🧠 Thinking</button>
-      <button class="tab-btn" id="swarm-tab-btn" onclick="switchTab('swarm')">🕸️ Swarm</button>
+      <button class="tab-btn" id="swarm-tab-btn" onclick="switchTab('swarm')"><span class="icon">🕸️</span> Swarm<span class="swarm-count" id="swarm-count-tab"></span></button>
     </div>
 
     <!-- CHAT -->
@@ -2883,6 +2909,7 @@ function connectWS() {
       // Live-sync the workspace chip when the core auto-detects a project path
       if (String(p.data).includes('Active workspace') && typeof loadWorkspaces === 'function') loadWorkspaces();
     } else if (p.type === 'telemetry') {
+      if (p.data.swarm_active !== undefined) setSwarmActivity(p.data.swarm_active);
       if (p.data.ctx_max !== undefined) updateCtxMeter(p.data.ctx_used, p.data.ctx_max);
       document.getElementById('st-uptime').textContent = p.data.uptime;
       document.getElementById('st-tin').textContent = p.data.tin;
@@ -3194,6 +3221,26 @@ async function stripContextImages() {
 function closeContextIcebox() {
   const ov = document.getElementById('icebox-overlay');
   if (ov) ov.remove();
+}
+
+// ── Swarm activity glow ─────────────────────────────────────────────────────
+// Driven by swarm_active in the telemetry frame. Both the sidebar entry and the
+// top tab button breathe while any subagent is pending/running, with a count
+// badge, so work on an unwatched tab is visible from anywhere in the deck.
+let _swarmActiveCount = 0;
+function setSwarmActivity(n) {
+  n = parseInt(n, 10) || 0;
+  if (n === _swarmActiveCount) return;   // avoid restarting the animation
+  _swarmActiveCount = n;
+  [['swarm-sidebar-item', 'swarm-count-side'],
+   ['swarm-tab-btn', 'swarm-count-tab']].forEach(([hostId, badgeId]) => {
+    const host = document.getElementById(hostId);
+    const badge = document.getElementById(badgeId);
+    if (!host) return;
+    host.classList.toggle('swarm-busy', n > 0);
+    if (badge) badge.textContent = n > 0 ? n : '';
+    host.title = n > 0 ? (n + ' subagent' + (n === 1 ? '' : 's') + ' running') : '';
+  });
 }
 
 // ── Swarm Blackboard: live shared agent memory panel ────────────────────────

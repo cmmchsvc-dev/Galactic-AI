@@ -2919,6 +2919,17 @@ class GalacticWebDeck:
                 try:
                     uptime = int(time.time() - self.core.start_time)
                     _ctx_used, _ctx_max = self._context_usage()
+                    # Live subagent count — drives the Swarm tab's activity glow
+                    # so you can see work happening on a tab you're not looking at.
+                    _swarm_active = 0
+                    try:
+                        _mgr = self._get_subagent_mgr()
+                        if _mgr and hasattr(_mgr, 'active_sessions'):
+                            _swarm_active = sum(
+                                1 for s in _mgr.active_sessions.values()
+                                if getattr(s, 'status', None) in ('pending', 'running'))
+                    except Exception:
+                        _swarm_active = 0
                     await send_if_changed("telemetry", {
                         "model": self.core.gateway.llm.model,
                         "provider": self.core.gateway.llm.provider,
@@ -2927,6 +2938,7 @@ class GalacticWebDeck:
                         "uptime": uptime,
                         "ctx_used": _ctx_used,
                         "ctx_max": _ctx_max,
+                        "swarm_active": _swarm_active,
                         "plugins": {
                             "sniper": self._skill_enabled("sniper"),
                             "watchdog": self._skill_enabled("watchdog"),
