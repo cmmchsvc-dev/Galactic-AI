@@ -622,6 +622,63 @@ def test_indexer_change_detection_and_scan_use_the_same_filter():
             "can drift apart again" % fn.__name__)
 
 
+# ─────────────────────────────────────────────────────────────────────────────
+# OBSERVATION HALLUCINATION — "I can see X on your screen" with nothing read
+# 2026-07-26, the most damaging failure of the session. Asked to retry a form,
+# the model called ZERO tools and replied "I'm in your Tuya Cloud project now!
+# Your API credentials are visible:" followed by a Client ID and Client Secret
+# of exactly the right shape. Both invented — the strings appear nowhere in any
+# log before that reply, and the user confirmed the project wasn't even created
+# yet. A false "I did it" wastes a turn; a false READING gets pasted into a
+# config file.
+# ─────────────────────────────────────────────────────────────────────────────
+
+_OBS_INCIDENT = (
+    "I'm in your Tuya Cloud project **\"bruh\"** now! The form has already been "
+    "created and your API credentials are visible:\n"
+    "- **Client ID:** `k3qc7wpxtj9qvr8yfkaa`\n"
+    "- **Client Secret:** `c965a3d72ecb4a9496541a9e9d2765fe`\n")
+
+
+def _obs_flags(reply, observed=False):
+    """Mirrors the observation branch of the ReAct loop."""
+    rt = reply.lower()
+    hedged = bool(G._NO_CLAIM_HEDGE_RE.search(rt)) or rt.rstrip().endswith('?')
+    claimed = bool(G._OBSERVATION_CLAIM_RE.search(rt))
+    return (claimed and not observed and not hedged,
+            bool(G._SECRET_SHAPED_RE.search(reply)))
+
+
+def test_fabricated_screen_reading_is_caught():
+    fired, secret = _obs_flags(_OBS_INCIDENT, observed=False)
+    assert fired, "model described the screen with no read tool called — not flagged"
+    assert secret, "secret-shaped values not detected; this must be a hard stop"
+
+
+def test_same_claim_is_fine_when_a_read_tool_actually_ran():
+    fired, _ = _obs_flags(_OBS_INCIDENT, observed=True)
+    assert not fired
+
+
+def test_observation_guard_ignores_questions_advice_and_figurative_see():
+    wrong = [r for r in (
+        "Should I click the Devices tab for you?",
+        "You'll need to open the Devices tab yourself.",
+        "Here's how the Tuya console is laid out, generally speaking.",
+        "I've updated the retry logic in gateway_v3.py.",
+        "I can see why that would be confusing — the docs are unclear.",
+    ) if _obs_flags(r)[0]]
+    assert not wrong, "wrongly flagged as a false observation: %s" % wrong
+
+
+def test_secret_shape_detector():
+    for v in ("k3qc7wpxtj9qvr8yfkaa", "c965a3d72ecb4a9496541a9e9d2765fe",
+              "sk-abcdefghijklmnopqrstuv"):
+        assert G._SECRET_SHAPED_RE.search(v), "missed a credential shape: %s" % v
+    for v in ("hello world", "gateway_v3.py", "192.168.0.47"):
+        assert not G._SECRET_SHAPED_RE.search(v), "false positive on: %s" % v
+
+
 def test_tool_free_agents_get_zero_schemas_declared():
     """2026-07-26: the ambient memory-capture agent — whose entire job is to
     return one sentence of durable fact, and whose prompt literally says "do NOT

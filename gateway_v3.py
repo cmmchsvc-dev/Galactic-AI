@@ -1674,6 +1674,45 @@ class GalacticGateway(GatewayToolsMixin):
         + r"[^.!?\n]{0,40}?\b(?:default|instead\s+of)\b"
         + r"|\b" + _SYSTEM_INTENT + r"\b[^.!?\n]{0,80}?\b(?:default|instead\s+of)\b"
         + r"[^.!?\n]{0,40}?\b" + _SYSTEM_OBJECT)
+    # ── Observation claims: "I can see X on your screen" with nothing read ───
+    # 2026-07-26, the worst failure of the session. Asked to retry a form, the
+    # model called ZERO tools and replied "I'm in your Tuya Cloud project now!
+    # Your API credentials are visible on screen:" followed by a Client ID and
+    # Client Secret of exactly the right shape. Both were invented — the strings
+    # appear nowhere in any log before that reply. The user nearly wired
+    # fabricated credentials into a script.
+    #
+    # The system-state guard could not catch it: that one looks for claims to
+    # have CHANGED something. This is a claim to have OBSERVED something, which
+    # is a distinct and more dangerous class — a false "done" wastes a turn, a
+    # false READING gets acted on as fact.
+    _OBSERVATION_CLAIM_RE = re.compile(
+        # "I can see why/that/how..." is figurative agreement, not an observation.
+        r"\bi (?:can |could )?see\b(?!\s+(?:why|that|how|what|if|where|when|"
+        r"the\s+(?:point|logic|appeal|issue|problem|confusion)))"
+        r"|\bi'?m (?:in|on|at|looking at|viewing)\b[^.!?\n]{0,40}\b(?:page|project|dashboard|tab|screen|console|form)\b"
+        r"|\bon (?:the |your )?screen\b"
+        r"|\b(?:the |your )?(?:page|screen|form|dashboard|console|table|list) (?:shows|says|displays|contains|has)\b"
+        r"|\b(?:is|are) (?:now )?(?:visible|displayed|shown) (?:on|in)\b"
+        r"|\bi (?:found|see|spotted|located) (?:the|your)\b[^.!?\n]{0,40}"
+        r"\b(?:credential|key|secret|token|id|value|field|button)s?\b")
+    # A secret-shaped literal in the reply raises the stakes: a hallucinated
+    # credential is acted on, not just believed. Long hex, long lowercase
+    # alnum (Tuya/OAuth client ids), or common key prefixes.
+    _SECRET_SHAPED_RE = re.compile(
+        r"\b[0-9a-f]{32,}\b"
+        r"|\b[a-z0-9]{20,}\b"
+        r"|\b(?:sk|pk|ghp|gho|xox[baprs])[-_][A-Za-z0-9]{16,}\b")
+    # Tools that constitute actually LOOKING at something.
+    _OBSERVATION_TOOLS = (
+        'chrome_read_page', 'chrome_screenshot', 'chrome_get_text', 'chrome_find',
+        'chrome_extract_element', 'chrome_execute_js', 'chrome_read_console',
+        'chrome_read_network', 'chrome_get_network_body', 'chrome_tabs_list',
+        'browser_snapshot', 'browser_read_page', 'browser_extract', 'browser_get_text',
+        'analyze_image', 'read_file', 'list_dir', 'grep_search', 'exec_shell',
+        'execute_python', 'web_fetch', 'web_search', 'memory_search',
+    )
+
     # The model declining, asking, or advising is NOT a false completion claim.
     _NO_CLAIM_HEDGE_RE = re.compile(
         r"\b(?:would you like|do you want|should i|shall i|can you (?:confirm|check|run)|"
@@ -3706,6 +3745,44 @@ class GalacticGateway(GatewayToolsMixin):
                     continue
                 else:
                     _system_claim_turns = 0
+
+                # ── OBSERVATION HALLUCINATION DETECTOR ────────────────────
+                # "I can see your credentials on screen: <invented values>"
+                # with no read tool called. Distinct from the system-state
+                # guard above: that catches a false "I did it", this catches a
+                # false "I saw it" — which is worse, because a fabricated
+                # reading gets pasted into a config file and acted on.
+                _observed = any(t in recent_tools for t in self._OBSERVATION_TOOLS)
+                _claimed_observation = bool(self._OBSERVATION_CLAIM_RE.search(_rt_lower))
+                _has_secret = bool(self._SECRET_SHAPED_RE.search(response_text))
+                if (_claimed_observation and not _observed and not tool_calls
+                        and not _sys_hedged and is_main_chat):
+                    await self.core.log(
+                        "🚫 Observation hallucination: model described page/screen content "
+                        f"with no read tool called{' AND emitted secret-shaped values' if _has_secret else ''}",
+                        priority=1)
+                    if _has_secret:
+                        # Hard stop. Do not let an invented credential reach the
+                        # user as if it were read off their screen.
+                        return (
+                            "⚠️ STOPPING: I was about to report specific values (IDs/keys/secrets) as if "
+                            "I had read them off your screen, but I did not call a single tool this turn — "
+                            "so any value I produced would be invented. **Ignore any credentials in my "
+                            "previous message.** Ask me again and I will call chrome_read_page first and "
+                            "quote only what it actually returns."
+                        )
+                    messages.append({"role": "assistant", "content": response_text})
+                    messages.append({
+                        "role": "user",
+                        "content": (
+                            "⚠️ HALLUCINATION DETECTED. You described what is on the page/screen, but you "
+                            "did NOT call chrome_read_page, chrome_screenshot, or any other tool this turn — "
+                            "so you cannot have seen it. Call a read tool NOW and describe only what it "
+                            "actually returns. Never state an ID, key, path, or value you have not read "
+                            "from real tool output."
+                        )
+                    })
+                    continue
 
                 called_type = 'chrome_type' in recent_tools or 'browser_type' in recent_tools
 
