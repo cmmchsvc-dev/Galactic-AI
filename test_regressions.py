@@ -505,9 +505,13 @@ def test_no_usage_capture_site_uses_the_naive_sid_test():
 def _cache_gw(msg, provider="moonshot", model="kimi-k3", config=None):
     import contextvars
     x = G.__new__(G)
+    # __new__ skips __init__, so every session ContextVar _get_active_tools
+    # touches has to be seeded here. Adding one to the gateway without adding it
+    # here fails loudly (AttributeError), which is the behaviour we want.
     x._session_isolated = contextvars.ContextVar("i", default=False)
     x._session_trace_sid = contextvars.ContextVar("s", default=None)
     x._session_is_coding = contextvars.ContextVar("c", default=False)
+    x._session_no_tools = contextvars.ContextVar("n", default=False)
     x.llm = SimpleNamespace(provider=provider, model=model)
     x.core = SimpleNamespace(config=config or {"models": {}})
     x.tools = {n: {"description": "d" + n, "parameters": {}} for n in
@@ -616,6 +620,33 @@ def test_indexer_change_detection_and_scan_use_the_same_filter():
         assert "_walk_source_files" in inspect.getsource(fn), (
             "%s no longer routes through _walk_source_files — the two filters "
             "can drift apart again" % fn.__name__)
+
+
+def test_tool_free_agents_get_zero_schemas_declared():
+    """2026-07-26: the ambient memory-capture agent — whose entire job is to
+    return one sentence of durable fact, and whose prompt literally says "do NOT
+    call any tools" — called chrome_navigate, chrome_read_page and chrome_type
+    while the MAIN agent was filling a form in the same browser. The two fought
+    over the page and the form never got filled. A prompt instruction is advice;
+    an empty schema list is enforcement."""
+    gw_ = _cache_gw("extract a durable fact", provider="ollama", model="qwen3.6:27b")
+    assert gw_._get_active_tools(), "fixture is wrong — expected tools by default"
+    gw_._session_no_tools.set(True)
+    assert gw_._get_active_tools() == {}, (
+        "no_tools did not withhold the schemas — a text-only utility agent can "
+        "still drive the browser out from under the main agent")
+
+
+def test_auto_compaction_is_disableable_without_losing_the_overflow_failsafe():
+    """models.auto_compact turns off the destructive background summariser, but
+    the hard-truncation failsafe must stay reachable or context can overflow."""
+    src = io.open(gateway_v3.__file__, encoding="utf-8").read()
+    gate = src.index("_auto_compact = bool(")
+    failsafe = src.index("HARD TRUNCATION FAILSAFE")
+    assert failsafe > gate, "failsafe moved above the gate"
+    assert "return messages" not in src[gate:failsafe], (
+        "an early return between the auto_compact gate and the truncation "
+        "failsafe would let context overflow when compaction is disabled")
 
 
 def test_ctx_meter_reads_the_effective_limit_not_the_advertised_window():

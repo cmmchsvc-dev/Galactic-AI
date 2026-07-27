@@ -70,6 +70,17 @@ class AmbientAgent:
                     prompt, context=context,
                     override_provider=prov, override_model=model,
                     use_lock=True, skip_planning=True, session_id=session_id,
+                    # Every job in this file is "read text, return one sentence".
+                    # The prompts already say "do NOT call any tools", but that's
+                    # advice, not enforcement: on 2026-07-26 this agent called
+                    # chrome_navigate / chrome_read_page / chrome_type while the
+                    # MAIN agent was filling a form in the same browser, and the
+                    # two fought over the page. Declaring nothing makes it
+                    # impossible rather than merely discouraged.
+                    no_tools=True,
+                    # No persona either — a fact extractor doesn't need one, and
+                    # it keeps the isolated prompt small and cheap.
+                    plain_persona=True,
                 ),
                 timeout=timeout,
             )

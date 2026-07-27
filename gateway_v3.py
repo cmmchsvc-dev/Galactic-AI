@@ -505,6 +505,16 @@ class GalacticGateway(GatewayToolsMixin):
         # 23k-token planning request can't come back as persona small-talk.
         self._session_plain_persona = contextvars.ContextVar('session_plain_persona', default=False)
 
+        # Tool-free mode for pure text utility agents (memory capture, life-log,
+        # summarisation). Telling a model "do NOT call any tools" in the prompt
+        # while still DECLARING the full toolset is not a control — it's a
+        # suggestion. On 2026-07-26 the ambient capture agent, whose only job is
+        # to extract one sentence of durable fact, called chrome_navigate,
+        # chrome_read_page and chrome_type while the MAIN agent was filling a
+        # form in the same browser. The two stomped on each other and the form
+        # never got filled. Withhold the schemas instead of asking nicely.
+        self._session_no_tools = contextvars.ContextVar('session_no_tools', default=False)
+
         # New: Isolated LLM state
         self._session_llm_provider = contextvars.ContextVar('session_llm_provider', default=self.provider)
         self._session_llm_model = contextvars.ContextVar('session_llm_model', default=self.model)
@@ -1683,6 +1693,11 @@ class GalacticGateway(GatewayToolsMixin):
         _CLOUD_MAX_TOOLS for paid providers). Cloud used to be exempt from all
         of this and paid ~15.6k tokens of tool schema on every single turn.
         """
+        # Tool-free utility agents get NOTHING declared. A prompt saying "do not
+        # call any tools" is advisory; an empty schema list is enforcement.
+        if self._session_no_tools.get():
+            return {}
+
         # Prefix list for essential tools — broadened to include vision, subagents, memory, etc.
         essential_prefixes = (
             'read_', 'write_', 'edit_', 'exec', 'list_', 'generate_', 'analyze_', 
@@ -3879,7 +3894,7 @@ class GalacticGateway(GatewayToolsMixin):
 
     # ── Isolated speak for sub-agents ─────────────────────────────────
 
-    async def speak_isolated(self, user_input, context="", chat_id=None, images=None, override_provider=None, override_model=None, use_lock=True, skip_planning=False, session_id=None, plain_persona=False):
+    async def speak_isolated(self, user_input, context="", chat_id=None, images=None, override_provider=None, override_model=None, use_lock=True, skip_planning=False, session_id=None, plain_persona=False, no_tools=False):
         """
         Run speak() with isolated state for sub-agents or planners.
         Saves and restores all mutable gateway state so concurrent calls
@@ -3904,6 +3919,7 @@ class GalacticGateway(GatewayToolsMixin):
         t_cp = self._session_checkpoint_id.set(None)
         t_qs = self._session_queued_switch.set(None)
         t_pp = self._session_plain_persona.set(bool(plain_persona))
+        t_nt = self._session_no_tools.set(bool(no_tools))
 
         # Isolated LLM state
         t_lp = self._session_llm_provider.set(override_provider or self.provider)
@@ -3944,6 +3960,7 @@ class GalacticGateway(GatewayToolsMixin):
             self._session_checkpoint_id.reset(t_cp)
             self._session_queued_switch.reset(t_qs)
             self._session_plain_persona.reset(t_pp)
+            self._session_no_tools.reset(t_nt)
             self._session_llm_provider.reset(t_lp)
             self._session_llm_model.reset(t_lm)
             self._session_llm_api_key.reset(t_lk)
@@ -4629,8 +4646,29 @@ class GalacticGateway(GatewayToolsMixin):
             state['ids'] = None
             state['summary_msg'] = None
 
-        # Proactive: launch background compaction at 70% of budget
-        if total_chars > char_limit * 0.7 and len(messages) > 8:
+        # Proactive: launch background compaction at a fraction of budget.
+        #
+        # This is destructive and was never opt-out-able. It replaces the middle
+        # of the conversation with a summary, which (a) loses detail the agent
+        # may still need — mid-build file contents, page state, tool results —
+        # and (b) rewrites the prompt prefix, invalidating the provider's cached
+        # prefix and turning the next call into a full-price miss. On a browser
+        # or multi-file coding run it fired every 30-60s.
+        #
+        # models.auto_compact: false disables it entirely (hard trimming in
+        # _trim_messages is still the safety net, so context can never overflow).
+        # models.auto_compact_at tunes the trigger fraction.
+        # NB: gate the LAUNCH only — never return early here. Steps 5 and 6
+        # below are the hard over-limit wait and the truncation failsafe, and
+        # skipping those would let context overflow instead of merely growing.
+        _mc = self.core.config.get('models', {}) or {}
+        _auto_compact = bool(_mc.get('auto_compact', True))
+        try:
+            _at = float(_mc.get('auto_compact_at', 0.7))
+        except (TypeError, ValueError):
+            _at = 0.7
+        _at = min(max(_at, 0.1), 0.95)
+        if _auto_compact and total_chars > char_limit * _at and len(messages) > 8:
             task = state['task']
             if (task is None or task.done()) and state['summary_msg'] is None:
                 start_idx = 1 if messages[0].get('role') == 'system' else 0
