@@ -1120,20 +1120,34 @@ class GalacticWebDeck:
                 except Exception as e:
                     response = f"Error in isolated execution: {e}"
             elif getattr(self.core.gateway, '_speaking', False):
-                busy_task = getattr(self.core.gateway, '_current_task_desc', 'a background task')
-                quick_ctx  = (
-                    f"The main AI agent is currently busy working on: {busy_task}. "
-                    f"Give a brief, helpful quick reply to the following message. "
-                    f"Mention that the main agent is still working if relevant."
-                )
+                # ✏️ A message typed while the agent is WORKING is almost always a
+                # course correction — "no, not that file", "use the extension",
+                # "stop, wrong approach". It is not a side question.
+                #
+                # This branch used to hand it to an ISOLATED quick-reply model:
+                # empty history, no idea what the main agent was doing, whose
+                # entire job was to say "the main agent is busy". The user's
+                # correction was then discarded — it never reached the running
+                # agent at all. Reported as "I try to correct its thought process
+                # and it acts confused, says main agent busy, and ignores what I
+                # just said." Exactly right, and it only started happening once
+                # _speaking was fixed and this long-dead branch went live.
+                #
+                # The barge-in channel already exists and does the right thing:
+                # _consume_pending_nudge folds the text into the running loop as
+                # a [LIVE CORRECTION] and the agent adjusts course. Use it.
+                gw = self.core.gateway
+                nudge_text = full_msg or f"[User attached {len(attached_images)} image(s)]."
+                gw._pending_nudge = nudge_text
+                await self.core.log(
+                    f"✏️ Barge-in from chat box (agent busy): {nudge_text[:80]}", priority=2)
                 try:
-                    quick_reply = await self.core.gateway.speak_isolated(
-                        full_msg or f"[User attached {len(attached_images)} image(s)].",
-                        context=quick_ctx
-                    )
-                    response = f"⚡ **Quick Reply** *(main agent busy)*\n\n{quick_reply}"
+                    await self.core.relay.emit(2, "system_notice",
+                                               f"✏️ Steering: {nudge_text[:120]}")
                 except Exception:
-                    response = "⚡ *The main agent is busy — please wait for it to finish before sending this.*"
+                    pass
+                response = ("✏️ **Got it — steering.** I'm folding that into the task I'm "
+                            "already running rather than starting a separate reply.")
             elif attached_images:
                 response = await self.core.gateway.speak(
                     full_msg or f"[User attached {len(attached_images)} image(s). Please describe and analyse them.]",

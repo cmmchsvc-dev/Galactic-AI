@@ -649,6 +649,41 @@ def _obs_flags(reply, observed=False):
             bool(G._SECRET_SHAPED_RE.search(reply)))
 
 
+# ─────────────────────────────────────────────────────────────────────────────
+# BARGE-IN: correcting the agent mid-task must reach the agent
+# Reported 2026-07-26: "sometimes I see it thinking something that isn't
+# correct and I'll try to correct its thought process and it acts confused and
+# says main agent busy, and ignores what I just said."
+# Exactly right. The busy branch handed the message to an ISOLATED quick-reply
+# model with empty history whose only job was to say "the main agent is busy" —
+# the correction was discarded and never reached the running loop. The branch
+# had been dead for months and only went live once _speaking was fixed.
+# ─────────────────────────────────────────────────────────────────────────────
+
+def test_message_sent_while_busy_becomes_a_barge_in_not_a_quick_reply():
+    src = io.open(os.path.join(os.path.dirname(os.path.abspath(gateway_v3.__file__)),
+                               "web_deck.py"), encoding="utf-8").read()
+    i = src.index("elif getattr(self.core.gateway, '_speaking', False):")
+    branch = src[i:i + 2000]
+    branch = branch[:branch.index("elif attached_images:")]
+
+    assert "_pending_nudge" in branch, (
+        "a message typed while the agent is working must be delivered to the "
+        "running agent as a barge-in correction")
+    assert "speak_isolated" not in branch, (
+        "the busy branch is routing to an isolated model again — that model has "
+        "no idea what the main agent is doing and the correction gets discarded")
+
+
+def test_the_nudge_actually_gets_consumed_by_the_loop():
+    """Setting _pending_nudge is only useful if the loop reads it — mid-stream
+    (to cut the in-flight generation) and at turn boundaries (to inject it)."""
+    src = io.open(gateway_v3.__file__, encoding="utf-8").read()
+    assert "await self._consume_pending_nudge(" in src, "turn-boundary consumption gone"
+    assert src.count("self._pending_nudge") >= 4, "mid-stream nudge checks disappeared"
+    assert "LIVE CORRECTION" in src, "the injected steer lost its framing"
+
+
 def test_browser_tools_survive_a_vague_follow_up_mid_task():
     """THE CAUSE of the fabricated-credentials incident, as opposed to its
     symptom. Mid browser task the user sent "Try again I made some more fixes
