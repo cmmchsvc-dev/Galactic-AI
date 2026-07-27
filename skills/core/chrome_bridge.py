@@ -1186,6 +1186,26 @@ class ChromeBridgeSkill(GalacticSkill):
 
         try:
             result = await asyncio.wait_for(future, timeout=self.timeout)
+            # The gateway and the extension version independently. When a new
+            # tool ships, the gateway registers it immediately but Chrome keeps
+            # running the old background.js until the user reloads the unpacked
+            # extension — so the command dispatches to `default:` and comes back
+            # "Unknown command: X". Verbatim, that reads like a broken tool: on
+            # 2026-07-26 the model concluded "chrome_select_option doesn't exist
+            # in this extension version", abandoned the correct approach and
+            # burned ~20 turns clicking blindly. Say what is actually wrong and
+            # what fixes it, so neither the model nor the user has to guess.
+            if isinstance(result, dict):
+                _err = str(result.get('error') or '')
+                if 'unknown command' in _err.lower():
+                    return {"error": (
+                        f"The Chrome extension does not know the '{command}' command — it is "
+                        f"running an OLDER build than the gateway. This is not a broken tool and "
+                        f"retrying will not help. Reload the unpacked extension at "
+                        f"chrome://extensions (hit Reload on Galactic AI), then try again. "
+                        f"Until then, do NOT fall back to clicking blindly, desktop control, or "
+                        f"browser_* — tell the user the extension needs reloading."
+                    )}
             return result
         except asyncio.TimeoutError:
             logger.warning("ChromeBridge: command '%s' (id=%s) timed out after %ds",
