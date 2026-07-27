@@ -2699,9 +2699,32 @@ class GalacticWebDeck:
             await ws.close(code=4002)
             return ws
 
-        # Register the WebSocket with the bridge plugin
+        # Register the WebSocket with the bridge plugin.
+        #
+        # ws_connection is a SINGLE slot, so the extension can be installed in
+        # more than one browser and whichever connected LAST silently owns the
+        # bridge. That means chrome_tabs_list can be listing Chrome's tabs while
+        # the user is working in Edge — "I have the tab open, you find it for
+        # me" then fails for a reason nothing in the log explains. Name the
+        # browser so a takeover is visible instead of mysterious.
+        _ua = (request.headers.get('User-Agent') or '')
+        if 'Edg/' in _ua:
+            _browser = 'Edge'
+        elif 'OPR/' in _ua or 'Opera' in _ua:
+            _browser = 'Opera'
+        elif 'Chrome/' in _ua:
+            _browser = 'Chrome'
+        else:
+            _browser = 'browser'
+        _previous = bridge.ws_connection
         bridge.ws_connection = ws
-        await self.core.log("[Chrome Bridge] Extension connected", priority=2)
+        bridge._connected_browser = _browser
+        if _previous is not None and _previous is not ws:
+            await self.core.log(
+                f"[Chrome Bridge] ⚠️ {_browser} took over the bridge from another browser — "
+                f"commands now go to {_browser} only.", priority=1)
+        else:
+            await self.core.log(f"[Chrome Bridge] Extension connected ({_browser})", priority=2)
 
         # Send hello acknowledgement
         await ws.send_str(json.dumps({'type': 'hello', 'status': 'connected', 'version': '1.4.9'}))
@@ -2721,13 +2744,22 @@ class GalacticWebDeck:
         except Exception as e:
             await self.core.log(f"[Chrome Bridge] Connection error: {e}", priority=1)
         finally:
-            bridge.ws_connection = None
-            # Cancel any pending futures
-            for req_id, fut in list(bridge._pending.items()):
-                if not fut.done():
-                    fut.set_exception(ConnectionError("Chrome extension disconnected"))
-            bridge._pending.clear()
-            await self.core.log("[Chrome Bridge] Extension disconnected", priority=2)
+            # Only tear down if WE still own the slot. Previously an idle
+            # browser closing its socket set ws_connection = None and cancelled
+            # every pending future — killing the bridge for whichever browser
+            # had legitimately taken it over.
+            if bridge.ws_connection is ws:
+                bridge.ws_connection = None
+                for req_id, fut in list(bridge._pending.items()):
+                    if not fut.done():
+                        fut.set_exception(ConnectionError("Chrome extension disconnected"))
+                bridge._pending.clear()
+                await self.core.log(
+                    f"[Chrome Bridge] Extension disconnected ({_browser})", priority=2)
+            else:
+                await self.core.log(
+                    f"[Chrome Bridge] Stale {_browser} socket closed; active bridge unaffected",
+                    priority=3)
         return ws
 
     # ── Virtual Terminal WebSocket ──────────────────────────────────────
