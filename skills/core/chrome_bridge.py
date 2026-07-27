@@ -187,6 +187,20 @@ class ChromeBridgeSkill(GalacticSkill):
                 }},
                 "fn": self._tool_chrome_tabs_create
             },
+            "chrome_tabs_select": {
+                "description": (
+                    "Switch to a tab the user ALREADY has open in their Chrome browser, by id "
+                    "or by matching text in its URL/title. Use this instead of chrome_navigate "
+                    "when the user says the page is 'already open in another tab' — navigating "
+                    "would overwrite whatever tab they are currently on. Call chrome_tabs_list "
+                    "first if you need the ids."
+                ),
+                "parameters": {"type": "object", "properties": {
+                    "tab_id": {"type": "number", "description": "Exact tab id from chrome_tabs_list."},
+                    "match": {"type": "string", "description": "Case-insensitive substring of the tab's URL or title, e.g. 'tuya' or 'platform.tuya.com'."},
+                }},
+                "fn": self._tool_chrome_tabs_select
+            },
             "chrome_key_press": {
                 "description": "Press keyboard key(s) in the user's Chrome browser. Supports modifiers like ctrl+a, shift+Enter.",
                 "parameters": {"type": "object", "properties": {
@@ -713,6 +727,35 @@ class ChromeBridgeSkill(GalacticSkill):
         if result.get('status') == 'success':
             return f"[CHROME] New tab created: {result.get('url', 'new tab')}"
         return f"[ERROR] Chrome tabs_create: {result.get('error') or result.get('message') or 'unknown error'}"
+
+    async def _tool_chrome_tabs_select(self, args):
+        if not self.ws_connection:
+            return "[ERROR] Chrome extension not connected."
+        payload = {}
+        if args.get('tab_id') is not None:
+            try:
+                payload['tab_id'] = int(args['tab_id'])
+            except (TypeError, ValueError):
+                return "[ERROR] chrome_tabs_select: tab_id must be a number."
+        if args.get('match'):
+            payload['match'] = str(args['match'])
+        if not payload:
+            return "[ERROR] chrome_tabs_select requires either 'tab_id' or 'match'."
+
+        result = await self.send_command("tabs_select", payload)
+        if result.get('status') == 'success':
+            return (f"[CHROME] Switched to tab {result.get('id')}: "
+                    f"{(result.get('title') or 'Untitled')[:60]}\n    {result.get('url', '')}")
+        # On a miss, hand back the open tabs so the model can pick without a
+        # second round-trip (and without reaching for chrome_navigate).
+        err = result.get('error') or result.get('message') or 'unknown error'
+        tabs = result.get('tabs') or []
+        if tabs:
+            lines = [f"[ERROR] {err}. Open tabs:"]
+            for t in tabs[:20]:
+                lines.append(f"  Tab {t.get('id')}: {(t.get('title') or 'Untitled')[:60]}\n    {t.get('url', '')}")
+            return "\n".join(lines)
+        return f"[ERROR] chrome_tabs_select: {err}"
 
     async def _tool_chrome_wait_for(self, args):
         if not self.ws_connection: return "[ERROR] Chrome extension not connected."

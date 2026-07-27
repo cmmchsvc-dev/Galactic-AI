@@ -197,6 +197,7 @@ async function handleCommand(id, command, args) {
     case 'hide_status': return await cmdHideStatus(args);
     case 'tabs_list': return await cmdTabsList(args);
     case 'tabs_create': return await cmdTabsCreate(args);
+    case 'tabs_select': return await cmdTabsSelect(args);
     case 'key_press': return await cmdKeyPress(args);
     case 'read_console': return await cmdReadConsole(args);
     case 'read_network': return await cmdReadNetwork(args);
@@ -399,6 +400,47 @@ async function cmdTabsList(_args) {
 async function cmdTabsCreate(args) {
   const tab = await chrome.tabs.create({ url: args?.url || 'about:blank' });
   return { status: 'success', id: tab.id, url: tab.url || args?.url || 'about:blank' };
+}
+
+/* Activate an EXISTING tab. Previously you could list tabs and create tabs but
+   not switch to one, so "go to the tab I already have open" was impossible —
+   the agent would either navigate the tab the user was typing in, or fall back
+   to the separate Playwright browser and lose the user's session entirely.
+   Accepts an exact tab_id, or `match` as a case-insensitive substring of the
+   URL or title. */
+async function cmdTabsSelect(args) {
+  const tabs = await chrome.tabs.query({});
+  let target = null;
+
+  if (args?.tab_id) {
+    target = tabs.find(t => t.id === args.tab_id) || null;
+    if (!target) return { error: `No tab with id ${args.tab_id}` };
+  } else if (args?.match) {
+    const q = String(args.match).toLowerCase();
+    // Prefer a URL hit, fall back to title; never pick the active tab if
+    // another candidate matches, since "switch to X" implies a different tab.
+    const cands = tabs.filter(t =>
+      (t.url || '').toLowerCase().includes(q) || (t.title || '').toLowerCase().includes(q));
+    if (!cands.length) {
+      return {
+        error: `No open tab matching "${args.match}"`,
+        tabs: tabs.map(t => ({ id: t.id, title: t.title || '', url: t.url || '' }))
+      };
+    }
+    target = cands.find(t => !t.active) || cands[0];
+  } else {
+    return { error: 'tabs_select requires either tab_id or match' };
+  }
+
+  await chrome.tabs.update(target.id, { active: true });
+  try { await chrome.windows.update(target.windowId, { focused: true }); } catch (_) {}
+  return {
+    status: 'success',
+    id: target.id,
+    title: target.title || '',
+    url: target.url || '',
+    matched: args?.match || null
+  };
 }
 
 async function cmdKeyPress(args) {

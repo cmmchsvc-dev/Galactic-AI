@@ -1978,6 +1978,16 @@ class GalacticGateway(GatewayToolsMixin):
             k.startswith(('browser_', 'chrome_')) for k in active_tools)
         browser_rules = "" if not _has_browser_tools else (
             "BROWSER TOOL WORKFLOW (MANDATORY for all browser_* tasks):\n"
+            "0. TWO SEPARATE BROWSERS — DO NOT MIX THEM. `chrome_*` drives the USER'S OWN Chrome "
+            "via the extension, with their logins, cookies and open tabs. `browser_*` drives a "
+            "SEPARATE automated browser that has none of that. If the task involves a site the "
+            "user is signed in to, a tab they already have open, or they mention 'my browser' or "
+            "'the extension', you MUST stay on `chrome_*` for the whole task. Switching to "
+            "`browser_*` mid-task abandons their session and they will have to log in again.\n"
+            "0b. To reach a page the user ALREADY has open, use `chrome_tabs_select` "
+            "(by `match` text or `tab_id` from `chrome_tabs_list`). Do NOT use chrome_navigate for "
+            "this — navigating replaces whatever is in the current tab, which may be the one they "
+            "are typing in.\n"
             "1. ALWAYS call browser_snapshot FIRST after navigating to scan the page.\n"
             "2. browser_type does NOT auto-submit by default. Set `\"press_enter\": true` in the arguments to press Enter, OR follow it with a `browser_click` on the search/submit button.\n"
             "3. NAVIGATION: Use browser_navigate. Then ALWAYS use browser_snapshot to see the elements.\n"
@@ -3038,7 +3048,7 @@ class GalacticGateway(GatewayToolsMixin):
             'browser_snapshot', 'web_search', 'memory_search', 'generate_image', 'get_system_health', 'read_file', 'list_dir', 'grep_search', 'find_files', 'regex_search',
             'generate_image_imagen', 'generate_video',
             'chrome_read_page', 'chrome_scroll', 'chrome_wait', 'chrome_wait_for', 'chrome_get_text',
-            'chrome_tabs_list', 'chrome_tabs_create', 'chrome_key_press',
+            'chrome_tabs_list', 'chrome_tabs_create', 'chrome_tabs_select', 'chrome_key_press',
             'chrome_type', 'chrome_click', 'chrome_hover', 'chrome_right_click',
             'browser_navigate', 'browser_open', 'browser_click', 'browser_type', 
             'browser_click_by_ref', 'browser_type_by_ref', 'browser_hover', 'browser_scroll',
@@ -4008,6 +4018,7 @@ class GalacticGateway(GatewayToolsMixin):
         'chrome_find': 10, 'chrome_click': 10, 'chrome_type': 15,
         'chrome_scroll': 10, 'chrome_form_input': 10, 'chrome_execute_js': 30,
         'chrome_get_text': 15, 'chrome_tabs_list': 10, 'chrome_tabs_create': 10,
+        'chrome_tabs_select': 10,
         'chrome_key_press': 10, 'chrome_read_console': 10, 'chrome_read_network': 10,
         'chrome_hover': 10,
         # Social Media tools
