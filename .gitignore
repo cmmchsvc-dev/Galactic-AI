@@ -59,6 +59,19 @@ debug_core.log
 chroma_data/
 chroma_data.bak/
 
+# ─── NEVER COMMIT — timestamped backups of secret-bearing files ──────────────
+# config.local.yaml is ignored, but `config.local.yaml.bak-2026-07-26` is a
+# DIFFERENT filename and the rule did not cover it. A `git add -A` swept one in
+# on 2026-07-26 and GitHub push protection blocked the push — it carried live
+# Google OAuth client id + secret. Cover every derivative of the overlay, and
+# backup suffixes generally.
+config.local.yaml*
+*.bak
+*.bak-*
+*.bak2-*
+*-backup-*
+*.orig
+
 # ─── TLS material generated for remote access ────────────────────────────────
 certs/
 *.pem
