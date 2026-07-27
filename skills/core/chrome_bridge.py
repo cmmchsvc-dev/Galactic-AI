@@ -201,6 +201,23 @@ class ChromeBridgeSkill(GalacticSkill):
                 }},
                 "fn": self._tool_chrome_tabs_select
             },
+            "chrome_select_option": {
+                "description": (
+                    "Pick a value from a dropdown by its VISIBLE TEXT. Works on native <select> "
+                    "AND on custom widgets (Ant Design, MUI, Headless UI) that are <div>s — those "
+                    "ignore chrome_form_input and chrome_type, and render their options in a "
+                    "portal outside the trigger, so clicking alone never finds them. ALWAYS use "
+                    "this for 'Select your industry'-style fields instead of clicking around or "
+                    "falling back to desktop/mouse control. On a miss it returns the available "
+                    "options so you can retry with an exact one."
+                ),
+                "parameters": {"type": "object", "properties": {
+                    "ref": {"type": "string", "description": "Element ref of the dropdown trigger, from chrome_read_page."},
+                    "selector": {"type": "string", "description": "CSS selector of the dropdown trigger (alternative to ref)."},
+                    "option": {"type": "string", "description": "The visible text of the option to choose, e.g. 'Smart Home'."},
+                }, "required": ["option"]},
+                "fn": self._tool_chrome_select_option
+            },
             "chrome_key_press": {
                 "description": "Press keyboard key(s) in the user's Chrome browser. Supports modifiers like ctrl+a, shift+Enter.",
                 "parameters": {"type": "object", "properties": {
@@ -756,6 +773,32 @@ class ChromeBridgeSkill(GalacticSkill):
                 lines.append(f"  Tab {t.get('id')}: {(t.get('title') or 'Untitled')[:60]}\n    {t.get('url', '')}")
             return "\n".join(lines)
         return f"[ERROR] chrome_tabs_select: {err}"
+
+    async def _tool_chrome_select_option(self, args):
+        if not self.ws_connection:
+            return "[ERROR] Chrome extension not connected."
+        option = str(args.get('option') or args.get('text') or '').strip()
+        if not option:
+            return "[ERROR] chrome_select_option requires 'option' (the visible text to pick)."
+        if not (args.get('ref') or args.get('selector')):
+            return ("[ERROR] chrome_select_option requires 'ref' or 'selector' for the dropdown "
+                    "trigger. Call chrome_read_page first to get element refs.")
+
+        payload = {'option': option}
+        if args.get('ref'):
+            payload['ref'] = str(args['ref'])
+        if args.get('selector'):
+            payload['selector'] = str(args['selector'])
+
+        result = await self.send_command("select_option", payload)
+        if result.get('status') == 'success':
+            return f"[CHROME] Selected '{result.get('selected', option)}'."
+        err = result.get('error') or result.get('message') or 'unknown error'
+        avail = result.get('available') or []
+        if avail:
+            return ("[ERROR] " + err + "\nAvailable options: "
+                    + ", ".join(repr(a) for a in avail[:40]))
+        return f"[ERROR] chrome_select_option: {err}"
 
     async def _tool_chrome_wait_for(self, args):
         if not self.ws_connection: return "[ERROR] Chrome extension not connected."

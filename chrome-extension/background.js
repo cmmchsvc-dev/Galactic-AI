@@ -198,6 +198,7 @@ async function handleCommand(id, command, args) {
     case 'tabs_list': return await cmdTabsList(args);
     case 'tabs_create': return await cmdTabsCreate(args);
     case 'tabs_select': return await cmdTabsSelect(args);
+    case 'select_option': return await cmdSelectOption(args);
     case 'key_press': return await cmdKeyPress(args);
     case 'read_console': return await cmdReadConsole(args);
     case 'read_network': return await cmdReadNetwork(args);
@@ -441,6 +442,12 @@ async function cmdTabsSelect(args) {
     url: target.url || '',
     matched: args?.match || null
   };
+}
+
+async function cmdSelectOption(args) {
+  const tabId = await getTargetTabId(args);
+  if (!tabId) return { error: 'No active tab' };
+  return await sendToContent(tabId, 'select_option', args);
 }
 
 async function cmdKeyPress(args) {

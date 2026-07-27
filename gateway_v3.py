@@ -1988,6 +1988,13 @@ class GalacticGateway(GatewayToolsMixin):
             "(by `match` text or `tab_id` from `chrome_tabs_list`). Do NOT use chrome_navigate for "
             "this — navigating replaces whatever is in the current tab, which may be the one they "
             "are typing in.\n"
+            "0c. DROPDOWNS: for any 'Select ...' field use `chrome_select_option` with the visible "
+            "option text. Modern dropdowns are <div> widgets, not <select>, so chrome_type and "
+            "chrome_form_input silently do nothing and a plain click only opens the list. NEVER "
+            "escalate a stuck form to `desktop_click`, `browser_click_coords`, screen-resolution "
+            "maths or mouse coordinates — that is not the page, it is the whole screen, and it "
+            "will click the wrong thing. If a field resists after two attempts, call "
+            "chrome_read_page, say precisely which field is stuck, and ask the user.\n"
             "1. ALWAYS call browser_snapshot FIRST after navigating to scan the page.\n"
             "2. browser_type does NOT auto-submit by default. Set `\"press_enter\": true` in the arguments to press Enter, OR follow it with a `browser_click` on the search/submit button.\n"
             "3. NAVIGATION: Use browser_navigate. Then ALWAYS use browser_snapshot to see the elements.\n"
@@ -4018,7 +4025,7 @@ class GalacticGateway(GatewayToolsMixin):
         'chrome_find': 10, 'chrome_click': 10, 'chrome_type': 15,
         'chrome_scroll': 10, 'chrome_form_input': 10, 'chrome_execute_js': 30,
         'chrome_get_text': 15, 'chrome_tabs_list': 10, 'chrome_tabs_create': 10,
-        'chrome_tabs_select': 10,
+        'chrome_tabs_select': 10, 'chrome_select_option': 15,
         'chrome_key_press': 10, 'chrome_read_console': 10, 'chrome_read_network': 10,
         'chrome_hover': 10,
         # Social Media tools

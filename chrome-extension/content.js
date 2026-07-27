@@ -750,6 +750,100 @@
 
   /* ─── Click ─────────────────────────────────────────────────────────── */
 
+  /* ─── Custom dropdown widgets ──────────────────────────────────────────
+     Ant Design / MUI / Headless-UI "selects" are <div>s, not <select>s, so
+     form_input and type do nothing to them and click alone only opens the
+     list. Worse, the option list is usually rendered in a PORTAL appended to
+     <body>, so it isn't inside the trigger and a follow-up click on the
+     trigger's subtree never finds it. Observed 2026-07-26: the agent filled
+     the Tuya project name and description fine, then burned 20 turns on three
+     dropdowns and escalated all the way to desktop mouse coordinates.
+
+     Open the widget, wait for the portal to render, then click the option
+     whose text matches. Native <select> is handled directly.                */
+  const _OPTION_SELECTORS = [
+    '[role="option"]',
+    '.ant-select-item-option',
+    '.ant-select-item',
+    '.MuiMenuItem-root',
+    '[class*="option"]:not([class*="options"])',
+    '[class*="menu-item"]',
+    'li'
+  ].join(',');
+
+  function _visibleOptions() {
+    return Array.from(document.querySelectorAll(_OPTION_SELECTORS))
+      .filter(isVisible)
+      .filter(el => (el.textContent || '').trim().length > 0);
+  }
+
+  async function performSelectOption(args) {
+    const wanted = String(args?.option ?? args?.text ?? '').trim();
+    if (!wanted) return { error: 'select_option requires an "option" (the visible text to pick)' };
+
+    let el = null;
+    if (args?.ref) el = getElementByRef(args.ref);
+    else if (args?.selector) el = document.querySelector(args.selector);
+    if (!el) return { error: 'select_option: trigger element not found (pass ref or selector)' };
+
+    showStatusPill(`Selecting "${wanted}"...`);
+
+    /* Native <select> — no portal involved. */
+    const nativeSel = el.tagName === 'SELECT' ? el : el.querySelector('select');
+    if (nativeSel) {
+      const opt = Array.from(nativeSel.options).find(o =>
+        (o.textContent || '').trim().toLowerCase().includes(wanted.toLowerCase()));
+      if (!opt) {
+        return { error: `No <option> matching "${wanted}"`,
+                 available: Array.from(nativeSel.options).map(o => (o.textContent || '').trim()).slice(0, 30) };
+      }
+      nativeSel.value = opt.value;
+      nativeSel.dispatchEvent(new Event('input', { bubbles: true }));
+      nativeSel.dispatchEvent(new Event('change', { bubbles: true }));
+      hideStatusPill();
+      return { status: 'success', selected: (opt.textContent || '').trim(), native: true };
+    }
+
+    /* Custom widget: open it, then wait for the portal to paint. */
+    const before = new Set(_visibleOptions());
+    el.scrollIntoView({ block: 'center', behavior: 'instant' });
+    el.dispatchEvent(new MouseEvent('mousedown', { bubbles: true }));
+    el.dispatchEvent(new MouseEvent('mouseup', { bubbles: true }));
+    el.click();
+
+    let opts = [];
+    const deadline = Date.now() + 3000;
+    while (Date.now() < deadline) {
+      await new Promise(r => setTimeout(r, 100));
+      const now = _visibleOptions();
+      const fresh = now.filter(o => !before.has(o));
+      if (fresh.length) { opts = fresh; break; }
+      if (now.length > before.size) { opts = now; break; }
+    }
+    if (!opts.length) {
+      hideStatusPill();
+      return { error: 'Dropdown did not open (no option list appeared within 3s). ' +
+                      'Try chrome_click on the trigger first, then chrome_read_page to inspect.' };
+    }
+
+    const want = wanted.toLowerCase();
+    let hit = opts.find(o => (o.textContent || '').trim().toLowerCase() === want)
+           || opts.find(o => (o.textContent || '').trim().toLowerCase().includes(want));
+    if (!hit) {
+      const available = opts.map(o => (o.textContent || '').trim()).filter(Boolean).slice(0, 40);
+      hideStatusPill();
+      return { error: `No option matching "${wanted}"`, available };
+    }
+
+    hit.scrollIntoView({ block: 'center', behavior: 'instant' });
+    hit.dispatchEvent(new MouseEvent('mousedown', { bubbles: true }));
+    hit.dispatchEvent(new MouseEvent('mouseup', { bubbles: true }));
+    hit.click();
+    await new Promise(r => setTimeout(r, 150));
+    hideStatusPill();
+    return { status: 'success', selected: (hit.textContent || '').trim() };
+  }
+
   async function performClick(args) {
     if (isAnimating) {
       console.warn('[Galactic] Animation lock active, waiting...');
@@ -1599,6 +1693,7 @@
       case 'scroll':
       case 'scroll_page': return await performScroll(args);
       case 'form_input': return performFormInput(args);
+      case 'select_option': return await performSelectOption(args);
       case 'key_press': return performKeyPress(args);
       case 'hover': return await performHover(args);
       case 'drag': return performDrag(args?.start_x, args?.start_y, args?.end_x, args?.end_y);
