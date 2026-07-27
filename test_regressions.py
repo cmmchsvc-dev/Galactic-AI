@@ -649,6 +649,52 @@ def _obs_flags(reply, observed=False):
             bool(G._SECRET_SHAPED_RE.search(reply)))
 
 
+def test_browser_tools_survive_a_vague_follow_up_mid_task():
+    """THE CAUSE of the fabricated-credentials incident, as opposed to its
+    symptom. Mid browser task the user sent "Try again I made some more fixes
+    so you dont fail this time" — no browsing keyword, and a just-restarted
+    core had lost the in-memory sticky flag, so every chrome_*/browser_* schema
+    was withheld. Asked to retry a browser task with no browser tools, the model
+    invented a screen reading instead of admitting it couldn't look.
+
+    Withholding a capability the task obviously needs does not produce an honest
+    refusal; it produces confabulation. The signal now reads the conversation,
+    not just the newest message."""
+    vague = "Try again I made some more fixes so you dont fail this time"
+
+    mid_task = _cache_gw(vague)
+    mid_task.history = [
+        {"role": "user", "content": "use the browser extension and fill the form at platform.tuya.com"},
+        {"role": "assistant", "content": "Filling the form now."},
+        {"role": "user", "content": vague},
+    ]
+    tools = mid_task._get_active_tools()
+    assert any(k.startswith("chrome_") for k in tools), (
+        "browser tools withheld on a follow-up during an obvious browser task — "
+        "this is what made it hallucinate a screen reading")
+
+    # Tool history alone is enough, even with no keyword anywhere in the text.
+    by_tools = _cache_gw("try again")
+    by_tools.history = [{"role": "user", "content": "try again"}]
+    by_tools._recent_tools = ["chrome_read_page", "chrome_click"]
+    assert any(k.startswith("chrome_") for k in by_tools._get_active_tools())
+
+    # ...but a genuinely unrelated turn still withholds them (the token saving).
+    cold = _cache_gw("what's the weather like today")
+    cold.history = [{"role": "user", "content": "what's the weather like today"}]
+    assert not any(k.startswith(("chrome_", "browser_")) for k in cold._get_active_tools())
+
+
+def test_extension_tools_are_in_the_core_set():
+    """chrome_* drives the user's own Chrome; browser_* is a separate headless
+    browser. Only browser_* was in the core set, so once cache-stable mode
+    disabled keyword relevance the extension became reachable only via
+    find_tools — and every browser task drifted onto the wrong browser."""
+    for t in ("chrome_read_page", "chrome_click", "chrome_type",
+              "chrome_tabs_select", "chrome_select_option"):
+        assert t in G._OLLAMA_CORE_TOOLS, "%s missing from the core tool set" % t
+
+
 def test_fabricated_screen_reading_is_caught():
     fired, secret = _obs_flags(_OBS_INCIDENT, observed=False)
     assert fired, "model described the screen with no read tool called — not flagged"

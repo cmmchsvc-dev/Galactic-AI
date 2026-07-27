@@ -1493,6 +1493,16 @@ class GalacticGateway(GatewayToolsMixin):
     _OLLAMA_CORE_TOOLS = {
         'read_file', 'write_file', 'edit_file', 'list_dir', 'find_files',
         'exec_shell', 'web_search', 'web_fetch', 'memory_search', 'memory_imprint',
+        # The EXTENSION tools (chrome_*) come first because they drive the
+        # user's own Chrome — their logins, their tabs. browser_* is a separate
+        # headless browser with none of that. The core set previously listed
+        # only browser_*, so the extension was reachable solely via find_tools
+        # or keyword relevance; once cache-stable mode turned relevance off for
+        # cloud, chrome_* effectively vanished, and every browser task drifted
+        # onto the wrong browser. That is why it kept calling browser_navigate
+        # after being told to use the extension.
+        'chrome_read_page', 'chrome_click', 'chrome_type', 'chrome_screenshot',
+        'chrome_tabs_list', 'chrome_tabs_select', 'chrome_select_option',
         'browser_navigate', 'browser_snapshot', 'browser_click', 'browser_type',
         'generate_image', 'analyze_image', 'find_tools', 'search_codebase',
     }
@@ -1781,13 +1791,39 @@ class GalacticGateway(GatewayToolsMixin):
         # Without a browsing signal the browser_*/chrome_* schemas are dropped
         # (~8.6k tokens); the model pulls any of them back with one find_tools
         # call the moment it actually needs to drive a page.
-        _wants_browser = _is_local or bool(
-            last_user_text and self._BROWSE_SIGNAL_RE.search(last_user_text.lower()))
-        # 💰 Make the decision STICKY for the session rather than per-message.
-        # Toggling ~8.6k tokens of browser schema in and out flips the prefix
-        # back and forth, so a cache-by-prefix provider misses on the browsing
-        # turn AND on the turn after it. Sticky is monotonic: it busts once,
-        # then every later turn matches again.
+        # ⚠️ Read the CONVERSATION, not just the newest message.
+        #
+        # 2026-07-26: mid-way through a browser-automation task the user sent
+        # "Try again I made some more fixes so you dont fail this time". No
+        # browsing keyword, and the core had just been restarted so the sticky
+        # flag was gone — so every chrome_*/browser_* schema was withheld. The
+        # model, asked to retry a browser task with no browser tools, did not
+        # say "I have no browser tools". It invented a screen reading, complete
+        # with fabricated API credentials. Withholding a capability the task
+        # obviously needs doesn't produce an honest refusal; it produces
+        # confabulation.
+        #
+        # Scanning recent history also makes stickiness survive a restart,
+        # which the in-memory flag never did — history is persisted, the flag
+        # was not.
+        _recent = (self.history or [])[-8:]
+        _recent_text = " ".join(
+            str(m.get('content', '')) for m in _recent
+            if m.get('role') in ('user', 'assistant')).lower()
+        _browser_in_play = (
+            bool(last_user_text and self._BROWSE_SIGNAL_RE.search(last_user_text.lower()))
+            or bool(_recent_text and self._BROWSE_SIGNAL_RE.search(_recent_text))
+            # Any browser tool actually used recently means we are mid-task.
+            # NB: the ReAct loop's `recent_tools` is a local there, not visible
+            # here — use the instance mirror the checkpointer maintains.
+            or any(str(t).startswith(('chrome_', 'browser_'))
+                   for t in (getattr(self, '_recent_tools', None) or []))
+        )
+        _wants_browser = _is_local or _browser_in_play
+        # Still sticky within the process: toggling ~8.6k tokens of schema in
+        # and out flips the cached prefix back and forth, so a cache-by-prefix
+        # provider misses on the browsing turn AND the turn after it. Sticky is
+        # monotonic — it busts once, then every later turn matches again.
         if _wants_browser and not _is_local:
             self._browser_tools_sticky = True
         elif getattr(self, '_browser_tools_sticky', False):
