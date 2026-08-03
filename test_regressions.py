@@ -720,6 +720,66 @@ def _rep_calls(tool, n, vary):
     return [(tool, {"script": ("probe_%d" % i) if vary else "same"}) for i in range(n)]
 
 
+# ─────────────────────────────────────────────────────────────────────────────
+# TOOL OVERUSE GUARD — action tools are work, not "over-researching"
+# Observed 2026-07-27 mid coding task: "Tool overuse guard: exec_shell called 9
+# times total", telling the model it was over-researching and to answer NOW.
+# It counted ACTION tools, never reset, re-fired on every call past 8, and
+# undercut the 20-call discovery budget that was actually designed for this.
+# ─────────────────────────────────────────────────────────────────────────────
+
+_OVERUSE_ACTION = {
+    'edit_file', 'write_file', 'exec_shell', 'process_start', 'git_commit',
+    'save_memory', 'post_to_social', 'execute_python', 'replace_function',
+    'memory_imprint', 'process_wait', 'delete_file', 'move_file', 'copy_file',
+    'chrome_click', 'chrome_type', 'chrome_select_option', 'chrome_navigate',
+    'chrome_key_press', 'chrome_fill_form', 'browser_click', 'browser_type',
+    'browser_navigate',
+}
+_OVERUSE_EXEMPT = {'browser_snapshot', 'web_search', 'memory_search', 'read_file',
+                   'list_dir', 'grep_search', 'find_files'}
+
+
+def _overuse(tool, n, is_local, cfg=None):
+    from collections import Counter as _C
+    cfg = cfg or {}
+    counts, warned, fired = _C(), set(), []
+    limit = int(cfg.get('tool_overuse_limit', 0)) or (12 if is_local else 25)
+    for _ in range(n):
+        counts[tool] += 1
+        if (cfg.get('tool_overuse_guard', True)
+                and tool not in _OVERUSE_EXEMPT and tool not in _OVERUSE_ACTION
+                and tool not in warned and counts[tool] > limit):
+            warned.add(tool)
+            fired.append(counts[tool])
+    return fired
+
+
+def test_action_tools_are_never_called_over_researching():
+    """exec_shell x9 in a coding session is a productive session."""
+    for tool, n in (("exec_shell", 9), ("write_file", 15), ("execute_python", 20),
+                    ("edit_file", 12), ("chrome_click", 30)):
+        assert not _overuse(tool, n, is_local=False), (
+            "%s x%d was flagged as over-research — it's how work gets done" % (tool, n))
+
+
+def test_overuse_guard_still_catches_real_over_research():
+    assert _overuse("code_outline", 30, is_local=False), "cloud limit 25 not enforced"
+    assert _overuse("code_outline", 15, is_local=True), "local limit 12 not enforced"
+
+
+def test_overuse_guard_warns_once_and_sits_above_the_discovery_budget():
+    assert len(_overuse("code_outline", 60, is_local=False)) == 1, "re-fired per call"
+    # The discovery budget already caps research at 20; firing at 8 contradicted it.
+    assert _overuse("code_outline", 21, is_local=False) == [], (
+        "overuse guard fired below the 20-call discovery budget again")
+
+
+def test_overuse_guard_is_disableable():
+    assert not _overuse("code_outline", 60, is_local=False,
+                        cfg={"tool_overuse_guard": False})
+
+
 def test_repetition_guard_ignores_genuine_iteration():
     """Different arguments each call == making progress, not stuck."""
     assert not _rep_guard(_rep_calls("chrome_execute_js", 12, True), is_local=False), (

@@ -3115,6 +3115,7 @@ class GalacticGateway(GatewayToolsMixin):
         _discovery_budget = 20     # V17: Max total discovery calls per speak()
         _discovery_calls_used = 0  # V17: Running counter
         _tool_name_counts = Counter()  # V17: Fuzzy per-tool-name counter (ignores args)
+        _overuse_warned = set()        # tools already warned about; stops per-call re-firing
 
         # Clear any pending stop request at the start of a new speak() call.
         # Main chat ONLY: these three are plain process-global attributes, and a
@@ -3139,7 +3140,16 @@ class GalacticGateway(GatewayToolsMixin):
             'browser_wait', 'browser_execute_js', 'browser_extract'
         }
         _DISCOVERY_TOOLS = {'list_dir', 'read_file', 'find_files', 'grep_search', 'glob', 'system_info', 'process_status', 'regex_search'}
-        _ACTION_TOOLS = {'edit_file', 'write_file', 'exec_shell', 'process_start', 'git_commit', 'save_memory', 'post_to_social'}
+        # Tools that DO the work rather than research it. Calling exec_shell nine
+        # times in a coding session is a productive session, not abuse — these
+        # must never be scolded for "over-researching".
+        _ACTION_TOOLS = {'edit_file', 'write_file', 'exec_shell', 'process_start',
+                         'git_commit', 'save_memory', 'post_to_social',
+                         'execute_python', 'replace_function', 'memory_imprint',
+                         'process_wait', 'delete_file', 'move_file', 'copy_file',
+                         'chrome_click', 'chrome_type', 'chrome_select_option',
+                         'chrome_navigate', 'chrome_key_press', 'chrome_fill_form',
+                         'browser_click', 'browser_type', 'browser_navigate'}
 
         # Mark that the gateway is actively processing (prevents model switching mid-task)
         self._speaking = True
@@ -3161,7 +3171,7 @@ class GalacticGateway(GatewayToolsMixin):
             nonlocal recent_tool_sigs, _rep_warned
             nonlocal _text_only_action_turns, _recent_response_fingerprints
             nonlocal _system_claim_turns
-            nonlocal _discovery_calls_used, _tool_name_counts  # V17
+            nonlocal _discovery_calls_used, _tool_name_counts, _overuse_warned  # V17
             # Counters incremented below — without nonlocal, the `+=` makes them
             # local to _react_loop and reading them first raises UnboundLocalError.
             nonlocal _empty_final_retries, _persistence_nudges
@@ -3467,13 +3477,46 @@ class GalacticGateway(GatewayToolsMixin):
                                     )
                                 })
 
-                        # V17: Fuzzy per-tool-name counter (catches same tool, different args)
+                        # ── Tool overuse guard ────────────────────────────────
+                        # Was: >8 calls of ANY tool across the WHOLE session, and
+                        # it re-fired on every call after that, each time telling
+                        # the model "You are over-researching. Provide your answer
+                        # or take action NOW."
+                        #
+                        # Three things wrong with that. It counted ACTION tools —
+                        # exec_shell nine times in a coding session is a
+                        # productive session, not over-research, and the message
+                        # was simply false. It never reset, so any real task blew
+                        # past 8 of something and then got nagged on every
+                        # subsequent call. And it undercut the discovery budget
+                        # below (20 research calls), firing at 8 and contradicting
+                        # the limit that was actually designed for this.
+                        #
+                        # Now: research tools only, above the discovery budget,
+                        # scaled by backend, and warned once per tool.
                         _tool_name_counts[actual_tool_name] += 1
-                        if actual_tool_name not in _DUPLICATE_EXEMPT and _tool_name_counts[actual_tool_name] > 8:
-                            await self.core.log(f"🔄 Tool overuse guard: {actual_tool_name} called {_tool_name_counts[actual_tool_name]} times total", priority=1)
+                        _oucfg = self.core.config.get('models', {}) or {}
+                        try:
+                            _ou_limit = int(_oucfg.get('tool_overuse_limit', 0)) or (
+                                12 if self._is_local_backend() else 25)
+                        except (TypeError, ValueError):
+                            _ou_limit = 12 if self._is_local_backend() else 25
+                        if (_oucfg.get('tool_overuse_guard', True)
+                                and actual_tool_name not in _DUPLICATE_EXEMPT
+                                and actual_tool_name not in _ACTION_TOOLS
+                                and actual_tool_name not in _overuse_warned
+                                and _tool_name_counts[actual_tool_name] > _ou_limit):
+                            _overuse_warned.add(actual_tool_name)
+                            await self.core.log(
+                                f"🔄 Tool overuse guard: {actual_tool_name} called "
+                                f"{_tool_name_counts[actual_tool_name]} times — warned once", priority=1)
                             messages.append({
                                 "role": "user",
-                                "content": f"⚠️ You have called {actual_tool_name} {_tool_name_counts[actual_tool_name]} times with different arguments. You are over-researching. Provide your answer or take action NOW."
+                                "content": (
+                                    f"Heads up: {actual_tool_name} has been called "
+                                    f"{_tool_name_counts[actual_tool_name]} times this task. If you're still "
+                                    f"gathering context, consider whether you have enough to act now."
+                                )
                             })
                         
                         # ── Browser Stagnation Guard ──
