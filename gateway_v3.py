@@ -3103,6 +3103,8 @@ class GalacticGateway(GatewayToolsMixin):
         consecutive_failures = 0   # Consecutive tool errors/timeouts
         stagnation_count = 0       # Discovery loops without action
         recent_tools = deque(maxlen=30)  # V17: Rolling window, NOT cleared per turn
+        recent_tool_sigs = deque(maxlen=30)  # same window, but "tool:{args}" — see repetition guard
+        _rep_warned = set()          # tools already warned about; stops per-turn re-firing
         _nudge_half_sent = False   # Track whether 50% nudge was sent
         _nudge_80_sent = False     # Track whether 80% nudge was sent
         _text_only_action_turns = 0  # Consecutive turns where model claimed an action but called no tools
@@ -3156,6 +3158,7 @@ class GalacticGateway(GatewayToolsMixin):
         async def _react_loop():
             nonlocal turn_count, last_tool_call, messages, duplicate_count, stagnation_count
             nonlocal consecutive_failures, recent_tools, _nudge_half_sent, _nudge_80_sent
+            nonlocal recent_tool_sigs, _rep_warned
             nonlocal _text_only_action_turns, _recent_response_fingerprints
             nonlocal _system_claim_turns
             nonlocal _discovery_calls_used, _tool_name_counts  # V17
@@ -3369,6 +3372,12 @@ class GalacticGateway(GatewayToolsMixin):
                                 continue
                         last_tool_call = call_sig
                         recent_tools.append(tool_name)
+                        # Parallel record WITH arguments. recent_tools holds bare
+                        # names because several guards do `'chrome_type' in
+                        # recent_tools`; the repetition guard needs to tell
+                        # "same tool, six different scripts" (iterating) from
+                        # "same tool, same script six times" (actually stuck).
+                        recent_tool_sigs.append(call_sig)
 
                         # Validation & Execution
                         # Map safe_name back to actual registered tool name
@@ -3620,15 +3629,58 @@ class GalacticGateway(GatewayToolsMixin):
                             })
                             recent_tools.clear()  # Only clear for excessive scroll correction
 
-                    # V17: Rolling window repetition guard (deque accumulates across turns)
-                    if len(recent_tools) >= 9:
-                        tool_counts = Counter(list(recent_tools)[-15:])
-                        most_common_tool, most_common_count = tool_counts.most_common(1)[0]
-                        if most_common_count >= 6 and most_common_tool not in _DUPLICATE_EXEMPT:
-                            await self.core.log(f"🔄 Repetition guard: {most_common_tool} x{most_common_count}", priority=1)
+                    # ── Rolling-window repetition guard ────────────────────────
+                    # This counted tool NAMES only, so six chrome_execute_js calls
+                    # with six DIFFERENT scripts — i.e. a model methodically
+                    # probing a page — looked identical to the same script six
+                    # times. And because the deque never clears, one trip made it
+                    # re-fire on EVERY subsequent turn, shoving "You are stuck"
+                    # into context over and over. Observed live 2026-07-26:
+                    # "Repetition guard: chrome_execute_js x6" three turns running
+                    # while the model was legitimately iterating.
+                    #
+                    # Note the exact-args loop guard above (call_sig +
+                    # _tool_call_history, limit 3-15) already catches true loops,
+                    # so this window only needs to catch the subtler case: same
+                    # tool, barely-varying arguments, going nowhere.
+                    #
+                    # Now: counts DISTINCT argument signatures, scales the
+                    # threshold by backend (big cloud models iterate on purpose
+                    # and self-correct; local models genuinely spin), and warns
+                    # once per tool instead of every turn.
+                    _mcfg = self.core.config.get('models', {}) or {}
+                    try:
+                        _thresh = int(_mcfg.get('repetition_guard_threshold', 0)) or (
+                            6 if self._is_local_backend() else 10)
+                    except (TypeError, ValueError):
+                        _thresh = 6 if self._is_local_backend() else 10
+                    # Warm-up must not exceed the threshold, or a configured value
+                    # below the old hardcoded 9 could never fire at all.
+                    if _mcfg.get('repetition_guard', True) and len(recent_tools) >= min(9, _thresh):
+                        _win_names = list(recent_tools)[-15:]
+                        _win_sigs = list(recent_tool_sigs)[-15:]
+                        most_common_tool, most_common_count = Counter(_win_names).most_common(1)[0]
+                        # How many genuinely different calls were those?
+                        _distinct = len({s for s, n in zip(_win_sigs, _win_names)
+                                         if n == most_common_tool})
+                        # Varied arguments == iterating, not stuck. Only complain
+                        # when the call is barely changing.
+                        _is_spinning = _distinct <= max(2, most_common_count // 3)
+                        if (most_common_count >= _thresh and _is_spinning
+                                and most_common_tool not in _DUPLICATE_EXEMPT
+                                and most_common_tool not in _rep_warned):
+                            _rep_warned.add(most_common_tool)
+                            await self.core.log(
+                                f"🔄 Repetition guard: {most_common_tool} x{most_common_count} "
+                                f"({_distinct} distinct arg-set(s)) — warned once", priority=1)
                             messages.append({
                                 "role": "user",
-                                "content": f"You are stuck calling {most_common_tool}. Try a different approach or provide your final answer."
+                                "content": (
+                                    f"Heads up: you've called {most_common_tool} {most_common_count} times "
+                                    f"with only {_distinct} distinct argument set(s), so it doesn't appear "
+                                    f"to be moving the task forward. If it IS progressing, carry on — "
+                                    f"otherwise try a different approach or give your final answer."
+                                )
                             })
                     # V17: REMOVED recent_tools.clear() — deque now accumulates across turns
 

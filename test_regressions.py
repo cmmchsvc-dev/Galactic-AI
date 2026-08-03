@@ -684,6 +684,76 @@ def test_the_nudge_actually_gets_consumed_by_the_loop():
     assert "LIVE CORRECTION" in src, "the injected steer lost its framing"
 
 
+# ─────────────────────────────────────────────────────────────────────────────
+# REPETITION GUARD — must not punish a model for iterating
+# It counted tool NAMES only, so six chrome_execute_js calls with six DIFFERENT
+# scripts (a model methodically probing a page) looked exactly like the same
+# script six times. And because recent_tools never clears, one trip re-fired on
+# every subsequent turn. Observed live 2026-07-26: "Repetition guard:
+# chrome_execute_js x6" three turns running mid-iteration.
+# ─────────────────────────────────────────────────────────────────────────────
+
+def _rep_guard(calls, is_local, cfg=None):
+    """Mirrors the loop's repetition branch. calls = [(tool, args_dict), ...]"""
+    import json as _json
+    from collections import Counter as _C, deque as _dq
+    cfg = cfg or {}
+    exempt = {'browser_snapshot', 'web_search', 'read_file', 'chrome_read_page'}
+    names, sigs, warned, fired = _dq(maxlen=30), _dq(maxlen=30), set(), []
+    for tool, args in calls:
+        names.append(tool)
+        sigs.append("%s:%s" % (tool, _json.dumps(args, sort_keys=True)))
+        thresh = int(cfg.get('repetition_guard_threshold', 0)) or (6 if is_local else 10)
+        if not cfg.get('repetition_guard', True) or len(names) < min(9, thresh):
+            continue
+        wn, ws = list(names)[-15:], list(sigs)[-15:]
+        mct, mcc = _C(wn).most_common(1)[0]
+        distinct = len({s for s, n in zip(ws, wn) if n == mct})
+        if (mcc >= thresh and distinct <= max(2, mcc // 3)
+                and mct not in exempt and mct not in warned):
+            warned.add(mct)
+            fired.append((mct, mcc, distinct))
+    return fired
+
+
+def _rep_calls(tool, n, vary):
+    return [(tool, {"script": ("probe_%d" % i) if vary else "same"}) for i in range(n)]
+
+
+def test_repetition_guard_ignores_genuine_iteration():
+    """Different arguments each call == making progress, not stuck."""
+    assert not _rep_guard(_rep_calls("chrome_execute_js", 12, True), is_local=False), (
+        "guard fired on a model iterating with 12 distinct argument sets")
+    assert not _rep_guard(_rep_calls("chrome_click", 8, True), is_local=True)
+
+
+def test_repetition_guard_still_catches_real_spinning():
+    assert _rep_guard(_rep_calls("chrome_execute_js", 12, False), is_local=False)
+    assert _rep_guard(_rep_calls("chrome_click", 8, False), is_local=True)
+
+
+def test_repetition_guard_threshold_is_looser_for_cloud():
+    """Big cloud models iterate on purpose and self-correct; local ones spin."""
+    eight_identical = _rep_calls("chrome_execute_js", 8, False)
+    assert _rep_guard(eight_identical, is_local=True), "local should trip at 6"
+    assert not _rep_guard(eight_identical, is_local=False), "cloud should need 10"
+
+
+def test_repetition_guard_warns_once_not_every_turn():
+    fired = _rep_guard(_rep_calls("chrome_execute_js", 20, False), is_local=False)
+    assert len(fired) == 1, (
+        "guard re-fired %d times — it used to shove 'You are stuck' into context "
+        "on every turn after the first trip" % len(fired))
+
+
+def test_repetition_guard_is_disableable_and_tunable():
+    assert not _rep_guard(_rep_calls("chrome_execute_js", 15, False), is_local=False,
+                          cfg={"repetition_guard": False})
+    # A threshold below the old hardcoded 9-call warm-up must still be reachable.
+    assert _rep_guard(_rep_calls("chrome_click", 5, False), is_local=True,
+                      cfg={"repetition_guard_threshold": 4})
+
+
 def test_browser_tools_survive_a_vague_follow_up_mid_task():
     """THE CAUSE of the fabricated-credentials incident, as opposed to its
     symptom. Mid browser task the user sent "Try again I made some more fixes
