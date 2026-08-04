@@ -755,6 +755,56 @@ def _overuse(tool, n, is_local, cfg=None):
     return fired
 
 
+# ─────────────────────────────────────────────────────────────────────────────
+# PASTED REPORTS / QUOTED ALERTS must not look like work orders
+# 2026-08-03: the user asked "why did this happen?" and pasted a Forge Sentinel
+# alert in quotes. The alert's "Fix Options:" supplied the verb and
+# "gateway_v3.py" supplied the object, so the full planner spun up on the local
+# 27B. Same class as the PowerShell incident: signals harvested from pasted
+# content instead of the user's own words.
+# ─────────────────────────────────────────────────────────────────────────────
+
+_SENTINEL_PASTE = (
+    'when this happened... "Forge Sentinel Alert\n'
+    'Root Cause:\n'
+    'Ollama terminated the HTTP connection prematurely while streaming qwen3.6:27b.\n'
+    'Likely Location:\n'
+    'gateway_v3.py, lines 6350-6352 - the bare except Exception handler.\n'
+    'Fix Options:\n'
+    '1. Auto-retry on incomplete chunked reads.\n'
+    '2. Reduce context pressure for 27B models - lower num_ctx in config.yaml.\n'
+    'Which option would you like me to implement?"\n'
+    '- it was cause I force closed ollama.'
+)
+
+
+def test_quoted_agent_alert_does_not_trigger_the_planner():
+    assert not is_coding(_SENTINEL_PASTE), (
+        "a quoted bug report was read as a work order — this spawns the whole "
+        "planner (and the local 27B) on what was a question")
+
+
+def test_report_field_lines_are_stripped_before_intent_detection():
+    stripped = G._strip_pasted_output(_SENTINEL_PASTE.lower())
+    for field in ("root cause:", "fix options:", "likely location:"):
+        assert field not in stripped, "%r survived stripping" % field
+
+
+def test_multiline_quotes_are_stripped_but_inline_quotes_are_not():
+    # Multi-line quote = showing you something.
+    assert not is_coding('why did this happen?\n"Root Cause: parser broke in main.py"')
+    # Inline quote = still a genuine request.
+    assert is_coding('fix the bug in "gateway_v3.py"')
+
+
+def test_real_coding_requests_still_reach_the_planner():
+    for msg in ("fix the bug in gateway_v3.py",
+                "refactor the auth module",
+                "scan this codebase and offer improvements",
+                "add retry logic in gateway_v3.py"):
+        assert is_coding(msg), "%r no longer detected as coding" % msg
+
+
 def test_action_tools_are_never_called_over_researching():
     """exec_shell x9 in a coding session is a productive session."""
     for tool, n in (("exec_shell", 9), ("write_file", 15), ("execute_python", 20),

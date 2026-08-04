@@ -1337,7 +1337,10 @@ class GalacticGateway(GatewayToolsMixin):
                             try: args = json.loads(args)
                             except: args = {}
                         if name:
-                            calls.append((str(name), args, None))
+                            # 4-tuple: the ReAct loop unpacks (name, args, id, extra).
+                            # These two sites appended 3-tuples, so any <tool_call>
+                            # block that actually parsed raised ValueError on unpack.
+                            calls.append((str(name), args, None, None))
                             continue
                 except: pass
                 
@@ -1348,13 +1351,61 @@ class GalacticGateway(GatewayToolsMixin):
                     param_matches = re.findall(r'<parameter=([^>]+)>([\s\S]*?)</parameter>', params_str)
                     for p_name, p_val in param_matches:
                         args[p_name] = p_val.strip()
-                    calls.append((str(fn_name), args, None))
+                    calls.append((str(fn_name), args, None, None))
         except Exception:
             pass
-            
+
+        # 5. Strict <invoke name="tool"> parser (Anthropic-style XML).
+        # Local models trained on mixed tool syntaxes fall back to this shape
+        # when native calling doesn't take. It was unparsed, so on 2026-08-03
+        # qwen3.6:27b emitted a wall of <function_calls>/<invoke> markup that
+        # rendered to the user as raw text while zero tools actually ran.
+        # STRICT on purpose — well-formed blocks only. A mangled one is left
+        # unparsed so the guard in the ReAct loop can correct the model, rather
+        # than being loosely regexed into a phantom call (the V17 lesson below).
+        try:
+            for _m in re.finditer(
+                    r'<invoke\s+name\s*=\s*["\']([^"\']+)["\']\s*>([\s\S]*?)</invoke\s*>',
+                    response_text):
+                _fn = _m.group(1).strip()
+                _args = {}
+                for _pm in re.finditer(
+                        r'<parameter\s+name\s*=\s*["\']([^"\']+)["\']\s*>([\s\S]*?)</parameter\s*>',
+                        _m.group(2)):
+                    _args[_pm.group(1).strip()] = _pm.group(2).strip()
+                if _fn:
+                    calls.append((_fn, _args, None, None))
+        except Exception:
+            pass
+
         # V17: REMOVED loose fallback regex parser — it was the #1 cause of phantom tool execution.
         # Only structured JSON blocks and strict XML tags are parsed as tool calls.
+
+        # 6. Dedupe. The parsers overlap by design: a <tool_call> wrapping raw
+        # JSON is caught BOTH by the balanced-JSON scan (2) and the XML parser
+        # (4a), which would run the same tool twice. Keep first occurrence,
+        # preserve order. Only drops calls whose name AND arguments match.
+        if len(calls) > 1:
+            _seen, _uniq = set(), []
+            for _c in calls:
+                try:
+                    _key = (_c[0], json.dumps(_c[1], sort_keys=True, default=str))
+                except Exception:
+                    _key = (_c[0], repr(_c[1]))
+                if _key in _seen:
+                    continue
+                _seen.add(_key)
+                _uniq.append(_c)
+            calls = _uniq
         return calls
+
+    # Markup that means "the model TRIED to call a tool but got the syntax
+    # wrong". If none of the strict parsers matched and this is present, the
+    # right move is to correct the model — not to render the markup at the user
+    # as if it were an answer.
+    _PSEUDO_TOOLCALL_RE = re.compile(
+        r'<function_calls>|<invoke\s+name|<parameter_name>|<tool_call>|'
+        r'<function\s*=|</invocation>|<parameter\s+name\s*=', re.I)
 
     def _strip_jargon(self, text):
         """
@@ -1602,6 +1653,15 @@ class GalacticGateway(GatewayToolsMixin):
         r'^\s*(?:Copyright\s*\(C\)|All rights reserved|Microsoft Corporation'
         r'|Try the new cross-platform|Install the latest PowerShell)', re.I)
     _PASTED_RULE_RE = re.compile(r'^\s*[-=_|+]{3,}[\s\-=_|+]*$')
+    # Structured report/alert fields. A pasted Forge Sentinel alert, stack-trace
+    # summary or code-review block is EVIDENCE the user is asking about, not a
+    # work order — but "Fix Options:" hands the detector a verb and any
+    # "somefile.py" hands it an object. 2026-08-03: asking "why did this happen"
+    # about a Sentinel alert spawned the whole planner on the local 27B.
+    _PASTED_REPORT_RE = re.compile(
+        r'^\s*(?:root cause|likely location|fix options?|impact|severity|'
+        r'recommendation[s]?|summary|analysis|proposed fix|suggested fix|'
+        r'steps? to reproduce|expected|actual|traceback|stack trace)\s*:', re.I)
     # Explicit "scan/review/analyze <the|this|my|our|your> codebase/repo/project"
     # planning trigger. Was a bare `"scan the codebase" in text` literal that
     # missed "scan THIS codebase" — the exact phrasing a user hit.
@@ -2404,7 +2464,13 @@ class GalacticGateway(GatewayToolsMixin):
         what the user actually wrote. Removes shell-prompt lines, product
         banners, fenced blocks, and ASCII rules together with the column header
         above them (that header is where `Build` hides in `$PSVersionTable`)."""
-        lines = (text or '').split('\n')
+        text = text or ''
+        # A MULTI-LINE quoted block is something the user is showing you, not
+        # asking for — a pasted alert, log excerpt or another agent's reply.
+        # Short inline quotes are left alone so `fix the bug in "gateway_v3.py"`
+        # still reads as a real request.
+        text = re.sub(r'"[^"]*\n[^"]*"', ' ', text)
+        lines = text.split('\n')
         drop = [False] * len(lines)
         fenced = False
         for i, ln in enumerate(lines):
@@ -2414,7 +2480,8 @@ class GalacticGateway(GatewayToolsMixin):
                 continue
             if fenced:
                 drop[i] = True
-            elif cls._PASTED_PROMPT_RE.search(ln) or cls._PASTED_BANNER_RE.search(ln):
+            elif (cls._PASTED_PROMPT_RE.search(ln) or cls._PASTED_BANNER_RE.search(ln)
+                  or cls._PASTED_REPORT_RE.search(ln)):
                 drop[i] = True
             elif cls._PASTED_RULE_RE.match(ln):
                 drop[i] = True
@@ -3116,6 +3183,7 @@ class GalacticGateway(GatewayToolsMixin):
         _discovery_calls_used = 0  # V17: Running counter
         _tool_name_counts = Counter()  # V17: Fuzzy per-tool-name counter (ignores args)
         _overuse_warned = set()        # tools already warned about; stops per-call re-firing
+        _malformed_retries = 0         # times we've corrected pseudo-tool-call markup this task
 
         # Clear any pending stop request at the start of a new speak() call.
         # Main chat ONLY: these three are plain process-global attributes, and a
@@ -3174,7 +3242,7 @@ class GalacticGateway(GatewayToolsMixin):
             nonlocal _discovery_calls_used, _tool_name_counts, _overuse_warned  # V17
             # Counters incremented below — without nonlocal, the `+=` makes them
             # local to _react_loop and reading them first raises UnboundLocalError.
-            nonlocal _empty_final_retries, _persistence_nudges
+            nonlocal _empty_final_retries, _persistence_nudges, _malformed_retries
 
             for _ in range(max_turns):
                 # ── STOP FLAG CHECK (user pressed STOP or /api/stop_agent was called) ──
@@ -3237,6 +3305,34 @@ class GalacticGateway(GatewayToolsMixin):
 
                 # Extract tool calls (list)
                 tool_calls = self._extract_tool_call(response_text)
+
+                # ── MALFORMED TOOL-CALL GUARD ─────────────────────────────
+                # The model tried to call tools but botched the syntax badly
+                # enough that every strict parser rejected it. Without this the
+                # markup falls through and is rendered to the user as the final
+                # answer — 2026-08-03, qwen3.6:27b emitted a wall of
+                # <function_calls>/<invoke>/</invocation> with mismatched tags
+                # and contradictory paths, zero tools ran, and the user got the
+                # raw XML in chat. Correct it instead, twice, then give up so a
+                # model that simply cannot emit valid calls doesn't spin.
+                if (not tool_calls and _malformed_retries < 2
+                        and self._PSEUDO_TOOLCALL_RE.search(response_text)):
+                    _malformed_retries += 1
+                    await self.core.log(
+                        f"🔧 Malformed tool-call syntax detected (attempt {_malformed_retries}/2) — "
+                        f"asking for native tool calls", priority=1)
+                    messages.append({"role": "assistant", "content": response_text})
+                    messages.append({
+                        "role": "user",
+                        "content": (
+                            "Your last message contained tool-call MARKUP (<function_calls>, "
+                            "<invoke>, <parameter_name> or similar) instead of a real tool call, so "
+                            "nothing executed. Do NOT write tool syntax as text. Use this "
+                            "environment's native function-calling mechanism to make the call, or "
+                            "if you have no tool to make, reply in plain prose with no XML tags."
+                        )
+                    })
+                    continue
 
                 if tool_calls:
                     # Construct assistant message with tool_calls
