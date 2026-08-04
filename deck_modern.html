@@ -1381,7 +1381,7 @@ body[data-viz-theme="lightspeed"] #sidebar, body[data-viz-theme="lightspeed"] #c
           <div class="stat-card"><div class="val" id="st-provider">--</div><div class="lbl">Provider</div></div>
           <div class="stat-card"><div class="val" id="st-mode">--</div><div class="lbl">Mode</div></div>
           <div class="stat-card"><div class="val" id="st-ctx-used">--</div><div class="lbl">Context Used</div></div>
-          <div class="stat-card"><div class="val" id="st-ctx-max">--</div><div class="lbl">Context Limit</div></div>
+          <div class="stat-card"><div class="val" id="st-ctx-max">--</div><div class="lbl" id="st-ctx-max-lbl">Context Limit</div></div>
 
         </div>
         <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:12px">
@@ -5058,7 +5058,17 @@ async function refreshStatus() {
     el('st-mode').textContent = mode.toUpperCase();
     el('st-mode').style.color = mode === 'primary' ? 'var(--green)' : 'var(--yellow)';
     if (el('st-ctx-used')) el('st-ctx-used').textContent = d.model?.context_used != null ? Number(d.model.context_used).toLocaleString() : '--';
+    // Show the EFFECTIVE limit (what trimming/compaction actually enforce, and
+    // what the topbar CTX meter uses). When models.max_billable_context caps a
+    // big window, say so in the label instead of silently showing a different
+    // number here than the topbar shows — kimi-k3 read 1,048,576 here while the
+    // topbar said 131K.
     if (el('st-ctx-max')) el('st-ctx-max').textContent = d.model?.context_max ? Number(d.model.context_max).toLocaleString() : 'Auto';
+    if (el('st-ctx-max-lbl')) {
+      el('st-ctx-max-lbl').textContent = d.model?.context_capped
+        ? 'Context Limit (capped · model holds ' + Number(d.model.context_window_raw).toLocaleString() + ')'
+        : 'Context Limit';
+    }
     if (d.model) updateCtxMeter(d.model.context_used, d.model.context_max);
 
     // Populate token settings UI

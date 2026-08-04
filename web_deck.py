@@ -1492,18 +1492,32 @@ class GalacticWebDeck:
         mm = getattr(self.core, 'model_manager', None)
         if mm:
             gw = self.core.gateway
-            ctx_max = 0
+            # Two different numbers, and they must not contradict each other in
+            # the same UI. context_max is the EFFECTIVE limit — what actually
+            # governs trimming and compaction, i.e. min(window,
+            # models.max_billable_context) for paid providers — which is what the
+            # topbar CTX meter shows. This tile used to report the raw advertised
+            # window instead, so kimi-k3 read "1,048,576" here while the topbar
+            # said 131K and compaction fired against the smaller one.
+            # The raw capability is still reported separately rather than lost.
+            ctx_window = 0
             if hasattr(gw, '_get_context_window_for_model'):
-                ctx_max = gw._get_context_window_for_model(0)
-            if not ctx_max and hasattr(self.core, 'ollama_manager') and gw.llm.provider == 'ollama':
-                ctx_max = self.core.ollama_manager.get_context_window(gw.llm.model) or 0
-                
+                ctx_window = gw._get_context_window_for_model(0)
+            if not ctx_window and hasattr(self.core, 'ollama_manager') and gw.llm.provider == 'ollama':
+                ctx_window = self.core.ollama_manager.get_context_window(gw.llm.model) or 0
+
+            ctx_used, ctx_max = self._context_usage()
+            if not ctx_max:
+                ctx_max = ctx_window
+
             model_status = {
                 'provider': gw.llm.provider,
                 'model': gw.llm.model,
                 'mode': mm.current_mode,
-                'context_used': self._context_usage()[0],
-                'context_max': ctx_max,
+                'context_used': ctx_used,
+                'context_max': ctx_max,              # effective — matches the topbar
+                'context_window_raw': ctx_window,    # what the model could accept
+                'context_capped': bool(ctx_window and ctx_max and ctx_max < ctx_window),
             }
 
         # Fallback chain + provider health
